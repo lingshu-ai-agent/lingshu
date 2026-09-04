@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  灵枢 LingShu — Agent Engine Logo (graphic-only, no text)
+  ─────────────────────────────────────────────────────────────
+  Design language (pure visual, no characters):
+    compass cross + center dot ...... 枢纽 / pivot (brand core)
+    jade disc ....................... 玉 / 灵 (intelligence)
+    8 satellite dots ................ 8 SPI slots
+    golden loop arrow ............... ReAct Loop (Thought → Action → Observation)
+    outer orbit ring ................ orchestration boundary
+  Palette:
+    jade:   #0D9488 → #0F766E   (主色,稳)
+    gold:   #F59E0B → #D97706   (强调,动)
+    off-white: #FAFAF7          (高亮/中心点)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="LingShu Agent Engine Logo">
+  <title>LingShu</title>
+  <desc>The Pivot of Agent Orchestration — Agent Engine</desc>
+
+  <defs>
+    <radialGradient id="jade" cx="38%" cy="32%" r="72%">
+      <stop offset="0%"   stop-color="#2DD4BF"/>
+      <stop offset="55%"  stop-color="#0D9488"/>
+      <stop offset="100%" stop-color="#0F766E"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#D97706"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. Outer orbit ring (orchestration boundary) -->
+  <circle cx="128" cy="128" r="96" fill="none" stroke="#0F766E" stroke-width="1.5" opacity="0.35"/>
+
+  <!-- 2. 8 SPI slot satellites -->
+  <g fill="#0F766E">
+    <circle cx="128" cy="32"  r="7"/>
+    <circle cx="196" cy="60"  r="7"/>
+    <circle cx="224" cy="128" r="7"/>
+    <circle cx="196" cy="196" r="7"/>
+    <circle cx="128" cy="224" r="7"/>
+    <circle cx="60"  cy="196" r="7"/>
+    <circle cx="32"  cy="128" r="7"/>
+    <circle cx="60"  cy="60"  r="7"/>
+  </g>
+
+  <!-- 3. ReAct loop arrow (3/4 circle, top → right → bottom → left, clockwise) -->
+  <path d="M 128 58 A 70 70 0 1 1 58 128"
+        fill="none" stroke="url(#gold)" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- arrow tip at (58,128), pointing south along the tangent -->
+  <polygon points="58,144 46,124 70,124" fill="#D97706"/>
+
+  <!-- 4. Central jade disc (the pivot) -->
+  <circle cx="128" cy="128" r="52" fill="url(#jade)"/>
+  <!-- inner highlight ring for depth -->
+  <circle cx="128" cy="128" r="44" fill="none" stroke="#FAFAF7" stroke-width="1" opacity="0.25"/>
+
+  <!-- 5. Compass / pivot mark inside the disc (no text — pure geometry) -->
+  <!--    North arm slightly thicker to suggest a compass needle -->
+  <g stroke-linecap="round" fill="none">
+    <!-- N arm (thicker) -->
+    <line x1="128" y1="100" x2="128" y2="128" stroke="url(#gold)" stroke-width="5"/>
+    <!-- S arm -->
+    <line x1="128" y1="128" x2="128" y2="156" stroke="url(#gold)" stroke-width="3.5"/>
+    <!-- E arm -->
+    <line x1="156" y1="128" x2="184" y2="128" stroke="url(#gold)" stroke-width="3.5" opacity="0.85"/>
+    <!-- W arm -->
+    <line x1="100" y1="128" x2="72"  y2="128" stroke="url(#gold)" stroke-width="3.5" opacity="0.85"/>
+  </g>
+
+  <!-- 6. Center pivot dot -->
+  <circle cx="128" cy="128" r="4.5" fill="#FAFAF7"/>
+</svg>
