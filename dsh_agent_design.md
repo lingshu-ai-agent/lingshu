@@ -298,6 +298,85 @@ public interface MemorySource {
 
 > **会话消息历史不是 `MemorySource`**:由 `AgentLooper` 持有并直接喂给 `PromptBuilder.build()`,生命周期是 growable 可变状态,跟静态 memory 不同。
 
+#### 4.5.1 System Prompt 装配顺序(v1.5.5 升级)
+
+`DefaultPromptBuilder.build(ctx)` 现在按下面顺序装配 system 块 → 喂给 LLM。每一段**可独立禁用**,空段被自动剔除:
+
+```text
+┌─ [ROLE] ───────────────────────────────────────────────┐
+│ 你是 {identity.name}, {identity.role}。 │
+│ 人格特质:{identity.traits.join('、')} │
+│ 语气:{identity.tone} │
+│ 输出语言:{identity.language} │
+│ (以上若对应字段为空,该行被跳过,不输出多余空段) │
+└────────────────────────────────────────────────────┘
+┌─ [INSTRUCTIONS] ────────────────────────────────────────┐
+│ (instructions.file 存在 → 读文件) │
+│ (否则用 instructions.inline) │
+│ (template-engine=mustache → 替换 {{var}}) │
+│ (整段为空 → 不输出该段,只走 memory + history) │
+└────────────────────────────────────────────────────┘
+┌─ [PROJECT MEMORY] ──────────────────────────────────────┐
+│ (memory.claudeMd.enabled=true 且 ./CLAUDE.md 存在) │
+│ <./CLAUDE.md 内容> │
+│ ─── separator ─── │
+│ (memory.claudeMd.enabled=true 且 ~/.lingshu/CLAUDE.md 存在) │
+│ <~/.lingshu/CLAUDE.md 内容> │
+│ ─── separator ─── │
+│ (memory.extras 按顺序) │
+│ <./docs/team-conventions.md 内容> │
+│ <./docs/architecture.md 内容> │
+└────────────────────────────────────────────────────┘
+┌─ [CONVERSATION HISTORY] ────────────────────────────────┐
+│ ...(现有 §6 行为) │
+└────────────────────────────────────────────────────┘
+┌─ [USER MESSAGE] ────────────────────────────────────────┐
+│ ... │
+└────────────────────────────────────────────────────┘
+```
+
+**装配伪代码**(给 `DefaultPromptBuilder` 参考):
+
+```java
+public Prompt build(TurnContext ctx) {
+    AgentConfig cfg = ctx.config();
+    Identity id = cfg.getIdentity() != null ? cfg.getIdentity() : Identity.defaults();
+    Instructions ins = cfg.getInstructions() != null ? cfg.getInstructions() : Instructions.empty();
+    Memory mem = cfg.getMemory() != null ? cfg.getMemory() : Memory.defaults();
+
+    StringBuilder sys = new StringBuilder();
+
+    // [ROLE]
+    appendIfPresent(sys, "你是 " + id.getName() + (isBlank(id.getRole()) ? "" : "," + id.getRole()));
+    appendIfPresent(sys, "人格特质:" + joinIfNonEmpty(id.getTraits(), "、"));
+    appendIfPresent(sys, "语气:" + id.getTone());
+    appendIfPresent(sys, "输出语言:" + id.getLanguage());
+
+    // [INSTRUCTIONS]
+    String insText = readInstructions(ins);   // 读文件 / 用 inline / 渲染 mustache
+    if (isNotBlank(insText)) sys.append("\n\n").append(insText);
+
+    // [PROJECT MEMORY]
+    if (mem.getClaudeMd() != null && mem.getClaudeMd().isEnabled()) {
+        appendFileIfExists(sys, mem.getClaudeMd().getProject());
+        appendFileIfExists(sys, mem.getClaudeMd().getUser());
+    }
+    for (Path extra : mem.getExtras()) {
+        appendFileIfExists(sys, extra);
+    }
+
+    // 喂 LLM:先 system 块,再 history + user message(现有逻辑)
+    return Prompt.builder()
+        .system(sys.toString())
+        .messages(ctx.history().messages())
+        .userMessage(ctx.currentUserInput())
+        .modelHints(cfg.getLlm().getMaxTokens(), cfg.getLlm().getTemperature())
+        .build();
+}
+```
+
+**Sub-agent 继承**(§6.6):父 Agent 启动子 Agent 时,若子 AgentConfig 没指定 `instructions`,自动继承父 Agent 的 `instructions.file`(路径不变);`memory.claudeMd` 路径默认沿用父 Agent 路径(避免每个 sub-agent 都重复声明 `./CLAUDE.md`)。
+
 ### 4.6 Tool 与 ToolExecutor(Slot 5)
 
 ```java
@@ -831,6 +910,8 @@ public class DefaultTurnContext implements TurnContext {
 package io.agent.core.runtime;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -865,6 +946,12 @@ public class AgentConfig {
     int llmTimeoutSeconds;
     /** ReAct 循环最大 step 数(一次 user input 内允许 Thought→Action→Observe 的轮数);0 = 不限。默认 50。 */
     int reactMaxSteps;
+    /** 🆕 v1.5.5 — Agent 业务身份/人格(详见 §8.1.1)。默认 null → 使用 Identity.defaults()。 */
+    Identity identity;
+    /** 🆕 v1.5.5 — System Prompt 配置(详见 §8.1.2)。默认 null → 不注入系统提示(只走 memory)。 */
+    Instructions instructions;
+    /** 🆕 v1.5.5 — 项目长期记忆(详见 §8.1.3)。默认 null → 不加载任何项目记忆。 */
+    Memory memory;
 
     @Value public static class Llm {
         String provider;            // anthropic | openai | ...
@@ -932,6 +1019,82 @@ public class AgentConfig {
          * 后期可扩 "git" / "s3" —— 通过 type 路由到对应 provider。
          */
         String location;
+    }
+
+    // ───── 🆕 v1.5.5 — 业务配置三件套 ─────────────────────────
+
+    /**
+     * Agent 业务身份 / 人格(详见 §8.1.1)。
+     * PromptBuilder 在 system 块顶部注入一段 [ROLE] 段;
+     * A2A AgentCard.name / description 直接读这个对象(详见 §5.6.3)。
+     */
+    @Value public static class Identity {
+        /** Agent 名,默认 "lingShu-agent"。给 Tool / A2A AgentCard 用。 */
+        String name;
+        /** 一句话角色定位,默认空(不注入角色段)。 */
+        String role;
+        /** LLM 输出语言偏好:"zh" | "en" | "auto"(默认 "auto")。 */
+        String language;
+        /** 人格特质列表(如 ["严谨","简洁","举反例"]),默认空。 */
+        List<String> traits;
+        /** 语气描述(如 "直接不啰嗦"),默认空。 */
+        String tone;
+        /** 头像 URI/路径(可选),CLI REPL / Web UI 用。 */
+        String avatar;
+
+        public static Identity defaults() {
+            return new Identity("lingShu-agent", null, "auto",
+                Collections.emptyList(), null, null);
+        }
+    }
+
+    /**
+     * System Prompt 配置(详见 §8.1.2)。
+     * file 优先(file 存在且可读);否则用 inline 字符串;否则整段为空(只走 memory + history)。
+     * 渲染规则由 templateEngine 决定:mustache = `{{var}}` 替换 variables;none = 原样。
+     */
+    @Value public static class Instructions {
+        /** 可选,文件路径(绝对/相对)。优先于 inline。 */
+        Path file;
+        /** 可选,内联字符串,file 不存在或未配置时回退到此。 */
+        String inline;
+        /** "mustache" | "none"(默认 "none")。 */
+        String templateEngine;
+        /** 注入到模板的变量映射,默认空。 */
+        Map<String, String> variables;
+
+        public static Instructions empty() {
+            return new Instructions(null, null, "none",
+                Collections.emptyMap());
+        }
+    }
+
+    /**
+     * 项目长期记忆(详见 §8.1.3)。
+     * claudeMd 字段启用时,PromptBuilder 会从 project / user 两个 .md 路径读取并注入 [PROJECT MEMORY] 段;
+     * extras 是额外 .md 文件路径列表(顺序敏感,后置注入)。
+     */
+    @Value public static class Memory {
+        /** CLAUDE.md 约定(对齐 Claude Code 心智),默认 enabled=true。 */
+        ClaudeMd claudeMd;
+        /** 额外 .md 记忆源路径列表,默认空。 */
+        List<String> extras;
+
+        public static Memory defaults() {
+            return new Memory(
+                new ClaudeMd(true, Paths.get("./CLAUDE.md"),
+                    Paths.get(System.getProperty("user.home"), ".lingshu", "CLAUDE.md")),
+                Collections.emptyList());
+        }
+    }
+
+    @Value public static class ClaudeMd {
+        /** 是否启用(默认 true);false → 整个 CLAUDE.md 段都不注入。 */
+        boolean enabled;
+        /** 项目级 CLAUDE.md 路径(默认 "./CLAUDE.md")。文件不存在则静默跳过。 */
+        Path project;
+        /** 用户级 CLAUDE.md 路径(默认 ~/.lingshu/CLAUDE.md)。文件不存在则静默跳过。 */
+        Path user;
     }
 }
 ```
@@ -1408,6 +1571,64 @@ agent:
 | v0.5-α | `A2aTransport` 接口 + `HttpJsonRpcA2aTransport` 默认实现 + `RemoteAgentTool` 同步模式(submit 后阻塞直到 completed)+ 单元测试 |
 | v0.5-β | `subscribe()` SSE 长连接 + `lingshu serve --a2a` 服务端暴露本地 Agent + AgentCard 缓存 |
 | v0.5-rc | `task.cancel()` 接入 CancellationToken(§14.12)+ gRPC transport 可选 + Audit/Cost 跨域打通 |
+
+#### 5.6.8 `LocalAgentCardGenerator` —— 从 `cfg.getIdentity()` 自动生成 AgentCard(v1.5.5)
+
+`§5.6.2` 四层架构中服务端模块 `lingshu-a2a-server` 的 `LocalAgentCardGenerator`,直接读 `AgentConfig.identity` 生成 A2A 标准 `AgentCard`,**零额外配置**:
+
+```java
+package io.agent.a2a.server;
+
+import io.agent.core.runtime.AgentConfig;
+import io.agent.core.runtime.AgentConfig.Identity;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.stereotype.Component;
+
+@Component
+public class LocalAgentCardGenerator {
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    /** 直接读 cfg.getIdentity(),没有额外 YAML 配置项。 */
+    public AgentCard generate(AgentConfig cfg) {
+        Identity id = cfg.getIdentity() != null ? cfg.getIdentity() : Identity.defaults();
+
+        ObjectNode skills = mapper.createObjectNode();
+        // 把 Agent 可调用的 tool 列表转成 A2A Skill 数组
+        cfg.getToolExecutor().listVisibleTools().forEach(t ->
+            skills.withArray("skills").add(mapper.createObjectNode()
+                .put("id", t.name())
+                .put("name", t.name())
+                .put("description", t.description())));
+
+        ObjectNode card = mapper.createObjectNode()
+            .put("name",         id.getName())                       // ← agent.identity.name
+            .put("description",  joinIfNonEmpty(id.getRole(), "/", id.getTone()))  // ← identity.role
+            .put("version",      "1.0.0")
+            .put("defaultInputModes",  "text")
+            .put("defaultOutputModes", "text")
+            .set("skills", skills)
+            .set("provider", mapper.createObjectNode()
+                .put("organization", "lingshu-ai-agent"));
+
+        // 可选:暴露 A2A 端点
+        if (id.getAvatar() != null) {
+            card.put("iconUrl", id.getAvatar());
+        }
+
+        return mapper.convertValue(card, AgentCard.class);
+    }
+
+    private static String joinIfNonEmpty(String a, String sep, String b) {
+        if (a == null) return b == null ? null : b;
+        if (b == null) return a;
+        return a + sep + b;
+    }
+}
+```
+
+**对用户的价值**:`agent.identity.name` / `role` / `avatar` 在 YAML 里改一行,`lingshu serve --a2a` 暴露的 `/.well-known/agent.json` 就自动跟着变,**完全不需要单独维护一份 A2A 配置**。
 
 ---
 
@@ -2516,6 +2737,41 @@ public class DelegateTool implements Tool {
 }
 ```
 
+#### 6.6.1 Sub-agent 继承策略(v1.5.5 升级)
+
+子 Agent 启动时,`loadConfigs()` 按下面规则把父 Agent 的 `Identity` / `Instructions` / `Memory` **合并进** `TypeConfig`,避免每个 sub-agent 都重复声明同一份 `./CLAUDE.md` 或同一条 system prompt:
+
+| 字段 | 子 Agent 未指定时 | 子 Agent 指定时 |
+|---|---|---|
+| `identity.name` | 沿用父 + `"(Sub-agent: {type})"` 后缀 | 完全替换 |
+| `identity.role` / `traits` / `tone` / `language` / `avatar` | 沿用父 | 完全替换 |
+| `instructions.file` | 沿用父的 `./prompts/system.md` | 完全替换 |
+| `instructions.inline` / `templateEngine` / `variables` | 沿用父 | 完全替换 |
+| `memory.claudeMd` | 沿用父的 `./CLAUDE.md` 路径 | 完全替换(可指向 sub-agent 专属 CLAUDE.md) |
+| `memory.extras` | 沿用父 | 完全替换 |
+
+实现:`AgentConfig.toBuilder()` 已经存在(Lombok `@Builder(toBuilder=true)`),合并代码:
+
+```java
+private AgentConfig inheritFromParent(AgentConfig parent, AgentConfig child) {
+    return child.toBuilder()
+        .identity(child.getIdentity() != null ? child.getIdentity()
+            : parent.getIdentity() != null
+                ? parent.getIdentity().toBuilder()
+                    .name(parent.getIdentity().getName() + " (Sub-agent: " + type.configKey() + ")")
+                    .build()
+                : Identity.defaults())
+        .instructions(child.getInstructions() != null ? child.getInstructions()
+            : parent.getInstructions() != null ? parent.getInstructions() : Instructions.empty())
+        .memory(child.getMemory() != null ? child.getMemory()
+            : parent.getMemory() != null ? parent.getMemory() : Memory.defaults())
+        .build();
+}
+```
+
+> **默认行为保守**:若父 Agent 也没配 `identity`,则回退到 `Identity.defaults()`(`name="lingShu-agent"`),避免出现 `null` 导致 NPE。
+> **合并是"完全替换"语义**,不是字段级 deep-merge —— 简化心智,需要精细控制的用户在 TypeConfig 里完整声明即可。
+
 ---
 
 ## 7. AgentFactory 与启动校验
@@ -2602,7 +2858,14 @@ INFO  AgentFactory         : using FlowEngine 'linear' → LinearTurnEngine
 
 ## 8. 配置文件
 
-### 8.1 YAML Schema(v1.4)
+> **核心原则(贯穿全章)**:每个 SPI 槽位都有 **出厂默认值**,YAML 里**用户没写的字段自动用默认**;**用户写了的字段完全覆盖默认**。
+> 这意味着:
+>
+> - **零配置启动**:写一个空的 `application.yml` + `@Bean AgentFactory` 就能跑 Agent
+> - **自测友好**:CI 里用最小 YAML 跑通,生产里再叠加业务配置
+> - **认知负担低**:用户不需要记住所有字段名,IDE 自动补全 + 默认值提示就够了
+
+### 8.1 YAML Schema(v1.5.5)
 
 ```yaml
 agent:
@@ -2658,6 +2921,40 @@ agent:
     max-steps: 50                  # ReAct 循环最大 step(Thought→Action→Observe 轮数);0 = 不限
 
   # ===== 业务配置 =====
+  # ===== 业务身份 / 人格(§8.1.1)=====
+  identity:
+    name: lingshu-engineer           # Agent 名(也用于 A2A AgentCard.name)
+    role: Java 后端工程师            # 一句话角色 → 进入 system prompt
+    language: zh                     # zh | en | auto
+    traits:                          # 人格特质列表 → 进入 system prompt
+      - 严谨
+      - 简洁
+      - 举反例
+    tone: 直接不啰嗦                 # 语气描述 → 进入 system prompt
+    avatar: ./assets/agent.png       # 可选,CLI REPL / Web UI 头像
+
+  # ===== System Prompt(§8.1.2)=====
+  instructions:
+    file: ./prompts/system.md        # 优先读文件(随仓库管理,IDE 高亮)
+    inline: |                        # 文件不存在时回退到内联字符串
+      你是 {identity.name},{identity.role}。
+      团队遵循 {{company}} 工程规范,默认 Java 8 + Spring Boot 2.7。
+    template-engine: mustache        # mustache | none
+    variables:
+      company: LingShu
+      year: 2026
+
+  # ===== 项目长期记忆(§8.1.3)=====
+  memory:
+    claude-md:                       # CLAUDE.md 约定(对齐 Claude Code)
+      enabled: true                  # 一键开关
+      project: ./CLAUDE.md           # 项目级(默认 ./CLAUDE.md)
+      user: ~/.lingshu/CLAUDE.md     # 用户级(默认 ~/.lingshu/CLAUDE.md)
+    extras:                          # 额外 .md 记忆源(按顺序注入)
+      - ./docs/team-conventions.md
+      - ./docs/architecture.md
+
+  # ===== 业务配置 =====
   delegate:
     prompts-dir: ./prompts/subagents
     types:
@@ -2699,6 +2996,262 @@ agent:
   flow-engine: dag   # → 一行切换,核心代码零改动
 ```
 
+#### 8.1.0 SPI 默认值总表 + 最小配置(零配置启动)
+
+> 每个 SPI 槽位都有**出厂默认值**;YAML 里**没写的字段自动用默认**;**写了完全覆盖默认**。
+> 这意味着下面三种写法启动出来的是**同一个 Agent**(都用默认值,差别只在表达风格):
+
+| 槽位 | YAML key | 默认值 | 未配置时行为 |
+|---|---|---|---|
+| 编排 | `agent.flow-engine` | `"linear"` | 走 `LinearTurnEngine`(ReAct Loop)|
+| LLM | `agent.llm.provider` | `"anthropic"` | 走 `AnthropicLlmProviderFactory` |
+| LLM | `agent.llm.model` | `"claude-sonnet-4-5"` | 默认 Claude Sonnet 4.5 |
+| LLM | `agent.llm.max-tokens` | `16000` | 单次 LLM 输出上限 |
+| LLM | `agent.llm.temperature` | `1.0`(Anthropic 默认) | 模型采样温度 |
+| LLM | `agent.llm.timeout-seconds` | `120` | 0 = 不超时 |
+| Prompt | `agent.prompt.builder` | `"default"` | 走 `DefaultPromptBuilder` |
+| Prompt | `agent.prompt.memory-sources` | `[]` | 无项目记忆(等价 v1.4 行为) |
+| Prompt | `agent.prompt.rag-top-k` | `8` | 仅 rag-augmented 用 |
+| Tool | `agent.tool-executor` | `"default"` | 走 `DefaultToolExecutor` |
+| Tool | `agent.tool.parallelism` | `8` | 同 turn 多 tool 并发上限 |
+| Tool | `agent.tool.timeout-seconds` | `30` | 单 tool 超时;0 = 不超时 |
+| Sandbox | `agent.sandbox.policy` | `"strict"` | 走 `StrictPermissionPolicy` |
+| Sandbox | `agent.sandbox.runtime` | `"chroot"` | 走 `ChrootRuntimeSandbox` |
+| Sandbox | `agent.sandbox.working-directory` | `"${user.dir}"` | 当前工作目录 |
+| Sandbox | `agent.sandbox.command-whitelist` | `[git, ls, cat, grep, find, mkdir, mv, cp, echo]` | Bash 工具白名单 |
+| Sandbox | `agent.sandbox.domain-whitelist` | `[github.com, maven.aliyun.com]` | WebFetch 域名白名单 |
+| Compactor | `agent.compactor` | `"truncating"` | 走 `TruncatingCompactor` |
+| Session | `agent.session-store` | `"file"` | 走 `FileSessionStore`(`~/.lingshu/sessions/`) |
+| ReAct | `agent.react.max-steps` | `50` | 0 = 不限 |
+| 业务 | `agent.identity.name` | `"lingShu-agent"` | 默认名 |
+| 业务 | `agent.identity.language` | `"auto"` | LLM 自动判定输出语言 |
+| 业务 | `agent.identity.traits/tone/role/avatar` | `null/[]` | 不注入对应 `[ROLE]` 行 |
+| 业务 | `agent.instructions` | `null` | 整段 system prompt 走 memory + history |
+| 业务 | `agent.memory.claude-md.enabled` | `true` | 加载 `./CLAUDE.md` + `~/.lingshu/CLAUDE.md` |
+| 业务 | `agent.memory.claude-md.project` | `"./CLAUDE.md"` | 项目级 CLAUDE.md |
+| 业务 | `agent.memory.claude-md.user` | `"~/.lingshu/CLAUDE.md"` | 用户级 CLAUDE.md |
+| 业务 | `agent.memory.extras` | `[]` | 无额外 .md 记忆源 |
+| Delegate | `agent.delegate` | `null` | 不启用 sub-agent |
+| MCP | `agent.mcp` | `null` | 不加载任何 MCP server |
+| Skills | `agent.skills` | `null` | 不加载任何 Skill(`/xxx` 命令全部报 "Unknown")|
+| Plugins | `agent.plugins.enabled` | `[]` | 不强制启用任何插件(由 classpath 自动发现)|
+
+**最小配置示例**(零配置启动 — 只要 1 行就能跑):
+
+```yaml
+# application.yml —— 空文件也能跑,这一行纯粹为了说明「默认」
+agent:
+  identity:
+    name: hello-world
+```
+
+或者**完全空**:
+
+```yaml
+# application.yml —— 注释也可以不要,Agent 用所有默认值启动
+```
+
+**最小可工作单元测试示例**(JUnit 5):
+
+```java
+@SpringBootTest
+class DefaultAgentSmokeTest {
+    @Autowired AgentFactory factory;
+    @Test void runsWithDefaults() {
+        Agent agent = factory.create(AgentConfig.builder().build());  // 全部走默认
+        RunResult r = agent.runBlocking("用 Java 写一个 fib 函数");
+        assertNotNull(r.getFinalText());
+        assertTrue(r.getFinalText().contains("fib"));
+    }
+}
+```
+
+> **CI 跑通门槛**:这个测试零配置跑通,意味着 PR 合入前不需要任何外部依赖(无 LLM key → 用环境变量 `LINGSHU_TEST_MODE=true` 走 mock LlmProvider,§14 待补)。
+
+#### 8.1.1 `agent.identity` —— Agent 人格
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `name` | string | ❌ | `"lingShu-agent"` | Agent 名,喂给 A2A AgentCard.name / CLI REPL 标题 |
+| `role` | string | ❌ | `null` | 一句话角色定位,拼进 system prompt 的 `[ROLE]` 段 |
+| `language` | enum | ❌ | `"auto"` | `zh`/`en`/`auto` —— LLM 输出语言偏好 |
+| `traits` | list[string] | ❌ | `[]` | 人格特质(如 `["严谨","简洁","举反例"]`),`join("、")` 拼进 `[ROLE]` 段 |
+| `tone` | string | ❌ | `null` | 语气描述(如 `"直接不啰嗦"`),拼进 `[ROLE]` 段 |
+| `avatar` | path | ❌ | `null` | 头像 URI/路径,CLI REPL / Web UI 渲染用 |
+
+**示例**:见 §8.1.4 完整示例。
+
+**未配置时的行为**:`Identity.defaults()` 自动生成 —— `name="lingShu-agent"`,其余空,**整个 `[ROLE]` 段不输出**(避免出现空白段落)。
+
+#### 8.1.2 `agent.instructions` —— System Prompt
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `file` | path | ❌ | `null` | 系统提示文件路径(相对/绝对)。**优先于 inline** |
+| `inline` | string | ❌ | `null` | 内联字符串。`file` 不存在或未配置时回退到此 |
+| `template-engine` | enum | ❌ | `"none"` | `mustache` / `none` —— 是否替换 `{{var}}` |
+| `variables` | map[string,string] | ❌ | `{}` | 注入模板的变量 |
+
+**优先级链**:`file 存在且可读` → `inline 非空` → `整段为空(只走 memory + history)`
+
+**模板示例**(文件 `./prompts/system.md`):
+
+```markdown
+你是 {{identity.name}},{{identity.role}}。
+团队遵循 {{company}} 工程规范,默认 Java 8 + Spring Boot 2.7。
+
+## 行为准则
+1. 改动前先读现有代码
+2. 每个 PR 配单元测试
+3. 不在 main 分支直接提交
+
+## 输出格式
+- 代码块用 fenced
+- 解释用中文,术语用英文
+```
+
+配合 YAML:
+
+```yaml
+agent:
+  instructions:
+    file: ./prompts/system.md
+    template-engine: mustache
+    variables:
+      company: LingShu
+```
+
+> **注意**:`{identity.name}` 这种引用是**运行时**解析的(§4.5.1 PromptBuilder 拿到 `Identity` 后再渲染),不是 YAML 解析期。所以改了 `agent.identity.name` 不需要重新写 `instructions.inline`。
+
+#### 8.1.3 `agent.memory` —— 项目长期记忆
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `claude-md.enabled` | bool | ❌ | `true` | 一键开关 `CLAUDE.md` 段(false → 不注入) |
+| `claude-md.project` | path | ❌ | `"./CLAUDE.md"` | 项目级路径,文件不存在则**静默跳过** |
+| `claude-md.user` | path | ❌ | `"~/.lingshu/CLAUDE.md"` | 用户级路径,文件不存在则**静默跳过** |
+| `extras` | list[path] | ❌ | `[]` | 额外 .md 记忆源,按顺序注入(每个文件不存在也静默跳过) |
+
+**注入顺序**(对应 §4.5.1 装配图 `[PROJECT MEMORY]` 段):
+
+1. `claude-md.project`(`./CLAUDE.md`)
+2. `claude-md.user`(`~/.lingshu/CLAUDE.md`)
+3. `extras[0]`
+4. `extras[1]`
+5. ...
+
+每个段之间用 `── separator ───` 分隔;**整个段都不存在时,`[PROJECT MEMORY]` 段被剔除,不输出空标题**。
+
+> **实现走的是 `MemorySource` SPI**(§4.5):每个 `ClaudeMdSource` / `ExtraFileSource` 是一个 SPI provider,不是硬编码,这样 `mtime` 监听 / hot-reload / 未来 `git` / `s3` 源都能复用 §6.4 SkillSource 的基础设施。
+
+#### 8.1.4 完整业务配置示例(Java 工程师 Agent)
+
+```yaml
+agent:
+  # ── 编排 & 基础设施(SPI 配置)──
+  flow-engine: linear
+  llm:
+    provider: anthropic
+    model: claude-sonnet-4-5
+    max-tokens: 16000
+  prompt:
+    builder: default
+    memory-sources: [project-claude-md, user-claude-md]
+  tool-executor: default
+  sandbox:
+    policy: strict
+    runtime: chroot
+    working-directory: ${user.dir}
+    command-whitelist: [git, ls, cat, grep, find, mvn, java]
+    domain-whitelist: [github.com, maven.aliyun.com]
+  compactor: truncating
+  session-store: file
+
+  # ── 运行时调优 ──
+  tool:
+    parallelism: 4
+    timeout-seconds: 30
+  react:
+    max-steps: 50
+
+  # ── 🆕 业务身份 / 人格 ──
+  identity:
+    name: lingshu-engineer
+    role: Java 后端工程师(熟悉 JDK 8 + Spring Boot 2.7)
+    language: zh
+    traits:
+      - 严谨(看到 unsafe cast 会立刻指出)
+      - 简洁(代码注释只解释 why,不解释 what)
+      - 举反例(给方案时主动列失败场景)
+      - 单元测试覆盖率 > 80% 才算"完成"
+    tone: 直接不啰嗦,一次说一件事
+    avatar: ./assets/agent-engineer.png
+
+  # ── 🆕 System Prompt ──
+  instructions:
+    file: ./prompts/system-engineer.md
+    inline: |
+      你是 {{identity.name}},{{identity.role}}。
+      默认 JDK 8 + Spring Boot 2.7;遇到 var/sealed/records 主动提示并改成 Lombok 写法。
+    template-engine: mustache
+    variables:
+      org: lingshu-ai-agent
+
+  # ── 🆕 项目长期记忆 ──
+  memory:
+    claude-md:
+      enabled: true
+      project: ./CLAUDE.md
+      user: ~/.lingshu/CLAUDE.md
+    extras:
+      - ./docs/team-conventions.md
+      - ./docs/spring-boot-2.7-migration.md
+
+  # ── 多 Agent 协作 ──
+  delegate:
+    prompts-dir: ./prompts/subagents
+    types:
+      explore:    { llm: { provider: anthropic, model: claude-haiku-4-5 },   tools: [Read, Grep, Glob] }
+      engineer:   { llm: { provider: anthropic, model: claude-sonnet-4-5 }, tools: [Read, Write, Edit, Bash] }
+      reviewer:   { llm: { provider: anthropic, model: claude-sonnet-4-5 }, tools: [Read, Grep, Glob] }
+      # reviewer's identity 继承父 agent,自动追加 "(Sub-agent: reviewer)"
+      reviewer:
+        llm:    { provider: anthropic, model: claude-sonnet-4-5 }
+        tools:  [Read, Grep, Glob]
+        instructions:
+          file: ./prompts/subagents/reviewer.md   # 完全替换父的 system prompt
+
+  # ── Skill 多源 ──
+  skills:
+    hot-reload: false
+    sources:
+      - { type: classpath,  location: classpath:skills/agent-builtin/ }
+      - { type: directory,  location: ./skills/ }
+      - { type: directory,  location: /mnt/team-skills/ }
+
+  # ── 插件 ──
+  plugins:
+    enabled:
+      - agent-llm-anthropic
+      - agent-mcp
+```
+
+**A2A AgentCard 自动生成**(本 YAML 对应的 AgentCard):
+
+```json
+{
+  "name": "lingshu-engineer",
+  "description": "Java 后端工程师(熟悉 JDK 8 + Spring Boot 2.7)",
+  "version": "1.0.0",
+  "skills": ["Read", "Grep", "Glob", "Write", "Edit", "Bash", ...],
+  "provider": { "organization": "lingshu-ai-agent" },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"]
+}
+```
+
+> **A2A 自动联动**:`LocalAgentCardGenerator`(`§5.6.2` 服务端模块)直接读 `cfg.getIdentity()`,**零额外配置**——`agent.identity.name` 自动成为 A2A 端点 `/.well-known/agent.json` 的 `name` 字段,`role` 成为 `description`。
+
 ### 8.2 配置绑定类:`AgentConfigProps` 与 `toAgentConfig()`
 
 Spring Boot `@ConfigurationProperties` 把 YAML 绑到 `AgentConfigProps`,
@@ -2734,6 +3287,10 @@ public class AgentConfigProps {
     private int approvalTimeoutSeconds = 0;
     private int turnTimeoutSeconds     = 0;
     @NestedConfigurationProperty private React    react = new React();
+    // 🆕 v1.5.5 — 业务配置三件套
+    @NestedConfigurationProperty private Identity     identity = new Identity();
+    @NestedConfigurationProperty private Instructions instructions;
+    @NestedConfigurationProperty private Memory       memory = new Memory();
 
     // ── 嵌套类 ──────────────────────────────────────────────
     public static class Llm {
@@ -2754,8 +3311,11 @@ public class AgentConfigProps {
         private String policy = "strict";
         private String runtime = "chroot";
         private String workingDirectory = "${user.dir}";
-        private List<String> commandWhitelist = new ArrayList<>();
-        private List<String> domainWhitelist  = new ArrayList<>();
+        // 🆕 v1.5.5 默认白名单(用户没配时生效);用户配了会完全覆盖
+        private List<String> commandWhitelist = Arrays.asList(
+            "git","ls","cat","grep","find","mkdir","mv","cp","echo");
+        private List<String> domainWhitelist = Arrays.asList(
+            "github.com","maven.aliyun.com");
         // getters / setters …
     }
     public static class Delegate {
@@ -2801,6 +3361,35 @@ public class AgentConfigProps {
         // getters / setters …
     }
 
+    // ───── 🆕 v1.5.5 — 业务配置三件套 ─────────────────────────
+    public static class Identity {
+        private String name = "lingShu-agent";
+        private String role;            // 默认 null(不注入角色行)
+        private String language = "auto"; // "zh" | "en" | "auto"
+        private List<String> traits = new ArrayList<>();
+        private String tone;            // 默认 null
+        private String avatar;          // 默认 null
+        // getters / setters …
+    }
+    public static class Instructions {
+        private String file;            // 优先读文件;不存在回退 inline
+        private String inline;          // 内联字符串
+        private String templateEngine = "none";  // "mustache" | "none"
+        private Map<String,String> variables = new LinkedHashMap<>();
+        // getters / setters …
+    }
+    public static class Memory {
+        @NestedConfigurationProperty private ClaudeMd claudeMd = new ClaudeMd();
+        private List<String> extras = new ArrayList<>();
+        // getters / setters …
+    }
+    public static class ClaudeMd {
+        private boolean enabled = true;
+        private String project = "./CLAUDE.md";
+        private String user    = "~/.lingshu/CLAUDE.md";
+        // getters / setters …
+    }
+
     // ── YAML → AgentConfig 转换 ─────────────────────────────
     public AgentConfig toAgentConfig() {
         Llm llmCfg = Llm.of(llm.getProvider(), llm.getModel(),
@@ -2840,6 +3429,34 @@ public class AgentConfigProps {
             skillsCfg = Skills.of(sources, skills.isHotReload());
         }
 
+        // ── v1.5.5 业务三件套:用户在 YAML 没写 → Identity/Instructions/Memory 默认实例 ──
+        // Identity 总是非 null(有 defaults());Instructions/Memory 也给非 null 但可能全空
+        io.agent.core.runtime.AgentConfig.Identity identityCfg = (identity == null)
+            ? io.agent.core.runtime.AgentConfig.Identity.defaults()
+            : io.agent.core.runtime.AgentConfig.Identity.of(
+                identity.getName(),
+                identity.getRole(),
+                identity.getLanguage(),
+                identity.getTraits(),
+                identity.getTone(),
+                identity.getAvatar());
+        io.agent.core.runtime.AgentConfig.Instructions instructionsCfg = (instructions == null)
+            ? io.agent.core.runtime.AgentConfig.Instructions.empty()
+            : io.agent.core.runtime.AgentConfig.Instructions.of(
+                instructions.getFile() != null ? Paths.get(instructions.getFile()) : null,
+                instructions.getInline(),
+                instructions.getTemplateEngine(),
+                instructions.getVariables());
+        io.agent.core.runtime.AgentConfig.Memory memoryCfg = (memory == null)
+            ? io.agent.core.runtime.AgentConfig.Memory.defaults()
+            : io.agent.core.runtime.AgentConfig.Memory.of(
+                io.agent.core.runtime.AgentConfig.ClaudeMd.of(
+                    memory.getClaudeMd() != null && memory.getClaudeMd().isEnabled(),
+                    Paths.get(memory.getClaudeMd() != null ? memory.getClaudeMd().getProject() : "./CLAUDE.md"),
+                    Paths.get(memory.getClaudeMd() != null ? memory.getClaudeMd().getUser()
+                        : System.getProperty("user.home") + "/.lingshu/CLAUDE.md")),
+                memory.getExtras());
+
         return AgentConfig.builder()
             .flowEngine(flowEngine)
             .llm(llmCfg)
@@ -2857,6 +3474,9 @@ public class AgentConfigProps {
             .turnTimeoutSeconds(turnTimeoutSeconds)
             .llmTimeoutSeconds(llm.getTimeoutSeconds() != null ? llm.getTimeoutSeconds() : 0)
             .reactMaxSteps(react.getMaxSteps())
+            .identity(identityCfg)
+            .instructions(instructionsCfg)
+            .memory(memoryCfg)
             .build();
     }
 
@@ -3292,6 +3912,7 @@ agent:
 | 1.5.2 | 2026-09-03 | **Skill 多源发现(classpath + directory)**:把单一 `FileSystemSkillLoader` 拆成 `SkillSource` SPI + 路由表(`SkillSourceRouter`),`SkillSourceProvider` v1 内置两种:`classpath`(随 jar 发布,如 `classpath:skills/agent-builtin/`)+ `directory`(本地/挂载目录,如 `./skills/` 或 `/mnt/team-skills/`),后期可扩 `git` / `s3` 不改 core 代码;新增 `CompositeSkillLoader.discover(cfg)` 聚合多源,同名 Skill 按 sources 顺序去重(先出现者优先,允许本地覆盖 classpath 内置);**新增** `AgentConfig.skills` 字段 + `Skills` / `SkillSource` 两个 `@Value` 嵌套类;**新增** §8.1 YAML `skills.sources[]` 数组 + `skills.hot-reload` 开关(directory 源自动重发现);**新增** §8.2 `AgentConfigProps.Skills` + `SkillSource` 嵌套类 + `toAgentConfig()` 映射;**删除** 旧的 `FileSystemSkillLoader` + `SkillProps` 单源绑定 |
 | 1.5.3 | 2026-09-03 | **FlowEngine 适配外部编排引擎(Google ADK / Alibaba Graph / LangGraph4j)**:新增 §4.11.1 适配器契约(5 个桥接问题:Event / Tool / Skill / Session / Prompt);新增 §4.11.2 `GoogleAdkFlowEngineProvider` 参考实现(name=`adk`, priority=5)— 把 ADK Runner 包到 runTurn 内,事件翻译 + 走我们的 ToolExecutor;新增 §4.11.3 `AlibabaGraphFlowEngineProvider` 参考实现(name=`alibaba-graph`, priority=5)— 把 StateGraph 的 `invoke` 桥接到 sink;明确**Adapter 不复制 Slot,只翻译 Slot**:ToolExecutor / PromptBuilder / Compactor / SessionStore / Sandbox 全部复用 core 实现;YAML 切换:`agent.flow-engine: adk` 或 `alibaba-graph` 一行切,业务代码 / Slot / Tool / Skill 全不动 |
 | 1.5.4 | 2026-09-04 | **A2A 协议补全 + Maven 结构对齐 GitHub 组织**:**A2A** §3 架构图新增 Slot 9 `A2aTransport`;新增 §5.6(7 小节:为何不做 Tool / 4 层架构 / 3 个新接口草图 / SPI 总表更新 / YAML `agent.a2a.*` / 与 §9.4 DelegateTool 的关系 / v0.5-α/β/rc 落地里程碑);`lingush-core/a2a/` 包新增 `A2aTransport` + `AgentCard` + `Task` + `Message` + `AgentRef` + `TaskEvent` 6 个领域类型;**Maven** §10 改写:核心引擎 `lingshu` 仓明确为单仓父子 Maven(groupId `ai.lingshu`),加入 `lingshu-a2a-client` / `lingshu-a2a-server` / `lingshu-examples` 三个新模块;新增 §10.1 父 POM 锁定项 + §10.2 `lingshu-examples` 双层定位(仓内模块 vs 独立仓「策展集」)+ §10.3 `lingshu-cli` 独立仓已并入 `lingshu/lingshu-cli/`(旧仓归档);`lingshu-docs` / `lingshu-website` / `lingshu-skill-market` 保持独立仓(非 Java 生态) |
+| 1.5.5 | 2026-09-06 | **业务配置三件套(persona / instructions / memory)补全 + 零配置启动原则**:**§4.12.2 AgentConfig** 新增 3 个 `@Value` 嵌套类 `Identity`(name/role/language/traits/tone/avatar)+ `Instructions`(file/inline/templateEngine/variables)+ `Memory`(claudeMd + extras);顶层加 3 个对应字段 + `Identity.defaults()` / `Instructions.empty()` / `Memory.defaults()` 三个静态工厂方法;**§4.5.1 PromptBuilder** 新增 5 段装配顺序图([ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] / [CONVERSATION HISTORY] / [USER MESSAGE])+ 完整伪代码 + 父子 Agent 继承说明;**§6.6.1 DelegateTool** 新增 sub-agent 继承策略表 + `inheritFromParent()` 实现;**§8.0 SPI 默认值总表 + 最小配置示例** 新增零配置启动原则 + 27 个字段默认值表 + 完全空 YAML 示例 + JUnit 5 默认配置 smoke test 示例;**§8.1.1/8.1.2/8.1.3/8.1.4** 新增 identity/instructions/memory 详细字段表 + 模板示例 + 「Java 工程师 Agent」完整业务配置示例(含 A2A AgentCard 自动生成示例);**§8.2 AgentConfigProps** 新增 3 个 `@NestedConfigurationProperty` 字段 + 4 个对应嵌套类(Identity/Instructions/Memory/ClaudeMd)+ Sandbox.commandWhitelist/domainWhitelist 默认白名单 + `toAgentConfig()` 完整默认值兜底逻辑;**§5.6.8 LocalAgentCardGenerator** 新增「从 `cfg.getIdentity()` 自动生成 AgentCard」代码(零额外 YAML 配置);**§13** 加 v1.5.5 条目 |
 
 ---
 
