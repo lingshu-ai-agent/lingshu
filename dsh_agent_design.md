@@ -1,15 +1,15 @@
-# DSH Agent Engine — 设计文档 v1.5.3
+# DSH Agent Engine — 设计文档 v1.5.6
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.3(已锁定,可上线 1.0)
-> **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"
-> **状态**:设计阶段冻结,进入实现准备期
+> **版本**:v1.5.6(需求工程层补全,进入 SpecKit + Claude Code 实施准备期)
+> **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
+> **状态**:设计阶段冻结,需求工程层补全完毕(§0.3 Personas + §0.4 验收标准 + §14.15 NFR + §15 Error Catalog + §16 Glossary + §17 Risk Register)
 
 ---
 
 ## 目录
 
-0. 目标与非目标
+0. 目标与非目标(含 §0.3 Personas + §0.4 Acceptance Criteria)
 1. 锁定的设计决策(总览)
 2. 架构总览
 3. 模块划分
@@ -23,7 +23,10 @@
 11. 插件开发指引
 12. 开放问题(留给未来)
 13. 变更历史
-14. 生产化增强(N1—N13)
+14. 生产化增强(N1—N13,含 §14.15 NFR 总账)
+15. Error Catalog(错误码全表)
+16. Glossary(术语表)
+17. Risk Register(风险登记册)
 
 ---
 
@@ -46,6 +49,108 @@
 - 不做 LLM 摘要式 Compactor(留给 v2 SPI 实现)。
 - 不做发现式子 Agent 注册(只接受枚举 + 显式 yml)。
 - 不做 Skill 的模糊匹配 / 命令行补全(`/xxx` 严格匹配 SKILL.md 目录名)。
+
+### 0.3 Personas 与典型使用故事
+
+> **Persona** 是 SpecKit `/specify` 模板必填项。这里给出 v1.0 重点服务的 3 类用户,每类一段 user story + 触发它的文档章节锚点。
+
+#### Alice — 第三方插件开发者
+
+> **As a** Java 开发者,在企业内做"AI 编码助手"产品,
+> **I want to** 通过 SPI 注入自定义 `LlmProvider`(走企业内 Anthropic 代理) / `ToolExecutor`(对接内部 wiki API) / `SandBoxer`(内网合规)而不需要 fork LingShu 主仓,
+> **so that** 我可以专注业务接入,LingShu 主线升级不会破坏我的实现。
+
+- **典型触发**:写一个 `lingshu-internal-llm` jar,实现 `LlmProvider` 接口,在 `META-INF/spring/...AutoConfiguration.imports` 注册一行
+- **验证路径**:§5 SPI 机制 + §11 插件开发指引 + §14.13 插件版本治理
+- **KPI**(自己写插件后):从 clone lingshu 到自己 Provider 跑通 Hello World ≤ 30 分钟
+
+#### Bob — Agent 业务配置方(企业 IT/架构师)
+
+> **As a** 企业 IT 架构师,要给 200 个开发者配"编码助手"模板,
+> **I want to** 只用一份 `application.yml`(配合 `CLAUDE.md` 项目记忆)就能启动一个有完整 ReAct Loop / Tool 调用 / 审计的 Agent,
+> **so that** 我不需要给每个团队培训 Java 代码,直接 yml 版本化 + GitOps。
+
+- **典型触发**:写一份 `application.yml`,配置 `llm.provider` / `tools` / `identity` / `memory.claude-md`,`SpringApplication.run()` 启动
+- **验证路径**:§8 配置文件(零配置 + 27字段默认)+ §8.1.4 「Java 工程师 Agent」完整业务配置示例 + §14 N1-N13 生产化
+- **KPI**:从空白 yml 到第 1 个工具调用响应 ≤ 5 分钟;零配置场景下空 yml 也能启动
+
+#### Charlie — LingShu 核心仓贡献者
+
+> **As a** LingShu 核心仓维护者,
+> **I want to** 新增一个 Slot(比如 v2 加 `CompactorProvider` 用于摘要压缩)时,影响面只局限在该 Slot 接口 + 它的 Router + 测试,不动其他 8 个 Slot,
+> **so that** 主仓可独立演进 + 测试覆盖率不退化 + 插件作者不会被打破 API。
+
+- **典型触发**:加一个 `CompactorProvider` SPI,实现 `CompactorRouter`,补单元测试 + integration test,PR 走 §11 流程
+- **验证路径**:§4 核心接口 + §5 SPI 机制 + §7 AgentFactory 启动校验 + §11 插件开发指引
+- **KPI**:新增一个 Slot 从 design doc 到 PR 合入 ≤ 3 天,且不引入 breaking change
+
+### 0.4 v1.0 Acceptance Criteria(验收标准)
+
+> 这是 v1.0 发布的硬性"通过/不通过"清单。每条都是**黑盒可断言**的,Claude Code 自测 + 你 review 都以此为准。**全部通过**才能 tag `v1.0.0`。
+
+#### AC-01 零配置启动
+
+**Given** 一份空 `application.yml`(只有 `spring.application.name=lsh-empty` 一行)
+**When** 执行 `java -jar lingshu-examples/demo-empty-1.0.jar`
+**Then** 进程在 30 秒内返回首个 LLM 流式 token,且 stderr 输出零 ERROR 级别日志
+
+#### AC-02 SPI 全 Slot 可替换
+
+**Given** yml 切到 `agent.llm.provider: anthropic@2-beta`(同 name 不同 version)
+**When** 启动 + 跑 1 个 turn
+**Then** 进程里实际生效的 `LlmProvider.name()` 返回 `"anthropic@2-beta"`;**且** in-flight turn 不重启就被切到新版本(§14.8 配置热更新同时验证)
+
+#### AC-03 Tool 并发加速
+
+**Given** yml `agent.tool.parallelism: 4` + 注册 4 个独立 `read_file` tool,且每个 tool 延迟 ≈ 1s
+**When** 在 prompt 里同时请求 4 个文件
+**Then** wall-clock 时间 ≤ 1.3 秒(对比串行基线 4.0s,**加速比 ≥ 3.0×**);§6.1 LinearTurnEngine 共享 ExecutorService + 顺序归集验证
+
+#### AC-04 取消传播
+
+**Given** Agent 正在跑一个 30 步的 turn
+**When** 用户按 Ctrl-C(JVM shutdown hook 触发)
+**Then** 200ms 内所有 in-flight turn 停止;partial 响应 + `stopReason=CANCELLED` 已写入 §14.10 AuditLog;§14.12 CancellationToken 三层贯通验证
+
+#### AC-05 多租户隔离
+
+**Given** 配置 `agent.tenants[alice]` 与 `agent.tenants[bob]`,每个有独立的 memory dir + cost budget + sandbox whitelist
+**When** Tenant Alice 跑一个 turn 写到 memory,后切到 Tenant Bob 跑
+**Then** memory 文件零交叉;cost budget 独立计数;sandbox whitelist 各生效;§14.9 TenantContext ThreadLocal + 配置/Session/Sandbox/Cost 四维隔离验证
+
+#### AC-06 YAML 热更无中断
+
+**Given** Agent 正在跑 turn T1,同时外部进程修改 `application.yml` 的 `agent.sandbox.command-whitelist`(新增 `git`)
+**When** T1 完成前(下一个 turn T2 开始时)
+**Then** T2 可见新的 `git` 允许执行;T1 不被中断,使用的仍是旧 whitelist(§14.8 AgentConfigRegistry AtomicReference swap + 旧 turn 冻结)
+
+#### AC-07 ReAct 上限
+
+**Given** yml `agent.react.max-steps: 3`,且 LLM mock 每次只返回 tool call(不返回 final answer)
+**When** 跑一个会无限循环的 prompt
+**Then** 第 3 步之后发 `MaxStepsExceeded(3, totalUsage=...)` 事件,然后 turn 正常 `done()`,**不**无限循环;§1.5.1 ReAct 守卫验证
+
+#### AC-08 插件版本治理
+
+**Given** classpath 里有两个同 `name="anthropic"` 但 `version="1"` 与 `version="2-beta"` 的 Provider
+**When** 启动 Agent
+**Then** 启动校验 **FAIL**,报错明确指出:"slot=llm, name=anthropic, version 冲突: 1 vs 2-beta";§14.13 兼容性检测验证
+
+#### AC-09 业务配置三件套完整可用
+
+**Given** yml 配置 `agent.identity.name=Java Engineer` + `agent.instructions.inline=...` + `agent.memory.claude-md.path=./CLAUDE.md`
+**When** 跑一个 turn
+**Then**:
+- system prompt 第一段是 `[ROLE] Java Engineer` + identity.traits 展开
+- 中间是 instructions 模板渲染结果
+- 后跟 `[PROJECT MEMORY] <CLAUDE.md 内容>`
+- §4.5.1 PromptBuilder 5 段装配顺序验证;§8.1.4 「Java 工程师 Agent」示例可跑通
+
+#### AC-10 A2A AgentCard 自动生成
+
+**Given** 启用了 `lingshu-a2a-server` 模块 + yml 配了 `agent.identity.*`
+**When** HTTP `GET /.well-known/agent.json`
+**Then** 返回的 `AgentCard` 包含 `name` / `description` / `version` 字段,**且**直接来源于 `cfg.getIdentity()`,无需额外 yml;§5.6.8 LocalAgentCardGenerator 验证
 
 ---
 
@@ -3738,6 +3843,23 @@ lingshu-skill-market/← github.com/lingshu-ai-agent/lingshu-skill-market (SKILL
 - License / SCM / developers 信息(发布到 Maven Central 时用)
 - 子模块 `<modules>` 段按上面的树状图顺序列出
 
+**`<properties>` 锁定的版本号**(核心仓实际使用清单,作为 v1.0 基线):
+
+| 依赖 | 版本 | 用途 | 锁定理由 |
+|---|---|---|---|
+| Java 编译目标 | 1.8 | 全仓编译级别 | 用户硬约束(企业 JDK 8) |
+| `spring-boot-dependencies` | 3.2.x(运行在 JDK 17,但编译目标 8)| BOM 引入 | Spring Boot SPI 必需;**注意:LingShu 二进制 target=8,Spring 自身在 user runtime 需 JDK 17**(详见 §14.15.5 兼容矩阵) |
+| `org.projectlombok:lombok` | 1.18.30 | `@Value` / `@Builder` | JDK 8 兼容的最新 LTS |
+| `org.reactivestreams:reactive-streams` | 1.0.4 | JDK 8 标准 Reactive Streams | JDK 8 没有 `Flow` 等价物,必须显式引入 |
+| `com.fasterxml.jackson.core:jackson-databind` | 2.15.x | YAML 解析 / AgentCard JSON | Spring Boot BOM 管理 |
+| `io.opentelemetry:opentelemetry-api` | 1.32.x | §14.1 trace / metrics | OTel 1.x 是 LTS,2.x 与 1.x API 不兼容 |
+| `org.springframework.boot:spring-boot-starter-actuator` | 3.2.x | §14.5 HealthIndicator | Spring Boot BOM 管理 |
+| `org.junit.jupiter:junit-jupiter` | 5.10.x | 单元测试 | JUnit 5 是 Java 8+ 现代选择 |
+| `org.assertj:assertj-core` | 3.24.x | 流式断言 | 替代 JUnit assert,可读性 +30% |
+| `org.mockito:mockito-core` | 5.x | Mock 框架 | JDK 21+ Mockito 6 不兼容 JDK 8 |
+| `org.awaitility:awaitility` | 4.2.x | 异步事件断言 | 测 `Subscriber.onNext` 时等待 |
+| `org.yaml:snakeyaml` | 2.x | application.yml 解析 | Spring Boot BOM 管理;**注意:snakeyaml 2.x 不再支持 JDK 8,但 Spring Boot 3.2.x 通过 `snakeyaml-engine` 适配,无需手动指定** |
+
 子模块 `lingshu-core/pom.xml` 关键依赖:
 
 ```xml
@@ -3781,6 +3903,38 @@ lingshu-skill-market/← github.com/lingshu-ai-agent/lingshu-skill-market (SKILL
     </plugins>
 </build>
 ```
+
+**测试模块(`lingshu-core/src/test/java`)配套依赖**(CI 必须通过):
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.awaitility</groupId>
+        <artifactId>awaitility</artifactId>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+> **版本升级政策**(详见 §14.15.6 支持矩阵):
+> - Spring Boot:跟随 Spring Boot OSS 节奏,每年 1 次 minor 升级支持窗口
+> - Lombok:跟随 1.18.x patch 升级,minor 升级需全仓 CI 验证
+> - OTel:跟随 OTel 1.x patch 升级,**不跨 1.x → 2.x**(API 不兼容)
 
 ### 10.2 `lingshu-examples` 的双层定位
 
@@ -3913,6 +4067,7 @@ agent:
 | 1.5.3 | 2026-09-03 | **FlowEngine 适配外部编排引擎(Google ADK / Alibaba Graph / LangGraph4j)**:新增 §4.11.1 适配器契约(5 个桥接问题:Event / Tool / Skill / Session / Prompt);新增 §4.11.2 `GoogleAdkFlowEngineProvider` 参考实现(name=`adk`, priority=5)— 把 ADK Runner 包到 runTurn 内,事件翻译 + 走我们的 ToolExecutor;新增 §4.11.3 `AlibabaGraphFlowEngineProvider` 参考实现(name=`alibaba-graph`, priority=5)— 把 StateGraph 的 `invoke` 桥接到 sink;明确**Adapter 不复制 Slot,只翻译 Slot**:ToolExecutor / PromptBuilder / Compactor / SessionStore / Sandbox 全部复用 core 实现;YAML 切换:`agent.flow-engine: adk` 或 `alibaba-graph` 一行切,业务代码 / Slot / Tool / Skill 全不动 |
 | 1.5.4 | 2026-09-04 | **A2A 协议补全 + Maven 结构对齐 GitHub 组织**:**A2A** §3 架构图新增 Slot 9 `A2aTransport`;新增 §5.6(7 小节:为何不做 Tool / 4 层架构 / 3 个新接口草图 / SPI 总表更新 / YAML `agent.a2a.*` / 与 §9.4 DelegateTool 的关系 / v0.5-α/β/rc 落地里程碑);`lingush-core/a2a/` 包新增 `A2aTransport` + `AgentCard` + `Task` + `Message` + `AgentRef` + `TaskEvent` 6 个领域类型;**Maven** §10 改写:核心引擎 `lingshu` 仓明确为单仓父子 Maven(groupId `ai.lingshu`),加入 `lingshu-a2a-client` / `lingshu-a2a-server` / `lingshu-examples` 三个新模块;新增 §10.1 父 POM 锁定项 + §10.2 `lingshu-examples` 双层定位(仓内模块 vs 独立仓「策展集」)+ §10.3 `lingshu-cli` 独立仓已并入 `lingshu/lingshu-cli/`(旧仓归档);`lingshu-docs` / `lingshu-website` / `lingshu-skill-market` 保持独立仓(非 Java 生态) |
 | 1.5.5 | 2026-09-06 | **业务配置三件套(persona / instructions / memory)补全 + 零配置启动原则**:**§4.12.2 AgentConfig** 新增 3 个 `@Value` 嵌套类 `Identity`(name/role/language/traits/tone/avatar)+ `Instructions`(file/inline/templateEngine/variables)+ `Memory`(claudeMd + extras);顶层加 3 个对应字段 + `Identity.defaults()` / `Instructions.empty()` / `Memory.defaults()` 三个静态工厂方法;**§4.5.1 PromptBuilder** 新增 5 段装配顺序图([ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] / [CONVERSATION HISTORY] / [USER MESSAGE])+ 完整伪代码 + 父子 Agent 继承说明;**§6.6.1 DelegateTool** 新增 sub-agent 继承策略表 + `inheritFromParent()` 实现;**§8.0 SPI 默认值总表 + 最小配置示例** 新增零配置启动原则 + 27 个字段默认值表 + 完全空 YAML 示例 + JUnit 5 默认配置 smoke test 示例;**§8.1.1/8.1.2/8.1.3/8.1.4** 新增 identity/instructions/memory 详细字段表 + 模板示例 + 「Java 工程师 Agent」完整业务配置示例(含 A2A AgentCard 自动生成示例);**§8.2 AgentConfigProps** 新增 3 个 `@NestedConfigurationProperty` 字段 + 4 个对应嵌套类(Identity/Instructions/Memory/ClaudeMd)+ Sandbox.commandWhitelist/domainWhitelist 默认白名单 + `toAgentConfig()` 完整默认值兜底逻辑;**§5.6.8 LocalAgentCardGenerator** 新增「从 `cfg.getIdentity()` 自动生成 AgentCard」代码(零额外 YAML 配置);**§13** 加 v1.5.5 条目 |
+| 1.5.6 | 2026-09-06 | **需求工程层补全(SpecKit + Claude Code 输入源就绪)**:**§0.3 Personas** 新增 3 类典型用户故事(Alice 插件开发者 / Bob 业务配置方 / Charlie 核心仓贡献者)+ KPI 验证路径;**§0.4 v1.0 Acceptance Criteria** 新增 10 条黑盒可断言标准(AC-01 零配置启动 / AC-02 SPI 全 Slot 可替换 / AC-03 Tool 并发加速 / AC-04 取消传播 / AC-05 多租户隔离 / AC-06 YAML 热更无中断 / AC-07 ReAct 上限 / AC-08 插件版本治理 / AC-09 业务配置三件套 / AC-10 A2A AgentCard 自动生成);**§10.1 父 POM** 补 12 项依赖版本表(Spring Boot 3.2.x / Lombok 1.18.30 / OTel 1.32.x / JUnit 5.10.x / AssertJ 3.24.x / Mockito 5.x / Awaitility 4.2.x 等)+ 测试模块依赖完整清单 + 版本升级政策;**§14.15 NFR 总账** 新增 8 个子节(性能预算 9 项 / 安全威胁模型 8 项 / SLO 8 项 / 可观测性四件套 / 兼容性矩阵 11 项 / 支持矩阵 6 项 LTS 政策 / 测试策略 7 层金字塔 / 文档完整度自检 14 项 GA 卡点);**§15 Error Catalog** 新增 8 域 24 条 ErrorCode 全表(Config / Slot / LLM / Tool / Sandbox / ReAct / Audit / 其他)+ `LINGS-<域><编号>` 编码约定;**§16 Glossary** 新增 22 个术语集中释义表(Slot / Provider / SlotRouter / FlowEngine / LinearTurnEngine / ReAct Loop / DelegateTool / SubAgentType / A2aTransport / AgentCard / SkillSource / Skill / Session / Turn / TurnContext / Identity / Instructions / CLAUDE.md / CircuitBreaker / TenantContext / CancellationToken / Zero-config / @Value);**§17 Risk Register** 新增 12 条风险登记(R-01—R-12,带概率×影响=分值排序 + Owner + 触发条件)+ review 节奏(月度 + RC + GA);**§13** 加 v1.5.6 条目;**§0** 标题块状态描述补"进入 SpecKit + Claude Code 实施准备期" |
 
 ---
 
@@ -4325,6 +4480,284 @@ N4 CostBudget ──────────────→ TurnContext ←─�
 **推荐落地顺序**:`N5 → N2 → N3 → N1 → N4 → N12 → N6 → N11 → N7 → N10 → N8 → N9 → N13`
 (由小到大、由内到外、由通用到场景)
 **完成 v1.5 即视为"可上线 1.0"**;之后再迭代都是体验 / 性能优化,不再补"必要能力"。
+
+### 14.15 NFR 总账(Non-Functional Requirements)
+
+> §14.1—§14.14 是"具体能力 N1—N13",本节是**面向生产决策的横向 NFR 表**,供 v1.0 release readiness review 时逐项打勾。**所有数字基线**(P99 延迟、SLO、并发上限)**在 v1.0.0 GA 前需要压测确认**,如实际偏离 > 20%,需要回头改 §14 实施细节。
+
+#### 14.15.1 性能预算(Performance Budget)
+
+| 指标 | v1.0 目标 | 测量方法 | 备注 |
+|---|---|---|---|
+| **LLM 流式首 token 延迟** | P50 ≤ 1.5s / P99 ≤ 3.0s | §14.1 OTel `agent.llm.ttft` histogram | 网络抖动不计;**P99 包含 Anthropic SDK TCP 握手 + 鉴权 1 次** |
+| **turn 完成延迟(10 steps 内)** | P50 ≤ 30s / P99 ≤ 60s | `agent.turn.duration` histogram | 含 tool dispatch 并行 |
+| **Tool 调用单次延迟** | P99 ≤ toolTimeoutSec(默认 30s)| `agent.tool.duration` per-tool | 超时由 §14.3 CircuitBreaker 兜底 |
+| **最大并发 turn 数** | 默认 16(可配 `agent.factory.max-turns`) | `agent.turns.in_flight` gauge | 超过排队,排队深度 ≤ 32 |
+| **最大 session 数** | 默认 1000(可配 `agent.session-store.capacity`)| `agent.session.count` gauge | 超过 LRU 淘汰 |
+| **单 turn 最大 history tokens** | 100K(超过触发 §14.11 PromptCache 强制压缩)| `agent.history.tokens` gauge | 防御 OOM |
+| **单 session 最大 cost** | `agent.cost.session-budget-micros`(默认 1 USD)| `agent.cost.session.spent` counter | 超 §14.4 拒绝新 turn |
+| **JVM heap 上限** | 默认 4G(配置 `-Xmx` 可调)| `jvm.memory.heap.used` | LinearTurnEngine + Tool dispatch 各占约 30% |
+| **冷启动到首个 token 时间** | ≤ 30s(空 yml 场景,验证 AC-01)| `agent.startup.duration` timer | SPI 加载 + Bean 装配 + LLM 连接 |
+
+#### 14.15.2 安全威胁模型(Security Threat Model)
+
+| 威胁 | 攻击面 | 缓解策略 | 验证位置 |
+|---|---|---|---|
+| **Prompt injection(用户输入恶意指令)** | LLM prompt 拼装 | (a) `Instructions` 段必须先于 user input;(b) §14.11 system prompt 标记 `<role>system</role>` + Anthropic cache 优先级;(c) Tool 输出过滤层(可选 SPI `PromptSanitizer`)| §4.5.1 5 段装配顺序 + §14.11 |
+| **Tool 输出窃取密钥** | Tool 返回串含 API key / token | §14.10 AuditLog 写前走 `SecretRedactor`(正则 + key prefix 列表)| §14.10 + §15 ErrorCode `AUDIT_REDACT_FAILED` |
+| **Sandbox escape** | `bash` / `python` 工具跑恶意命令 | §6.3 Sandbox 命令/域白名单 + JVM 内 chroot(§0.2 不上 gVisor);**默认 deny 一切**(零配置白名单只含 `cat` / `head` / `grep` 等读类)| §6.3 + §15 ErrorCode `SANDBOX_DENIED` |
+| **API key 泄漏到日志** | 日志误打 LLM request body | (a) §14.10 AuditLog redact 必启;(b) OTel Span attribute 黑名单:`apiKey` / `authorization`;(c) SLF4J `MaskingPatternLayout`(Logback)| §14.10 + §15 `AUDIT_REDACT_FAILED` |
+| **YAML 反序列化漏洞** | SnakeYAML 解析恶意 YAML | Spring Boot 3.2.x 默认 `snakeyaml-engine`(已修复 CVE-2022-1471);yml 中禁止 `!!javax.script.JdkScriptEngineFactory` 等危险 tag| §10.1 依赖表 |
+| **JVM 反序列化漏洞** | SessionStore 反序列化历史 | (a) `SessionStore` 默认存 JSON 不存 Java 序列化对象;(b) `ObjectInputStream` 禁用;(c) Session payload schema version 字段| §14.7 |
+| **租户越权访问** | Tenant A 读 Tenant B memory | §14.9 TenantContext ThreadLocal + memory path 模板 + cost budget 隔离;sandbox whitelist 也按租户分| §14.9 + AC-05 |
+| **依赖供应链攻击** | Maven 依赖被植入后门 | (a) 父 POM 锁定版本 + `dependency:tree` CI 检查;(b) 内网 mirror + GPG 签名校验;(c) `dependabot.yml` 监控 CVE| §10.1 + §14.15.6 |
+
+#### 14.15.3 可观测性 SLO(Service Level Objective)
+
+| SLI | SLO 目标 | 测量窗口 | 错误预算 |
+|---|---|---|---|
+| **Turn 成功率** | ≥ 99.5%(非用户错误,如 config / 拼写错误不算)| 7 天滚动 | 0.5% 错误率 → 7 天可失败 5040 次 / 1M 次 |
+| **P99 turn 延迟** | ≤ 60s(10 steps 内,见 §14.15.1)| 7 天滚动 | 超过则触发告警 |
+| **LLM API 错误率** | ≤ 0.1%(网络抖动不计)| 24 小时滚动 | 超过则自动 §14.2 RetryPolicy + §14.3 CircuitBreaker 切换 |
+| **Tool 错误率** | per-tool ≤ 5%(§14.3 阈值)| 24 小时滚动 | 超过 → CircuitBreaker OPEN |
+| **AuditLog 落盘率** | 100%(append-only 文件)| 实时 | 磁盘满时 panic 并退出进程(显式 fail-fast)|
+| **MTBF(Mean Time Between Failures)** | ≥ 720h(30 天)| 长期 | < 30 天需事后 review |
+| **MTTR(Mean Time To Recover)** | ≤ 15min | 单次事件 | 包含诊断 + hotfix + 回滚 |
+| **Startup 时间** | P99 ≤ 30s(空 yml)| 单进程 | 超过则 §7 AgentFactory bootstrap 加 metric 排查 |
+
+**SLO 看板**(Grafana): `dashboards/lingshu-slo.json` 随 `lingshu-observability` 模块发布。
+
+#### 14.15.4 可观测性四件套(必装)
+
+| 维度 | 实现 | 默认开启 |
+|---|---|---|
+| **Metrics** | §14.1 OpenTelemetry Micrometer bridge → Prometheus | ✅(`agent.metrics.enabled: true` 可关)|
+| **Logs** | SLF4J + Logback,JSON layout(`LogstashEncoder`) | ✅ |
+| **Traces** | §14.1 OTel → OTLP exporter | ❌(需配 `agent.tracing.endpoint`)|
+| **Audit** | §14.10 append-only JSONL | ✅(`agent.audit.enabled: false` 可关,但企业部署必开)|
+
+#### 14.15.5 兼容性矩阵(Compatibility Matrix)
+
+| 维度 | v1.0 支持 | 备注 |
+|---|---|---|
+| **Java 编译目标** | JDK 8(`<source>1.8</source>`)| 用户硬约束 |
+| **JRE 运行** | **JDK 8/11/17/21 LTS**(Spring Boot 3.2.x 最低 JDK 17)| **二进制 target=8 兼容 JDK 8,实际跑 Spring Boot 3.2.x 需 JDK 17+**;如必须 JDK 8 跑 → 退到 Spring Boot 2.7.x(LTS),v1.1 再决定 |
+| **JVM 厂商** | Temurin / Zulu / Alibaba Dragonwell / IBM Semeru | 已在 GitHub Actions matrix 测 |
+| **OS** | Linux x86_64 / arm64 / macOS dev(开发机)| Windows 走 WSL2 |
+| **Spring Boot 版本** | 3.2.x(BOM 引入)| 不混用 2.x |
+| **Lombok** | 1.18.x | 不升 2.x(JDK 21 baseline) |
+| **OpenTelemetry** | 1.32.x | 不跨 1.x → 2.x(API 不兼容) |
+| **Reactive Streams** | `org.reactivestreams:reactive-streams:1.0.4`(显式)| JDK 8 没有内置 |
+| **Maven** | 3.6.3+(CI 锁 3.9.x)| |
+| **GitHub Actions runner** | `ubuntu-latest`(matrix: Temurin 8 / 17 / 21)| |
+
+#### 14.15.6 支持矩阵(Support Matrix / LTS 政策)
+
+> 这是**对插件作者**的承诺:哪些 Slot 版本会被支持多久。避免"Beta SPI 改成 GA 后没人管"。
+
+| 组件 | v1.0 GA 日期 | 支持窗口 | LTS 升级政策 |
+|---|---|---|---|
+| **LingShu 核心(`lingshu-core`)** | 2026-Q4 | **3 年**(到 2029-Q4)| 每年 1 次 minor(LTS),每月 patch;**SemVer 严格**(breaking → major)|
+| **Slot 接口(9 个)** | 2026-Q4 | **2 年**(到 2028-Q4)| 旧 Slot 进入 `@Deprecated` 后仍可用 6 个月,再下一个 minor 移除 |
+| **Spring Boot 集成** | 2026-Q4 | 跟随 LingShu 3 年 | 升级 Spring Boot 时发 v1.x.0(breaking),不混用 |
+| **内置 Provider**(Anthropic LlmProvider / OpenAI LlmProvider / Local Sandbox)| 2026-Q4 | **1 年** | 跟随上游(Anthropic SDK / OpenAI SDK)版本;落后 ≥ 6 个月 → 标 `@Deprecated`,12 个月移除 |
+| **第三方插件 API** | 2026-Q4 | **6 个月** | 第三方用 internal API 不在 LTS 范围;只保证 SPI 接口稳定 |
+| **JDK 8 兼容** | 2026-Q4 起 | **2 年**(到 2028-Q4)| 届时 v1.x 最后版本仍兼容 JDK 8;**v2.0 起**最低 JDK 17(企业 JDK 8 用户需停 v1.x) |
+
+> **承诺条款**:6 个月窗口期 + 12 个月移除 = **deprecation 总生命周期 18 个月**,符合 Spring / OpenFeign 行业惯例。
+
+#### 14.15.7 测试策略(Test Strategy)
+
+> 没有测试策略的设计文档 = 不能上 CI。明确"测试金字塔 + 覆盖率 + 必跑场景"。
+
+| 层级 | 类型 | 工具 | 覆盖目标 | 跑测时机 |
+|---|---|---|---|---|
+| **L1 — Unit** | 单类 / 单方法 | JUnit 5 + AssertJ + Mockito | **核心仓 ≥ 80% 行覆盖;新增 Slot 必须 100%** | PR 必须过 |
+| **L2 — Slice** | Spring 上下文切片 | `@SpringBootTest(classes=...)` + `@ContextConfiguration` | 9 个 Slot Router 各 1 个 happy-path + 1 个 缺实现 FAIL 测试 | PR 必须过 |
+| **L3 — Integration** | 多 Slot 协同 | `SpringApplication.run()` + Testcontainers(Redis / Postgres)| `AgentFactory` 启动校验全过 + 10 step ReAct 跑通 | 每日 + release gate |
+| **L4 — Contract** | A2A / MCP 接口契约 | Pact(消费者驱动)+ OpenAPI Schema 校验 | A2A `AgentCard` JSON Schema 必过;MCP tool schema 必过 | PR 必须过(改 Slot 接口)|
+| **L5 — E2E / Smoke** | 完整 CLI 跑通 | `lingshu-cli run` + 真实 LLM(可选 mock)| §0.4 AC-01—AC-10 全过 | 每夜 + release gate |
+| **L6 — Performance** | 压测 | k6 / JMeter + §14.1 metrics | §14.15.1 性能预算 baseline | release gate |
+| **L7 — Security** | SAST + 依赖扫描 | SpotBugs + Trivy + OWASP Dependency-Check | 0 High / Critical CVE | PR + 每日 |
+
+**覆盖率门槛**:`lingshu-core` 80% / `lingshu-a2a-*` 70% / `lingshu-examples/*` 50%(教学代码)。
+**CI 卡点**:L1 + L2 + L4(改 Slot 时)+ L7 必须 PR 必过;L3 + L5 + L6 每日跑。
+
+#### 14.15.8 文档完整度自检(Doc Completeness Checklist)
+
+> v1.0.0 GA 前必须勾完以下 14 项,**否则不发版**。
+
+- [ ] §0.3 Personas 3 类用户均有 onboarding 指引(README / 视频 / 模板)
+- [ ] §0.4 AC-01—AC-10 全部有对应的 e2e 测试(`lingshu-examples/*` 仓内)
+- [ ] §8 配置示例至少 3 个:空 yml(零配置) / Java Engineer 完整 / Anthropic+多租户复杂场景
+- [ ] §10 Maven 结构与 lingshu 仓实际目录一致
+- [ ] §11 插件开发指引可让 Alice 30min 跑通 Hello World
+- [ ] §14.1 metrics / logs / traces / audit 四件套示例(`dashboards/` + `otel-collector.yml`)
+- [ ] §14.13 插件版本治理有 demo:`anthropic@1` vs `anthropic@2-beta` 同时存在启动 FAIL
+- [ ] §14.15.5 兼容性矩阵全过(GitHub Actions matrix + 本地 JVM 矩阵跑测)
+- [ ] §15 ErrorCode 全表 100% 有对应 unit test(异常路径覆盖)
+- [ ] §16 Glossary 中每个术语都在文档中至少出现 1 次
+- [ ] §17 Risk Register 高风险项(概率 ≥ 中 + 影响 ≥ 高)已全部缓解或有应急预案
+- [ ] `CHANGELOG.md`(独立于本 doc)按 Keep a Changelog 规范记录 v1.0.0
+- [ ] `LICENSE`(Apache 2.0) + `NOTICE` 已含企业依赖声明
+- [ ] GitHub `lingshu` 仓 README 顶部 badge:build / coverage / license / docs site 链接
+
+---
+
+## 15. Error Catalog(错误码全表)
+
+> 所有 v1.0 抛出的可预期异常 / 业务错误码集中表。**每条都对应至少 1 个 unit test**(§14.15.7 测试策略 + Doc Completeness Checklist 第十项)。  
+> 命名规范:`LINGS-<域><编号>`,域如下: `C`=Config / `S`=Slot / `L`=LLM / `T`=Tool / `X`=Sandbox / `R`=ReAct / `A`=Audit / `Z`=其他  
+> 抛出方**必须**带 `errorCode` 字段 + `cause`(cause chain 至少 2 层)+ 可选 `hint`(给操作者的人话建议)。
+
+### 15.1 Config 域(`LINGS-Cxx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-C01 CONFIG_NOT_FOUND` | `AgentConfigRegistry.load()` | `application.yml` 不存在 | 拷贝 §8 示例 yml | 否(启动失败)| 是(进程退出码 1)|
+| `LINGS-C02 CONFIG_VALIDATION_FAILED` | `AgentConfigProps.@Validated` | 缺必填字段 / 枚举值非法 | 修正 yml | 否 | 是 |
+| `LINGS-C03 CONFIG_TYPE_MISMATCH` | `AgentConfigProps.bind()` | yml 字段类型不符(`tool.parallelism: "abc"`)| 改 yml 类型 | 否 | 是 |
+| `LINGS-C04 CONFIG_HOT_RELOAD_INVALID` | `YamlWatcher.apply()` | 热更的新 yml 解析失败 | 修复 yml 重试;旧配置继续生效 | 是(metric) | 否 |
+
+### 15.2 Slot 域(`LINGS-Sxx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-S01 SLOT_NOT_FOUND` | `SlotRouter.resolve()` | yml 指定 `name` 但 classpath 无该 Provider | 引入对应 SPI jar / 修正 yml | 否 | 是(启动)|
+| `LINGS-S02 SLOT_AMBIGUOUS` | `SlotRouter.resolve()` | 同 `name` 不同 `version` 两个 Provider 同时存在 | yml 显式选 version | 否 | 是(AC-08)|
+| `LINGS-S03 SLOT_VERSION_INCOMPATIBLE` | `SlotRouter.bootstrap()` | 同 `name` 不同 `version` 实现不同 Slot 接口 | 强制 Provider 升级 / 降级 | 是 | 是 |
+| `LINGS-S04 SLOT_PRIORITY_TIE` | `SlotRouter.resolve()` | 同 `name` 同 `version` 多 Provider priority 相同 | 调 yml priority | 是(metric) | 是(启动)|
+| `LINGS-S05 SLOT_INIT_FAILED` | `SlotRouter.bootstrap()` | Provider `@PostConstruct` 抛异常 | 修 Provider 实现 | 否 | 是 |
+
+### 15.3 LLM 域(`LINGS-Lxx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-L01 LLM_STREAM_TIMEOUT` | `LlmProvider.stream()` | `llmTimeoutSec` 超(默认 60s)| 检查网络 / 调超时 | 是(metric + OTel)| 否(转 turn FAIL)|
+| `LINGS-L02 LLM_STREAM_CANCELLED` | `LlmProvider.stream()` | `CancellationToken.fire()` | 接收 partial 响应 | 否 | 否(正常退出)|
+| `LINGS-L03 LLM_RATE_LIMITED` | `AnthropicLlmProvider.stream()` | 上游 429 | 自动 §14.2 重试 4 次 | 是 | 否 |
+| `LINGS-L04 LLM_AUTH_FAILED` | `LlmProvider.stream()` | API key 错 / 过期(401/403)| 修 `agent.llm.api-key` | 是 | 是 |
+| `LINGS-L05 LLM_CONTEXT_OVERFLOW` | `PromptBuilder.build()` | 输入 > 200K tokens(Anthropic 上限)| 触发 §14.11 强制压缩 | 是(metric) | 否(压缩后 retry)|
+| `LINGS-L06 LLM_RESPONSE_MALFORMED` | `LlmProvider.parseResponse()` | 流式响应非 JSON / 缺字段 | 重试 1 次后 fail | 是 | 否 |
+| `LINGS-L07 LLM_COST_BUDGET_EXCEEDED` | `TurnContext.checkBudget()` | `costBudgetMicros` 超 | 提示用户调整 budget | 是 | 是(turn fail)|
+| `LINGS-L08 LLM_PROVIDER_UNAVAILABLE` | `LlmProvider.health()` | CircuitBreaker OPEN | 自动 §14.3 切备用 | 是(metric) | 否 |
+
+### 15.4 Tool 域(`LINGS-Txx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-T01 TOOL_NOT_FOUND` | `ToolRegistry.lookup()` | LLM 返回 tool call 但 classpath 无该 tool | 检查 Tool SPI 注册 | 否 | 否(转 LLM 错)|
+| `LINGS-T02 TOOL_TIMEOUT` | `ToolExecutor.dispatch()` | `toolTimeoutSec` 超(默认 30s)| 调超时 / 检查 tool 实现 | 是 | 否(转 ToolResult.error)|
+| `LINGS-T03 TOOL_VALIDATION_FAILED` | `ToolExecutor.dispatch()` | 参数 schema 校验失败 | 检查 LLM 输出 / tool schema | 是 | 否 |
+| `LINGS-T04 TOOL_EXECUTION_FAILED` | `ToolExecutor.dispatch()` | 工具执行内部异常 | 检查 tool 实现 | 是(metric) | 否 |
+| `LINGS-T05 TOOL_APPROVAL_DENIED` | `ApprovalGate.check()` | 用户拒绝执行(交互式)| 修改 prompt 重提 | 否 | 否(转 ToolResult.denied)|
+| `LINGS-T06 TOOL_PARALLELISM_EXCEEDED` | `LinearTurnEngine.dispatch()` | `tool.parallelism` 上限超 | 调 yml | 是(metric) | 否 |
+| `LINGS-T07 TOOL_CIRCUIT_OPEN` | `ToolExecutor.dispatch()` | §14.3 CircuitBreaker OPEN | 等 sleep 后 retry | 是(metric) | 否 |
+
+### 15.5 Sandbox 域(`LINGS-Xxx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-X01 SANDBOX_DENIED` | `Sandbox.exec()` | 命令不在 `command-whitelist` | 调整 whitelist / 换实现 | 否 | 否(转 ToolResult.error)|
+| `LINGS-X02 SANDBOX_DOMAIN_DENIED` | `Sandbox.fetch()` | URL 不在 `domain-whitelist` | 调整 whitelist | 否 | 否 |
+| `LINGS-X03 SANDBOX_INIT_FAILED` | `Sandbox.bootstrap()` | chroot / namespace 创建失败 | 检查 OS / 权限 | 是 | 是(启动)|
+| `LINGS-X04 SANDBOX_RESOURCE_EXHAUSTED` | `Sandbox.exec()` | CPU / 内存 / 时间超限 | 调 `sandbox.limits` | 是 | 否 |
+
+### 15.6 ReAct 域(`LINGS-Rxx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-R01 REACT_MAX_STEPS_EXCEEDED` | `LinearTurnEngine.runTurn()` | step > `reactMaxSteps` | 调 yml / 拆 prompt | 是(metric) | 否(正常 done)|
+| `LINGS-R02 REACT_LOOP_DETECTED` | `LinearTurnEngine.runTurn()` | 同 (toolName, argsHash) 连续 3 次 | 检查 LLM 输出 | 是(metric) | 否(转 done)|
+| `LINGS-R03 REACT_TURN_TIMEOUT` | `LinearTurnEngine.runTurn()` | `turnTimeoutSec` 超 | 调 yml / 拆 turn | 是(metric) | 否 |
+| `LINGS-R04 REACT_COMPACTION_FAILED` | `Compactor.compact()` | 摘要压缩失败 | 关掉 prompt cache 重试 | 是 | 否 |
+
+### 15.7 Audit 域(`LINGS-Axx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-A01 AUDIT_WRITE_FAILED` | `AuditLogger.append()` | 磁盘满 / 权限拒绝 | 修磁盘 / 权限 | 是(metric) | **是(panic + 退出)**|
+| `LINGS-A02 AUDIT_REDACT_FAILED` | `SecretRedactor.redact()` | 正则未匹配但 hint 字段疑似敏感 | 手动 review log | 是 | 否(原文写盘 + 告警)|
+| `LINGS-A03 AUDIT_ROTATION_FAILED` | `AuditLogger.rotate()` | 日志切割失败(写入新文件失败)| 修配置 | 是 | 否(继续写旧文件)|
+
+### 15.8 其他(`LINGS-Zxx`)
+
+| ErrorCode | 抛出位置 | 触发条件 | 用户响应 | 是否上报 | 是否 fatal |
+|---|---|---|---|---|---|
+| `LINGS-Z01 INTERNAL_PANIC` | 任意 | 不变量违反(NullPointerException 等)| 提 issue | 是(metric + OTel exception event)| 是 |
+| `LINGS-Z02 UNCAUGHT_OBSERVER_ERROR` | `Subscriber.onNext()` | 业务 Subscriber 抛异常 | 修 Subscriber | 是 | 否(继续 next)|
+| `LINGS-Z03 FEATURE_NOT_CONFIGURED` | 任意 SPI | yml 启用了但 SPI 未引入 | 加 SPI 依赖 | 否 | 是(启动)|
+
+### 15.9 ErrorCode 编码约定
+
+```
+ErrorCode = "LINGS-" + <域字母><2 位数字>
+           = "LINGS-" + C/S/L/T/X/R/A/Z + 01-99
+```
+
+- **域字母**固定(见上表头说明)
+- **编号**在本域内递增,删除的不复用
+- **业务层**(`user domain` 自己定义 errorCode)允许自定命名空间 `LINGS-<USER>-xxx`,但推荐走 §6 SPI `ErrorCode` 接口而非字符串拼接
+
+---
+
+## 16. Glossary(术语表)
+
+> v1.0 文档与代码中使用的核心术语集中释义。**新人 / 半年后的自己 / Claude Code 读上下文时**查这里。
+
+| 术语 | 含义 | 首次定义 |
+|---|---|---|
+| **Slot** | LingShu 引擎的 9 个可插拔扩展点(LLM / Tool / Sandbox / Skill / Compactor / SessionStore / FlowEngine / PromptCache / A2aTransport)| §2 / §5.1 |
+| **Provider** | 一个 Slot 的 SPI 实现,带 `name()` / `version()` / `priority()` | §5.1 |
+| **SlotRouter** | 运行时从 N 个同 Slot Provider 中"按 yml 选 1 个"的策略器 | §5.2 |
+| **FlowEngine** | 控制 Agent turn 主循环的编排器(可替换为 ADK / LangGraph4j)| §4.11 |
+| **LinearTurnEngine** | FlowEngine 的默认实现 = ReAct Loop(Thought→Action→Observation)| §6.1 |
+| **ReAct Loop** | Yao et al. ICLR 2023 的 Reason+Act 范式;本引擎用 modern function-calling 实现(LLM 思维链隐式)| §6.1 |
+| **DelegateTool** | 把"子 Agent"当作 tool 调用,实现 `Tool` 接口的桥接器 | §6.6 |
+| **SubAgentType** | 子 Agent 的枚举身份(yml 注册),与主 Agent 同 9 Slot | §6.6.1 |
+| **A2aTransport** | Slot 9,Agent ↔ Agent 通信协议(`lingshu-a2a-*` 模块)| §5.6 |
+| **AgentCard** | A2A 协议的"名片"(JSON,声明 name / skills / endpoint),从 `cfg.getIdentity()` 自动生成 | §5.6.8 |
+| **SkillSource** | Skill 的发现源(SPI):`classpath` / `directory` / 未来 `git` / `s3` | §1.5.2 |
+| **Skill** | 既可被 LLM 自动调用(模型可见 schema),也可由用户 `/xxx` 显式触发的能力单元 | §6.4 |
+| **Session** | 一个 Agent 与一个用户的完整对话上下文,跨 turn 持久化(§14.7 SessionStore 后端)| §4.12.3 / §14.7 |
+| **Turn** | Session 内的一次"用户输入 + LLM 反应 + 工具调用 + 完成"原子单元 | §4.12 |
+| **TurnContext** | Turn 内的可变上下文(synchronized history + cancellation + budget + metrics)| §4.12.1 |
+| **Identity** | Agent 的业务人设(name / role / language / traits / tone / avatar) | §4.12.2 / §8.1.1 |
+| **Instructions** | System prompt 的业务段(template + variables)| §4.12.2 / §8.1.2 |
+| **CLAUDE.md** | 项目级长期记忆(类似 Claude Code 的项目约定文件),放在 repo 根 | §4.12.2 / §8.1.3 |
+| **CircuitBreaker** | 三态熔断器(CLOSED / OPEN / HALF_OPEN),per-tool 保护 | §14.3 |
+| **TenantContext** | ThreadLocal 形式的多租户隔离,影响 memory / cost / sandbox / session | §14.9 |
+| **CancellationToken** | 三层贯通(FlowEngine / LlmProvider / ToolExecutor)的协作式取消令牌 | §14.12 |
+| **Zero-config** | 零配置启动原则:空 yml 即用所有默认值启动 27 字段 | §8.0 |
+| **@Value** | Lombok 的不可变值对象注解,本引擎全部配置类用它(避免 JDK 17 sealed/records)| §4 开头 |
+
+---
+
+## 17. Risk Register(风险登记册)
+
+> §12 "开放问题"是清单,本节是"风险决策表"——每个风险都有**概率 / 影响 / 缓解 / 触发日期 / Owner**,v1.0 release readiness review 时逐项 review。
+
+| ID | 风险 | 概率 | 影响 | 缓解措施 | Owner | 触发条件 |
+|---|---|---|---|---|---|---|
+| **R-01** | ReAct 循环在大模型下可能死循环 | 中 | 高 | `reactMaxSteps` 硬上限(默认 50)+ 触发 §15 R01 + R02 同 (tool, args) 循环检测 | Charlie | v1.0 GA |
+| **R-02** | 多租户 ThreadLocal 泄漏导致跨租户污染 | 中 | 高 | (a) TenantContext 配 `try-finally` 兜底;(b) `ThreadPoolExecutor` 拒绝持有 ThreadLocal 提交的任务;(c) 跨线程传递用 `InheritableThreadLocal` + clean | Charlie | v1.0 GA |
+| **R-03** | YAML 热更与 in-flight turn 数据竞争 | 中 | 中 | §14.8 `AgentConfigRegistry` AtomicReference swap + 旧 turn 冻结(用 `cfg.snapshot()` 拷贝) | Charlie | v1.0 GA |
+| **R-04** | A2A 协议 v0.5 阶段快速演进破坏兼容 | 高 | 中 | §14.13 `version()` 字段 + Slot 接口兼容性校验 + AgentCard schema 版本字段 | Alice | v0.5-α |
+| **R-05** | Prompt cache 命中失效导致 cost 翻倍 | 中 | 中 | §14.11 双层 cache + 监控命中率(metric `agent.prompt_cache.hit_ratio`)+ 命中率 < 50% 告警 | Bob | v1.0 GA |
+| **R-06** | JDK 8 兼容 vs Spring Boot 3.2.x 矛盾(运行需 JDK 17) | 高 | 高 | (a) 编译 target=8 保证 core 二进制兼容 JDK 8;(b) 文档明示"完整 Spring Boot 体验需 JDK 17";(c) v1.1 决定是否提供 Spring Boot 2.7.x LTS 分支 | Alice | v1.0 GA 前确认 |
+| **R-07** | §14.15.1 性能预算数字未经压测验证 | 中 | 中 | v1.0.0 GA 前用 k6 + JMeter 跑 baseline;若偏离 > 20% 改 §14 实施细节 | Bob | v1.0.0-rc1 |
+| **R-08** | Lombok 1.18.x 在 JDK 21+ 编译警告/失败 | 低 | 中 | (a) CI matrix 跑 JDK 8 / 17 / 21 三套编译;(b) Lombok 升级 2.x 评估(2027 Q1)| Charlie | v1.1 |
+| **R-09** | 第三方 Provider 引入 transitive 依赖污染 classpath | 中 | 高 | (a) plugin SPI jar 必须显式 `<scope>provided</scope>` 关键依赖;(b) `dependency:tree` CI 卡点;(c) `banned-dependencies` enforcer 规则 | Alice | v1.0 GA |
+| **R-10** | Maven Central 发布权限 / GPG 签名配置错误 | 低 | 高 | (a) `lingshu-release` GitHub Action + `central.sonatype.com` 账号 2FA;(b) 文档化发布 checklist | Charlie | v1.0.0 GA 前演练 |
+| **R-11** | lingshu-docs 站点 404 / CDN 假缓存 | 中 | 低 | (a) 部署后用 `curl -sLI /<page>` 验整链路;(b) Pages 状态监控 | Charlie | 已发生(2026-09-06 memory)|
+| **R-12** | §14.13 plugin version 兼容性规则过于宽松 | 低 | 中 | 启动校验 FAIL 时**必须**列出所有冲突 Provider 的 `(name, version, slot)` 三元组 | Charlie | v1.0 GA |
+
+**风险等级计算**:概率(高=3 / 中=2 / 低=1) × 影响(高=3 / 中=2 / 低=1)= 分值  
+- ≥ 6:**必缓解**(v1.0 GA 前必须有措施)
+- 4-5:**有缓解**(v1.0 GA 时最好有措施)
+- ≤ 3:**接受风险**(记录 + 监控)
+
+> **本表 review 节奏**:每月 1 号 + 每个 RC 发布前 + 每个 GA 发布前。
 
 ---
 
