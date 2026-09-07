@@ -62,7 +62,37 @@
 
 ---
 
-## 5. 9 个 Slot 接口(dsh §4 — 核心骨架)
+## 5. 仓目录结构(Maven 多模块,5 个 — 速查)
+
+> **以 `dsh_agent_design.md §10` 为准**;本节只列顶层模块边界,Claude `ls` 能发现的不写。
+
+```
+lingshu/                                  ← 主仓根
+├── pom.xml                               ← 父 POM(Spring Boot 3.2.5 父继承)
+├── lingshu-core/                         ← 核心:9 Slot 接口 + AgentConfig + 默认实现
+├── lingshu-a2a-client/                   ← A2A 客户端(§5.6,可独立打包)
+├── lingshu-a2a-server/                   ← A2A 服务端 + AgentCard 生成
+├── lingshu-examples/                     ← 教学示例(≤ 10 个,各 ≤ 100 行,见 dsh §10.2)
+└── lingshu-cli/                          ← CLI 入口(`mvn exec:java`,见 dsh §10.3)
+```
+
+**包路径**:`ai.lingshu.core.*`(lingshu-core)/ `ai.lingshu.a2a.{client,server}.*`
+**模块依赖方向**:core 不依赖 a2a-*;examples/cli 依赖 core + a2a-*;**严禁反向依赖**
+
+**每个 Story 默认改动模块**(速查):
+
+| Story | 主要改哪个模块 |
+|---|---|
+| #001 zero-config-bootstrap | lingshu-core + lingshu-examples |
+| #002 identity-instructions-memory | lingshu-core(`PromptBuilder` 默认实现)|
+| #003 spi-slot-router | lingshu-core(`SlotRouter` 接口)|
+| #009 a2a-agent-card | lingshu-a2a-server(主)+ lingshu-core(接入 `A2aTransport`)|
+| #016 audit-log | lingshu-core(`AuditLogger` SPI)|
+| 其它 Story | 主要 lingshu-core;详见 dsh §3.1 SOP |
+
+---
+
+## 6. 9 个 Slot 接口(dsh §4 — 核心骨架)
 
 | # | Slot | 接口 | 默认实现 |
 |---|---|---|---|
@@ -80,7 +110,7 @@
 
 ---
 
-## 6. 核心约定(读 CLAUDE.md 时必看)
+## 7. 核心约定(读 CLAUDE.md 时必看)
 
 - **配置类**:全部 `@Value` + `@Builder`,**无 setter
 - **错误码命名**:`LINGS-<域><编号>`,域字母 = `C/S/L/T/X/R/A/Z`(详见 dsh §15)
@@ -92,7 +122,7 @@
 
 ---
 
-## 7. 常用命令
+## 8. 常用命令
 
 ```bash
 # 环境检查
@@ -117,7 +147,7 @@ k6 run perf/load/<scenario>.js
 
 ---
 
-## 8. Git workflow
+## 9. Git workflow
 
 ```bash
 # 提交约定
@@ -135,7 +165,7 @@ chore: <一句话>
 
 ---
 
-## 9. 性能预算(dsh §14.15.1,实施时对齐)
+## 10. 性能预算(dsh §14.15.1,实施时对齐)
 
 | 指标 | 目标 |
 |---|---|
@@ -148,7 +178,7 @@ chore: <一句话>
 
 ---
 
-## 10. 硬约束(违反即 reject)
+## 11. 硬约束(违反即 reject)
 
 1. **不 push SOP 到 lingshu 仓**(`speckit_operator_prompt.md` / `lingshu_spec_prompts.md` 是本地流程制品)
 2. **不省略 AC 黑盒验证**(每个 Story 必须跑对应的 AC-NN 才能合)
@@ -159,7 +189,7 @@ chore: <一句话>
 
 ---
 
-## 11. 常用反问(避免无脑实现)
+## 12. 常用反问(避免无脑实现)
 
 - 用户说"实现 X" → 先问"对应哪个 Story?或对应哪条 AC?"
 - 用户说"改 Y" → 先确认 Y 是否在已有 Story 范围,避免 Scope creep
@@ -169,7 +199,7 @@ chore: <一句话>
 
 ---
 
-## 12. 项目节奏(KPI)
+## 13. 项目节奏(KPI)
 
 - **Story 完成率**:每周 / 每月闭合几个 Story
 - **平均 AC 通过率**:第一遍跑过的比例(目标 ≥ 80%)
@@ -179,7 +209,7 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-08  
-**Version**: 1.0  
+**Version**: 1.1(+§5 仓目录结构速查)
 **对应设计文档**: `dsh_agent_design.md` v1.5.6  
 **对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.1  
 **对应 SKILL**: `lingshu-spec-driven-dev` v1.1
