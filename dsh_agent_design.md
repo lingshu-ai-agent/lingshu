@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.6
+# DSH Agent Engine — 设计文档 v1.5.7
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.6(需求工程层补全,进入 SpecKit + Claude Code 实施准备期)
+> **版本**:v1.5.7(Spring AI 边界硬规则 + 新依赖引入 — 单人 RFC 决议 v1.5.7)
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结,需求工程层补全完毕(§0.3 Personas + §0.4 验收标准 + §14.15 NFR + §15 Error Catalog + §16 Glossary + §17 Risk Register)
+> **状态**:设计阶段冻结,v1.5.7 新增 §4.10.1 Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则 3 条)+ §10.1 引入 `spring-ai-bom` 1.0.0-M6 依赖(R-13/R-14 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -655,6 +655,89 @@ public interface LlmProvider {
 ```
 
 > 早期版本曾用 `LlmResponse stream(...)`(单返回 + sink),实现时发现两路输出语义冲突 —— 返回时数据可能已大量推给 sink。改用 `CompletableFuture<LlmResponse>` 后两路并发且语义清晰。
+
+### 4.10.1 Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则)
+
+> **本节为硬规则**,违反即 reject(**v1.5.7 起,本次单人 RFC 决议**)。
+> Spring AI 自 v1.5.7 起作为新运行时依赖引入(见 §10.1 `spring-ai-bom` 1.0.0-M6),
+> 但其能力**严格限定**为本节 3 条。任何 Story 实施时若发现 Spring AI 缺能力,
+> **优先**走 §4.11.1 适配器模式接入外部编排引擎(Google ADK / Alibaba Graph / 自研),
+> 不要扩展 Spring AI 的使用范围。
+
+#### 硬规则 1:ReAct Loop 必须自实现(default FlowEngine 内不调 Spring AI Agent 抽象)
+
+`LinearTurnEngine`(default `FlowEngine` 实现,§6.1)的核心 ReAct 循环(Thought→Action→Observation)
+**必须**在我们自己的 Java 代码里实现(~ 数十行),**不得**使用 Spring AI 的 Agent 抽象(如
+`ChatClient.prompt().call()` 的自动工具执行)。
+
+**理由**:
+- 完整掌握 Agent 工作机制(循环终止条件、step 计数、事件发射、超时与 cancel 响应)
+- 保留未来定制循环行为的空间(插入 PII 扫描 / cost checkpoint / custom retry 策略)
+- Spring AI 的自动 tool 执行会绕过我们的 `ToolExecutor`(沙箱 / 权限 / checkpoint 全失效)
+
+**反例**(不得使用):
+
+```java
+// ❌ 错:Spring AI 自动执行 tool — 我们的沙箱 / 权限全被绕过
+chatClient.prompt(prompt).tools(tools).call().content();
+```
+
+#### 硬规则 2:Spring AI 只用两件事(LLM 协议转换 + @Tool Schema 生成)
+
+Spring AI 在 LingShu 里**只做**以下两件事,其他用法**禁止**:
+
+1. **LLM Provider 协议转换**:OpenAI / Anthropic / Gemini / DeepSeek / Qwen / Kimi 等
+   各家消息格式差异由 Spring AI 的 `ChatModel` 吸收,LingShu `LlmProvider`(§4.10)
+   只面对 Spring AI 的统一接口,不直接调各家 SDK。
+2. **`@Tool` 注解的 JSON Schema 生成**:Tool schema 由 Spring AI 的注解扫描 + Schema
+   生成器产生,Tool 的实际**执行**完全由 `flow-engine` + `tool-executor`(§4.6)控制。
+
+**必须禁用** Spring AI 的自动 tool 执行(`ChatClient.prompt().tools(...).call()`),
+即使看起来方便 — 会导致 tool 被调两次(一次 Spring AI 一次我们),且绕过沙箱与权限。
+
+**正例**(合规用法):
+
+```java
+// ✅ 对:只用 Spring AI 做 LLM 调用,tool 调度结果自己处理
+ChatResponse response = chatModel.call(new Prompt(messages, options));
+// 自己从 response 里拆 ToolCall,然后走我们的 ToolExecutor
+for (ToolCall call : response.getToolCalls()) {
+    ToolResult result = toolExecutor.execute(call, ctx);
+    // ... 重新组装 messages 喂回 LLM
+}
+```
+
+> 已存在的 v1.5.5 注解 `@AgentTool` + `SpringAiToolAdapter`(§6.6 周边)是本规则
+> 在 Tool 端的体现:Schema 借 Spring AI 生成,执行走我们自己的 `ToolExecutor`。
+
+#### 硬规则 3:Provider 必须显式映射(不靠 Spring 容器扫 `ChatModel` Bean)
+
+多 `LlmProvider` 实现并存时(`deepseek` / `qwen` / `kimi` / `anthropic` 同时存在),
+**不得**靠 Spring 容器扫描 `ChatModel` Bean 类型来区分 Provider —— 因为所有 `ChatModel`
+Bean 类型相同(`org.springframework.ai.chat.model.ChatModel`),Spring 容器无法仅凭类型区分。
+
+**必须**维护 `provider name → ChatModel` 的显式映射表:
+
+```java
+// ✅ 显式映射
+private final Map<String, ChatModel> providerMap = Map.of(
+    "deepseek",   deepseekChatModel,
+    "qwen",       qwenChatModel,
+    "kimi",       kimiChatModel,
+    "anthropic",  anthropicChatModel
+);
+
+public LlmResponse stream(Prompt p, TurnContext ctx, Subscriber<? super AgentEvent> sink) {
+    String providerName = ctx.getConfig().getLlm().getProvider();
+    ChatModel model = providerMap.get(providerName);  // name → model 显式查找
+    if (model == null) {
+        throw new LingsSlotException("LINGS-L01", "Unknown provider: " + providerName);
+    }
+    // ...
+}
+```
+
+> 错误码 `LINGS-L01`(LLM 域,未知 Provider)— 见 §15 Error Catalog。
 
 ### 4.11 FlowEngine(编排 Slot — 第 7 项决策的核心)
 
@@ -3859,6 +3942,7 @@ lingshu-skill-market/← github.com/lingshu-ai-agent/lingshu-skill-market (SKILL
 | `org.mockito:mockito-core` | 5.x | Mock 框架 | JDK 21+ Mockito 6 不兼容 JDK 8 |
 | `org.awaitility:awaitility` | 4.2.x | 异步事件断言 | 测 `Subscriber.onNext` 时等待 |
 | `org.yaml:snakeyaml` | 2.x | application.yml 解析 | Spring Boot BOM 管理;**注意:snakeyaml 2.x 不再支持 JDK 8,但 Spring Boot 3.2.x 通过 `snakeyaml-engine` 适配,无需手动指定** |
+| `org.springframework.ai:spring-ai-bom` | 1.0.0-M6 | §4.10.1 LLM 协议转换 + `@Tool` Schema 生成 | **v1.5.7 引入**(本次 RFC 决议,R-13 / R-14 跟踪);Spring AI 1.x → 2.x API 不兼容,锁定 1.x;**注意:Spring AI 1.x 自身要求 JDK 17+ runtime,与 §14.15.5 兼容矩阵一致(Boot 3.2.x 同)**;只用 LlmProvider 协议转换 + `@Tool` Schema 两件事,其他能力**禁** |
 
 子模块 `lingshu-core/pom.xml` 关键依赖:
 
@@ -4068,6 +4152,7 @@ agent:
 | 1.5.4 | 2026-09-04 | **A2A 协议补全 + Maven 结构对齐 GitHub 组织**:**A2A** §3 架构图新增 Slot 9 `A2aTransport`;新增 §5.6(7 小节:为何不做 Tool / 4 层架构 / 3 个新接口草图 / SPI 总表更新 / YAML `agent.a2a.*` / 与 §9.4 DelegateTool 的关系 / v0.5-α/β/rc 落地里程碑);`lingush-core/a2a/` 包新增 `A2aTransport` + `AgentCard` + `Task` + `Message` + `AgentRef` + `TaskEvent` 6 个领域类型;**Maven** §10 改写:核心引擎 `lingshu` 仓明确为单仓父子 Maven(groupId `ai.lingshu`),加入 `lingshu-a2a-client` / `lingshu-a2a-server` / `lingshu-examples` 三个新模块;新增 §10.1 父 POM 锁定项 + §10.2 `lingshu-examples` 双层定位(仓内模块 vs 独立仓「策展集」)+ §10.3 `lingshu-cli` 独立仓已并入 `lingshu/lingshu-cli/`(旧仓归档);`lingshu-docs` / `lingshu-website` / `lingshu-skill-market` 保持独立仓(非 Java 生态) |
 | 1.5.5 | 2026-09-06 | **业务配置三件套(persona / instructions / memory)补全 + 零配置启动原则**:**§4.12.2 AgentConfig** 新增 3 个 `@Value` 嵌套类 `Identity`(name/role/language/traits/tone/avatar)+ `Instructions`(file/inline/templateEngine/variables)+ `Memory`(claudeMd + extras);顶层加 3 个对应字段 + `Identity.defaults()` / `Instructions.empty()` / `Memory.defaults()` 三个静态工厂方法;**§4.5.1 PromptBuilder** 新增 5 段装配顺序图([ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] / [CONVERSATION HISTORY] / [USER MESSAGE])+ 完整伪代码 + 父子 Agent 继承说明;**§6.6.1 DelegateTool** 新增 sub-agent 继承策略表 + `inheritFromParent()` 实现;**§8.0 SPI 默认值总表 + 最小配置示例** 新增零配置启动原则 + 27 个字段默认值表 + 完全空 YAML 示例 + JUnit 5 默认配置 smoke test 示例;**§8.1.1/8.1.2/8.1.3/8.1.4** 新增 identity/instructions/memory 详细字段表 + 模板示例 + 「Java 工程师 Agent」完整业务配置示例(含 A2A AgentCard 自动生成示例);**§8.2 AgentConfigProps** 新增 3 个 `@NestedConfigurationProperty` 字段 + 4 个对应嵌套类(Identity/Instructions/Memory/ClaudeMd)+ Sandbox.commandWhitelist/domainWhitelist 默认白名单 + `toAgentConfig()` 完整默认值兜底逻辑;**§5.6.8 LocalAgentCardGenerator** 新增「从 `cfg.getIdentity()` 自动生成 AgentCard」代码(零额外 YAML 配置);**§13** 加 v1.5.5 条目 |
 | 1.5.6 | 2026-09-06 | **需求工程层补全(SpecKit + Claude Code 输入源就绪)**:**§0.3 Personas** 新增 3 类典型用户故事(Alice 插件开发者 / Bob 业务配置方 / Charlie 核心仓贡献者)+ KPI 验证路径;**§0.4 v1.0 Acceptance Criteria** 新增 10 条黑盒可断言标准(AC-01 零配置启动 / AC-02 SPI 全 Slot 可替换 / AC-03 Tool 并发加速 / AC-04 取消传播 / AC-05 多租户隔离 / AC-06 YAML 热更无中断 / AC-07 ReAct 上限 / AC-08 插件版本治理 / AC-09 业务配置三件套 / AC-10 A2A AgentCard 自动生成);**§10.1 父 POM** 补 12 项依赖版本表(Spring Boot 3.2.x / Lombok 1.18.30 / OTel 1.32.x / JUnit 5.10.x / AssertJ 3.24.x / Mockito 5.x / Awaitility 4.2.x 等)+ 测试模块依赖完整清单 + 版本升级政策;**§14.15 NFR 总账** 新增 8 个子节(性能预算 9 项 / 安全威胁模型 8 项 / SLO 8 项 / 可观测性四件套 / 兼容性矩阵 11 项 / 支持矩阵 6 项 LTS 政策 / 测试策略 7 层金字塔 / 文档完整度自检 14 项 GA 卡点);**§15 Error Catalog** 新增 8 域 24 条 ErrorCode 全表(Config / Slot / LLM / Tool / Sandbox / ReAct / Audit / 其他)+ `LINGS-<域><编号>` 编码约定;**§16 Glossary** 新增 22 个术语集中释义表(Slot / Provider / SlotRouter / FlowEngine / LinearTurnEngine / ReAct Loop / DelegateTool / SubAgentType / A2aTransport / AgentCard / SkillSource / Skill / Session / Turn / TurnContext / Identity / Instructions / CLAUDE.md / CircuitBreaker / TenantContext / CancellationToken / Zero-config / @Value);**§17 Risk Register** 新增 12 条风险登记(R-01—R-12,带概率×影响=分值排序 + Owner + 触发条件)+ review 节奏(月度 + RC + GA);**§13** 加 v1.5.6 条目;**§0** 标题块状态描述补"进入 SpecKit + Claude Code 实施准备期" |
+| 1.5.7 | 2026-09-08 | **Spring AI 边界硬规则 + 新依赖引入(本次单人 RFC 决议)**:**§4.10.1 新增** `Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则)` 章节,3 条硬规则:(1) ReAct Loop 必须自实现,不得用 Spring AI `ChatClient.prompt().call()` 自动执行;(2) Spring AI 只用两件事 — LLM 协议转换 + `@Tool` Schema 生成,自动 tool 执行禁用(否则 tool 被调两次 + 绕过沙箱);(3) 多 Provider 并存时 `provider name → ChatModel` 必须显式映射表,不得靠 Spring 容器扫 Bean 类型;**§10.1 新增依赖** `org.springframework.ai:spring-ai-bom` 1.0.0-M6(BOM 引入,只引 LlmProvider 协议转换 + Tool Schema 实际用到的子模块,见 R-13 bundle 体积控制);**§17 新增 R-13 / R-14** — R-13 Spring AI bundle 体积膨胀 + transitive 污染(banned-dependencies enforcer 控);R-14 Spring AI 1.x 自身 JDK 17+ 要求 vs LingShu compile target=8 的兼容约束(JDK 8/11/17/21 matrix CI 验证);**§15** 引用 LINGS-L01(未知 Provider)对应硬规则 3;**§13** 加 v1.5.7 条目;**§0** 标题块版本号 + 状态描述同步
 
 ---
 
@@ -4751,6 +4836,8 @@ ErrorCode = "LINGS-" + <域字母><2 位数字>
 | **R-10** | Maven Central 发布权限 / GPG 签名配置错误 | 低 | 高 | (a) `lingshu-release` GitHub Action + `central.sonatype.com` 账号 2FA;(b) 文档化发布 checklist | Charlie | v1.0.0 GA 前演练 |
 | **R-11** | lingshu-docs 站点 404 / CDN 假缓存 | 中 | 低 | (a) 部署后用 `curl -sLI /<page>` 验整链路;(b) Pages 状态监控 | Charlie | 已发生(2026-09-06 memory)|
 | **R-12** | §14.13 plugin version 兼容性规则过于宽松 | 低 | 中 | 启动校验 FAIL 时**必须**列出所有冲突 Provider 的 `(name, version, slot)` 三元组 | Charlie | v1.0 GA |
+| **R-13** | Spring AI bundle 体积膨胀 + transitive 依赖污染(v1.5.7 引入) | 中 | 中 | (a) 只引 `spring-ai-core` + 实际用的 provider starter,不用 `spring-ai-starter` 全家桶;(b) `dependency:tree` CI 卡点 + `banned-dependencies` enforcer 排除 vector-store / etl / unstructured 等不用的模块;(c) binary size 监控(基线 < 35MB) | Charlie | v1.0 GA |
+| **R-14** | Spring AI 1.x 自身要求 JDK 17+ runtime vs LingShu compile target=8 兼容约束 | 中 | 高 | (a) 文档明示"LingShu 完整 Spring AI 体验需 JDK 17 runtime",与 §14.15.5 兼容矩阵一致;(b) compile target=8 仅约束 LingShu 自己二进制,Spring AI 调用走 JDK 17 runtime API surface(同 Boot 3.2.x 模式);(c) v1.0 GA 前在 JDK 8 / 11 / 17 / 21 matrix 跑 `mvn test` + 启动 smoke test | Alice | v1.0 GA 前确认 |
 
 **风险等级计算**:概率(高=3 / 中=2 / 低=1) × 影响(高=3 / 中=2 / 低=1)= 分值  
 - ≥ 6:**必缓解**(v1.0 GA 前必须有措施)

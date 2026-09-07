@@ -28,6 +28,7 @@
 | **运行 JRE** | JDK 8 / 11 / 17 / 21 LTS(Spring Boot 3.2.5 实际跑需 JDK 17+)|
 | **JVM 厂商** | Temurin / Zulu / Alibaba Dragonwell / IBM Semeru |
 | **Spring Boot** | 3.2.5(BOM 引入)|
+| **Spring AI** | `1.0.0-M6`(BOM 引入,v1.5.7 起)— **只**用于 LLM 协议转换 + `@Tool` Schema 生成,见 §11 #8 |
 | **Lombok** | 1.18.30(配置类**全部** `@Value` 不可变风格)|
 | **OpenTelemetry** | 1.32.x(**不跨 1.x → 2.x**,API 不兼容)|
 | **Reactive Streams** | `org.reactivestreams:reactive-streams:1.0.4`(JDK 8 没内置)|
@@ -185,7 +186,10 @@ chore: <一句话>
 3. **不跨 Story 改 constitution**(改宪章必须走 RFC 流程,先开 issue + 评审)
 4. **Story 边界**:≤ 5 个核心文件改动,≤ 3 个 ErrorCode 引入(超过就拆)
 5. **不绕过 Spring Boot SPI**(新增 Slot 必须走 Provider + SlotRouter,**不要硬编码**)
-6. **不引入额外依赖**(dsh §10.1 已锁 12 项,新依赖需 RFC + `dependency:tree` CI 卡点)
+6. **不引入额外依赖**(dsh §10.1 已锁 13 项[v1.5.7 起],新依赖需 RFC + `dependency:tree` CI 卡点)
+7. **ReAct Loop 必须自实现**(不得用 Spring AI `ChatClient.prompt().call()` 自动工具执行;核心循环 ~ 数十行,完整掌握 Agent 工作机制,保留定制循环行为的空间 — dsh §4.10.1 硬规则 1)
+8. **Spring AI 只用两件事**:① LLM Provider 协议转换(OpenAI / Anthropic / Gemini / DeepSeek / Qwen / Kimi 等格式差异) ② `@Tool` 注解 JSON Schema 生成。**必须禁用** Spring AI 自动 tool 执行 — 会绕过 ToolExecutor 的沙箱/权限/checkpoint,导致 tool 被调两次(dsh §4.10.1 硬规则 2)
+9. **Provider 必须显式映射**:多 `ChatModel` 并存时 Bean 类型相同,必须维护 `Map<String, ChatModel> providerMap` 显式查找;不得靠 Spring 容器扫 Bean 类型区分(dsh §4.10.1 硬规则 3)
 
 ---
 
@@ -209,7 +213,7 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-08  
-**Version**: 1.1(+§5 仓目录结构速查)
+**Version**: 1.2(+§11.7—§11.9 Spring AI 边界硬规则 3 条;同步 dsh v1.5.6→v1.5.7)
 **对应设计文档**: `dsh_agent_design.md` v1.5.6  
 **对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.1  
 **对应 SKILL**: `lingshu-spec-driven-dev` v1.1
