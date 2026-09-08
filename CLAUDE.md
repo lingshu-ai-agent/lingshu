@@ -213,7 +213,7 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-08  
-**Version**: 1.2(+§11.7—§11.9 Spring AI 边界硬规则 3 条;同步 dsh v1.5.6→v1.5.7)
+**Version**: 1.2(+§11.7—§11.9 Spring AI 边界硬规则 3 条;同步 dsh v1.5.6→v1.5.8[R-14 风险去重 + R-13 风险细化])
 **对应设计文档**: `dsh_agent_design.md` v1.5.6  
 **对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.1  
 **对应 SKILL**: `lingshu-spec-driven-dev` v1.1
