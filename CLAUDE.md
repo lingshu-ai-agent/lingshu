@@ -3,10 +3,10 @@
 > 给 Claude Code 的项目级上下文。**每个新 Claude 会话 turn 1 自动加载。**
 >
 > **配套文档**(按需加载,不重复):
-> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.6 / 4768 行 / 项目真理
-> - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.1 / 820 行 / 操作手册
-> - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0 / 368 行 / 新窗口 Prompt 模板
-> - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.1 / 192 行 / 自动触发
+> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.8 / 4768+ 行 / 项目真理
+> - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.3 / 859 行 / 操作手册(R-13 mitigation (d) 镜像)
+> - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0.1 / 368 行 / 新窗口 Prompt 模板
+> - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.0.2 / 192 行 / 自动触发(R-13 dep-tree 自查链路已纳入)
 
 ---
 
@@ -186,7 +186,7 @@ chore: <一句话>
 3. **不跨 Story 改 constitution**(改宪章必须走 RFC 流程,先开 issue + 评审)
 4. **Story 边界**:≤ 5 个核心文件改动,≤ 3 个 ErrorCode 引入(超过就拆)
 5. **不绕过 Spring Boot SPI**(新增 Slot 必须走 Provider + SlotRouter,**不要硬编码**)
-6. **不引入额外依赖**(dsh §10.1 已锁 13 项[v1.5.7 起],新依赖需 RFC + `dependency:tree` CI 卡点)
+6. **不引入额外依赖**(dsh §10.1 已锁 14 项[v1.5.8 起,含 `spring-ai-bom`],新依赖需 RFC + `dependency:tree` CI 卡点 + **`banned-dependencies` enforcer build 阶段 fail**(见 dsh §17 R-13);任何 Story 实施者必须按 SOP §3.2 AC-NN-deps-* + §3.4 T-dep-tree-* 流程自查后提交,**PR body 末尾**必须有 `### R-13 dependency:tree 自查` 节)
 7. **ReAct Loop 必须自实现**(不得用 Spring AI `ChatClient.prompt().call()` 自动工具执行;核心循环 ~ 数十行,完整掌握 Agent 工作机制,保留定制循环行为的空间 — dsh §4.10.1 硬规则 1)
 8. **Spring AI 只用两件事**:① LLM Provider 协议转换(OpenAI / Anthropic / Gemini / DeepSeek / Qwen / Kimi 等格式差异) ② `@Tool` 注解 JSON Schema 生成。**必须禁用** Spring AI 自动 tool 执行 — 会绕过 ToolExecutor 的沙箱/权限/checkpoint,导致 tool 被调两次(dsh §4.10.1 硬规则 2)
 9. **Provider 必须显式映射**:多 `ChatModel` 并存时 Bean 类型相同,必须维护 `Map<String, ChatModel> providerMap` 显式查找;不得靠 Spring 容器扫 Bean 类型区分(dsh §4.10.1 硬规则 3)
@@ -212,8 +212,8 @@ chore: <一句话>
 
 ---
 
-**Last updated**: 2026-09-08  
-**Version**: 1.2(+§11.7—§11.9 Spring AI 边界硬规则 3 条;同步 dsh v1.5.6→v1.5.8[R-14 风险去重 + R-13 风险细化])
-**对应设计文档**: `dsh_agent_design.md` v1.5.6  
-**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.1  
-**对应 SKILL**: `lingshu-spec-driven-dev` v1.1
+**Last updated**: 2026-09-10  
+**Version**: 1.3(+§11.6 扩展 R-13 banned-dependencies enforcer + PR body dep-tree 自查节强制要求;配套文档版本同步:dsh v1.5.8 / SOP v1.3 / SKILL v1.0.2 / prompts v1.0.1)
+**对应设计文档**: `dsh_agent_design.md` v1.5.8  
+**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.3  
+**对应 SKILL**: `lingshu-spec-driven-dev` v1.0.2
