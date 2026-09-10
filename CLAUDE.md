@@ -3,7 +3,7 @@
 > 给 Claude Code 的项目级上下文。**每个新 Claude 会话 turn 1 自动加载。**
 >
 > **配套文档**(按需加载,不重复):
-> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.11 / 4768+ 行 / 项目真理(v1.5.11 多处 Slot 计数 / 命名对齐 9 个 SPI;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
+> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.12 / 4768+ 行 / 项目真理(v1.5.12 §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
 > - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.3 / 859 行 / 操作手册(R-13 mitigation (d) 镜像)
 > - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0.2 / 368 行 / 新窗口 Prompt 模板
 > - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.0.4 / 192 行 / 自动触发(R-13 dep-tree 自查链路已纳入)
@@ -213,7 +213,7 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-10  
-**Version**: 1.3.3(+§4 启动序列 + §16 Glossary + §14.11 NFR 三处 Slot 计数/命名对齐 9 个 SPI,配套同步 dsh v1.5.11;SKILL v1.0.4 / SOP v1.3 / prompts v1.0.2 不变)
-**对应设计文档**: `dsh_agent_design.md` v1.5.11  
+**Version**: 1.3.4(+§4 章节标题 + §4 ASCII 组件图 + §9 Mermaid 时序图 三处删 stale Slot N 标签,配套同步 dsh v1.5.12;SKILL v1.0.4 / SOP v1.3 / prompts v1.0.2 不变)
+**对应设计文档**: `dsh_agent_design.md` v1.5.12  
 **对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.3  
 **对应 SKILL**: `lingshu-spec-driven-dev` v1.0.4

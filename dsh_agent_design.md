@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.11
+# DSH Agent Engine — 设计文档 v1.5.12
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.11(§4 启动序列 + Glossary Slot 名录 + §14.11 NFR 三处 Slot 计数 / 命名对齐 9 个 SPI)
+> **版本**:v1.5.12(§4 章节标题 + §4 ASCII 组件图 + §9 Mermaid 时序图 三处删除 stale "Slot N" 标签)
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结;**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI — §4.4.5 启动序列 "7 个 SlotRouter" / "7 个 resolve" → 9;Mermaid 时序图 `SevenSlotRouter` → `NineSlotRouter`;§16 Glossary Slot 名录从 "LLM/Tool/Sandbox/Skill/Compactor/SessionStore/FlowEngine/PromptCache/A2aTransport" 改为 "LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/FlowEngine/A2aTransport"(修 PromptCache → PromptBuilder + Skill → SkillSource + 顺序对齐 CLAUDE.md);§14.14 N1-N13 落地图 + §14.15.1 性能表 "§14.11 PromptCache" → "§14.11 CachingPromptBuilder";**v1.5.10** §0.1 目标对齐 — "6 大原子 + 1 编排"改为"8 大能力 Slot(LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/A2aTransport)+ 1 编排 Slot(FlowEngine)";**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段 — 紧贴 [USER MESSAGE] 之前、Schema 严格走 §4.6 `Tool.inputSchema()`、避免破坏 prompt cache 命中;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
+> **状态**:设计阶段冻结;**v1.5.12** §4 章节标题(§4.5 PromptBuilder / §4.6 Tool / §4.8 SessionStore / §4.9 Compactor / §4.10 LlmProvider)+ §4.4.4 ASCII Agent 组件图 6 处错的 "(Slot 1/2/3/4/5/6)" + §9.1 Mermaid 时序图 6 处 "(Slot 1/2/3/4/5/6)" 一律删除(stale:数字按 §4 章节顺序而非 CLAUDE.md SPI 顺序填的,跟 CLAUDE.md L107-108 表对不上);保留 §4.11 "(编排 Slot — 第 7 项决策的核心)"(类别标签 + 决策锚点,非编号)、§4.4.4 ASCII 里 FlowEngine "(Slot 8)" 与 A2aTransport "(Slot 9)"(这两个正确,跟 CLAUDE.md 表对齐)、§10.5 "(Slot 8)" FlowEngine 同样正确;**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI — §4.4.5 启动序列 "7 个 SlotRouter" / "7 个 resolve" → 9;Mermaid 时序图 `SevenSlotRouter` → `NineSlotRouter`;§16 Glossary Slot 名录从 "LLM/Tool/Sandbox/Skill/Compactor/SessionStore/FlowEngine/PromptCache/A2aTransport" 改为 "LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/FlowEngine/A2aTransport"(修 PromptCache → PromptBuilder + Skill → SkillSource + 顺序对齐 CLAUDE.md);§14.14 N1-N13 落地图 + §14.15.1 性能表 "§14.11 PromptCache" → "§14.11 CachingPromptBuilder";**v1.5.10** §0.1 目标对齐 — "6 大原子 + 1 编排"改为"8 大能力 Slot(LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/A2aTransport)+ 1 编排 Slot(FlowEngine)";**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段 — 紧贴 [USER MESSAGE] 之前、Schema 严格走 §4.6 `Tool.inputSchema()`、避免破坏 prompt cache 命中;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -229,22 +229,22 @@
 │                                                            │
 │  ┌──────────────────┐  ┌──────────────────┐              │
 │  │  PromptBuilder   │  │  ToolExecutor   │              │
-│  │  (Slot 1)        │  │  (Slot 5)        │              │
+│  │                  │  │                  │              │
 │  └──────────────────┘  └──────────────────┘              │
 │                                                            │
 │  ┌──────────────────┐  ┌──────────────────────────┐      │
 │  │  LlmProvider     │  │  SandBoxer               │      │
-│  │  (Slot 3)        │  │  ├ PermissionPolicy (4)  │      │
+│  │                  │  │  ├ PermissionPolicy      │      │
 │  └──────────────────┘  │  └ RuntimeSandbox        │      │
 │                         └──────────────────────────┘      │
 │                                                            │
 │  ┌──────────────────┐  ┌──────────────────┐              │
 │  │  Compactor       │  │  SessionStore    │              │
-│  │  (Slot 2)        │  │  (Slot 6)        │              │
+│  │                  │  │                  │              │
 │  └──────────────────┘  └──────────────────┘              │
 │                                                            │
 │  ┌──────────────────────────────────────────────┐        │
-│  │  FlowEngine (编排 Slot,Slot 8)               │        │
+│  │  FlowEngine (编排 Slot)                      │        │
 │  │  ├ LinearTurnEngine (默认)                  │        │
 │  │  └ DagTurnEngine (你后续自研)               │        │
 │  └──────────────────────────────────────────────┘        │
@@ -385,7 +385,7 @@ public abstract class AgentEvent {}
 @Getter @RequiredArgsConstructor public static class MaxStepsExceeded   extends AgentEvent { int maxSteps; Usage totalUsage; }
 ```
 
-### 4.5 PromptBuilder(Slot 1)
+### 4.5 PromptBuilder
 
 ```java
 public interface PromptBuilder {
@@ -510,7 +510,7 @@ public Prompt build(TurnContext ctx) {
 > - **紧贴 [USER MESSAGE]** — LLM 在最新 user message 前先看到可用工具列表,自然在下一轮 function_call 决策中调用
 > - **Schema 来源严格走 `Tool.inputSchema()`(§4.6)** — 不允许 prompt 模板里硬编码 / 拼接 / 转译;Spring AI `@Tool` 注解只用于**生成** schema(执行必须走我们自己的 `ToolExecutor.dispatch()`,见 §4.10.1 硬规则 2 + dsh §17 R-13 mitigation (d))
 
-### 4.6 Tool 与 ToolExecutor(Slot 5)
+### 4.6 Tool 与 ToolExecutor
 
 ```java
 public interface Tool {
@@ -625,7 +625,7 @@ public interface ProcessRunner {
 }
 ```
 
-### 4.8 SessionStore(Slot 6)
+### 4.8 SessionStore
 
 ```java
 public interface Session {
@@ -642,7 +642,7 @@ public interface SessionStore {
 }
 ```
 
-### 4.9 Compactor(Slot 2)
+### 4.9 Compactor
 
 ```java
 public interface Compactor {
@@ -651,7 +651,7 @@ public interface Compactor {
 }
 ```
 
-### 4.10 LlmProvider(Slot 3)
+### 4.10 LlmProvider
 
 ```java
 /**
@@ -3752,23 +3752,23 @@ sequenceDiagram
     Agent->>FE: runTurn ctx sink
 
     loop until turn done
-        FE->>PB: build ctx  (Slot 1)
-        FE->>CMP: shouldCompact  (Slot 2)
+        FE->>PB: build ctx
+        FE->>CMP: shouldCompact
         alt needs compact
             FE->>CMP: compact ctx
         end
-        FE->>LLM: stream prompt  (Slot 3)
+        FE->>LLM: stream prompt
         LLM-->>FE: LlmResponse with Bash toolCall
-        FE->>POL: check call  (Slot 4)
+        FE->>POL: check call
         alt Allow
-            FE->>TE: dispatch call  (Slot 5)
+            FE->>TE: dispatch call
         else Deny
             FE->>FE: ToolResult.error
         else AskUser
             FE-->>User: ApprovalRequired
             User-->>FE: answer
         end
-        FE->>SS: save checkpoint  (Slot 6)
+        FE->>SS: save checkpoint
     end
     FE-->>User: TurnCompleted
 ```
