@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.13
+# DSH Agent Engine — 设计文档 v1.5.14
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.13(§4.5.1 PromptBuilder.build 伪代码 API 对齐 §4.2 Prompt 定义 — `.tools(List<ToolSpec>)` + `.messages(List<Message>)` + `.hints(ModelHints)`,删除 system 文本注入)
+> **版本**:v1.5.14(§4.5.1 [TOOL SCHEMAS] 字段措辞修订 — 明确"独立字段"是 Agent Engine 抽象层概念,不是 LLM HTTP wire format 层;v1.5.13 措辞修订)
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结;**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
+> **状态**:设计阶段冻结;**v1.5.14** §4.5.1 [TOOL SCHEMAS] 措辞修订 — 明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层):`Prompt.tools` 是抽象层概念(我们的代码 / Prompt 模型 / cache 策略),到 LLM 实际收到的 JSON body(wire format 层)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string**,在 wire format 层两者等价;rationale 块引用加"先说分层"段(7 条理由全部归到抽象层收益:变更频率分类维度 / Prompt 模型三件套各司其职 / cache key 独立 / Provider 协议透明化 / 空 tools 留空 / Schema 来源严格 / 紧贴 USER MESSAGE 是概念顺序);ASCII 框图 [TOOL SCHEMAS] 块标题从"独立 API 字段(非 system 文本)"改"Prompt 抽象的独立字段(非 system 文本段)";伪代码 L490-497 注释从"走 SDK 原生 function_calling"改"Prompt 抽象的 .tools 字段 + LlmProvider 按 provider 协议序列化";**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -435,14 +435,16 @@ public interface MemorySource {
 ┌─ [CONVERSATION HISTORY] ────────────────────────────────┐
 │ ...(现有 §6 行为) │
 └────────────────────────────────────────────────────┘
-┌─ [TOOL SCHEMAS] ── 独立 API 字段(非 system 文本) ──────┐
-│ → Prompt.tools(List<ToolSpec>)字段,与 messages 解耦   │
-│ (按 cfg.tools 顺序遍历,每个 Tool 调 inputSchema())    │
-│ ToolSpec(name, description, inputSchema) → SDK 原生   │
-│   function_calling 字段(OpenAI tools / Anthropic tools) │
-│ (空集合 → 留空,LLM 看不到 function_calling 入口) │
-│ (Schema 来源:Tool.inputSchema() — §4.6) │
-└────────────────────────────────────────────────────┘
+┌─ [TOOL SCHEMAS] ── Prompt 抽象的独立字段(非 system 文本段) ┐
+│ → Prompt.tools(List<ToolSpec>)字段,与 messages 同级     │
+│ (按 cfg.tools 顺序遍历,每个 Tool 调 inputSchema())      │
+│ ToolSpec(name, description, inputSchema) → LlmProvider │
+│   序列化为 provider 协议 tools 字段                       │
+│   (OpenAI tools=[{type:function,...}] /                  │
+│    Anthropic tools=[{name,description,input_schema}])    │
+│ (空集合 → 留空,LLM 看不到 function_calling 入口)         │
+│ (Schema 来源:Tool.inputSchema() — §4.6)                  │
+└──────────────────────────────────────────────────────────────┘
 ┌─ [USER MESSAGE] ────────────────────────────────────────┐
 │ ... │
 └────────────────────────────────────────────────────┘
@@ -487,8 +489,14 @@ public Prompt build(TurnContext ctx) {
     // [USER MESSAGE]
     messages.add(Message.user(ctx.currentUserInput()));
 
-    // [TOOL SCHEMAS] — 走 SDK 原生 function_calling 字段(OpenAI tools /
-    // Anthropic tools),与 messages 解耦,不影响前 4 段 system cache key
+    // [TOOL SCHEMAS] — Prompt 抽象的 .tools 字段(非 system 文本段)
+    //   语义上与 messages 同级,变更频率与 [ROLE]/[INSTRUCTIONS]/[PROJECT MEMORY] 分离
+    //   序列化时机:由 LlmProvider.stream(§4.10)按 provider 协议转
+    //     OpenAI tools=[{type:function,...}] /
+    //     Anthropic tools=[{name,description,input_schema}] /
+    //     Gemini tools=[{functionDeclarations:[...]}]
+    //   注意:LLM 看到的 wire format 层最终都是 JSON,本注释讲的是抽象层;
+    //     不影响 system 段 cache key(对齐 §14 N11 性能预算)
     List<Tool> tools = toolRegistry.list(cfg);  // 按 cfg.tools 顺序
     List<ToolSpec> toolSpecs = tools.stream()
         .map(t -> new ToolSpec(t.name(), t.description(), t.inputSchema()))
@@ -512,14 +520,19 @@ public Prompt build(TurnContext ctx) {
 
 **Sub-agent 继承**(§6.6):父 Agent 启动子 Agent 时,若子 AgentConfig 没指定 `instructions`,自动继承父 Agent 的 `instructions.file`(路径不变);`memory.claudeMd` 路径默认沿用父 Agent 路径(避免每个 sub-agent 都重复声明 `./CLAUDE.md`)。
 
-> **为什么 [TOOL SCHEMAS] 作为 Prompt.tools 独立字段**(v1.5.9 引入 + v1.5.13 修订为原生 SDK 字段):
+> **为什么 [TOOL SCHEMAS] 作为 Prompt 抽象的独立 .tools 字段**(v1.5.9 引入 + v1.5.13 修订措辞 + v1.5.14 明确分层):
 >
-> - **变更频率高** — Tool 列表随插件 / Skill / MCP server 动态增删,与 [ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] 三个相对稳定段分离
-> - **走 SDK 原生 function_calling 字段** — `Prompt.tools(List<ToolSpec>)` 字段由 `LlmProvider` 序列化到 OpenAI `tools=[{type:function,...}]` / Anthropic `tools=[{name,description,input_schema}]` 字段;LLM 直接拿原生 schema 解析,**不用从 system 文本里 grep JSON**
+> **先说分层**:`Prompt.tools` 是 **Agent Engine 抽象层**(Prompt 模型 / 我们的代码 / cache 策略 / 文档语义)的概念;
+> 到 **LLM HTTP wire format 层**(LLM 实际收到的 JSON body)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string** —— 在这个层两者等价。
+> 下面 6 条理由全部是 **Agent Engine 抽象层** 的收益,**不是** wire format 层的差异。
+>
+> - **变更频率高** — Tool 列表随插件 / Skill / MCP server 动态增删,与 [ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] 三个相对稳定段分离(分类维度是**变更频率**,不是 wire format)
+> - **Prompt 模型清晰(三件套各司其职)** — `Prompt` 类三个字段语义不混:`messages`(对话上下文)/ `tools`(能力清单)/ `hints`(调用参数);不把 tool schema 硬塞进 `messages` 的 system 文本里,符合 §4.2 Prompt 类契约;语义清爽 → 文档 / 测试 / debug / 替换实现都更省事
 > - **与 messages 解耦,各 cache key 独立** — OpenAI 自动 prompt cache 按 prefix 命中,system 是稳定 cache key,tools 是另一个独立 cache key;Anthropic `cache_control` 可分别打 system / tools 的 cache breakpoint;**Tool schema 增删不影响 system 段缓存命中**(对齐 §14 N11 性能预算)
-> - **空 tools 集合 = 留空字段** — 不输出任何工具元数据,LLM 看不到 function_calling 入口,无 tool 可调
+> - **Provider 协议差异透明化** — OpenAI `tools=[{type:function,...}]` / Anthropic `tools=[{name,description,input_schema}]` / Gemini `tools=[{functionDeclarations:[...]}]` 格式差异由 `LlmProvider`(§4.10)内部 SDK 吸收;`ToolSpec(name, description, inputSchema)` 是 provider-无关的,新增 provider 不需要改 Prompt 装配代码
+> - **空 tools 集合 = 留空字段** — `tools` 字段为空集合时,`LlmProvider` 内部 SDK 决定是否发送空 `tools=[]`(OpenAI 默认发 / Anthropic 省略);但 LLM 看不到 function_calling 入口,无 tool 可调,行为一致
 > - **Schema 来源严格走 `Tool.inputSchema()`(§4.6)** — 不允许 prompt 模板里硬编码 / 拼接 / 转译;Spring AI `@Tool` 注解只用于**生成** schema(执行必须走我们自己的 `ToolExecutor.dispatch()`,见 §4.10.1 硬规则 2 + dsh §17 R-13 mitigation (d))
-> - **紧贴 [USER MESSAGE] 仅是概念顺序** — 实际 API 里 tools 在 messages 之外独立传;LLM 在生成下一轮 response 时把 tools 视作"上下文可用能力",与最近 user message 一起决策是否调用 function_call
+> - **紧贴 [USER MESSAGE] 仅是概念顺序** — 实际 API 里 tools 在 messages 之外独立传;LLM 在生成下一轮 response 时把 tools 视作"上下文可用能力",与最近 user message 一起决策是否调用 function_call(同 v1.5.13,此条不重复)
 
 ### 4.6 Tool 与 ToolExecutor
 
