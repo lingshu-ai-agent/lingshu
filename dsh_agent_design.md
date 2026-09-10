@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.12
+# DSH Agent Engine — 设计文档 v1.5.13
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.12(§4 章节标题 + §4 ASCII 组件图 + §9 Mermaid 时序图 三处删除 stale "Slot N" 标签)
+> **版本**:v1.5.13(§4.5.1 PromptBuilder.build 伪代码 API 对齐 §4.2 Prompt 定义 — `.tools(List<ToolSpec>)` + `.messages(List<Message>)` + `.hints(ModelHints)`,删除 system 文本注入)
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结;**v1.5.12** §4 章节标题(§4.5 PromptBuilder / §4.6 Tool / §4.8 SessionStore / §4.9 Compactor / §4.10 LlmProvider)+ §4.4.4 ASCII Agent 组件图 6 处错的 "(Slot 1/2/3/4/5/6)" + §9.1 Mermaid 时序图 6 处 "(Slot 1/2/3/4/5/6)" 一律删除(stale:数字按 §4 章节顺序而非 CLAUDE.md SPI 顺序填的,跟 CLAUDE.md L107-108 表对不上);保留 §4.11 "(编排 Slot — 第 7 项决策的核心)"(类别标签 + 决策锚点,非编号)、§4.4.4 ASCII 里 FlowEngine "(Slot 8)" 与 A2aTransport "(Slot 9)"(这两个正确,跟 CLAUDE.md 表对齐)、§10.5 "(Slot 8)" FlowEngine 同样正确;**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI — §4.4.5 启动序列 "7 个 SlotRouter" / "7 个 resolve" → 9;Mermaid 时序图 `SevenSlotRouter` → `NineSlotRouter`;§16 Glossary Slot 名录从 "LLM/Tool/Sandbox/Skill/Compactor/SessionStore/FlowEngine/PromptCache/A2aTransport" 改为 "LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/FlowEngine/A2aTransport"(修 PromptCache → PromptBuilder + Skill → SkillSource + 顺序对齐 CLAUDE.md);§14.14 N1-N13 落地图 + §14.15.1 性能表 "§14.11 PromptCache" → "§14.11 CachingPromptBuilder";**v1.5.10** §0.1 目标对齐 — "6 大原子 + 1 编排"改为"8 大能力 Slot(LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/A2aTransport)+ 1 编排 Slot(FlowEngine)";**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段 — 紧贴 [USER MESSAGE] 之前、Schema 严格走 §4.6 `Tool.inputSchema()`、避免破坏 prompt cache 命中;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
+> **状态**:设计阶段冻结;**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -435,12 +435,12 @@ public interface MemorySource {
 ┌─ [CONVERSATION HISTORY] ────────────────────────────────┐
 │ ...(现有 §6 行为) │
 └────────────────────────────────────────────────────┘
-┌─ [TOOL SCHEMAS] ─────────────────────────────────────────┐
-│ (按 cfg.tools 顺序遍历,每个 Tool 调 inputSchema()) │
-│ <tool#1.name>: <inputSchema#1 JSON> │
-│ <tool#2.name>: <inputSchema#2 JSON> │
-│ ... │
-│ (空集合 → 不输出该段,LLM 无工具可调) │
+┌─ [TOOL SCHEMAS] ── 独立 API 字段(非 system 文本) ──────┐
+│ → Prompt.tools(List<ToolSpec>)字段,与 messages 解耦   │
+│ (按 cfg.tools 顺序遍历,每个 Tool 调 inputSchema())    │
+│ ToolSpec(name, description, inputSchema) → SDK 原生   │
+│   function_calling 字段(OpenAI tools / Anthropic tools) │
+│ (空集合 → 留空,LLM 看不到 function_calling 入口) │
 │ (Schema 来源:Tool.inputSchema() — §4.6) │
 └────────────────────────────────────────────────────┘
 ┌─ [USER MESSAGE] ────────────────────────────────────────┐
@@ -478,37 +478,48 @@ public Prompt build(TurnContext ctx) {
         appendFileIfExists(sys, extra);
     }
 
-    // [TOOL SCHEMAS] — 放末尾:Tool 列表变化频繁,不影响前 5 段 prompt cache
-    List<Tool> tools = toolRegistry.list(cfg);  // 按 cfg.tools 顺序
-    if (!tools.isEmpty()) {
-        sys.append("\n\n[TOOL SCHEMAS]\n");
-        for (Tool t : tools) {
-            sys.append("## ").append(t.name()).append("\n");
-            sys.append(t.description()).append("\n");
-            // 关键:Schema 必须从 Tool.inputSchema() 拿,见 §4.6 + R-13 (d) dep-tree 自查
-            sys.append("inputSchema: ").append(t.inputSchema().toString()).append("\n\n");
-        }
-    }
-    // (空 tools 集合 → 跳过整段;LLM 看不到 function_calling 入口,无 tool 可调)
+    // 喂 LLM:三件套 messages + tools + hints(对齐 §4.2 Prompt 定义)
+    List<Message> messages = new ArrayList<>();
+    // [ROLE] + [INSTRUCTIONS] + [PROJECT MEMORY] → 单条 system message
+    messages.add(Message.system(sys.toString()));
+    // [CONVERSATION HISTORY]
+    messages.addAll(ctx.history().messages());
+    // [USER MESSAGE]
+    messages.add(Message.user(ctx.currentUserInput()));
 
-    // 喂 LLM:先 system 块,再 history + user message(现有逻辑)
+    // [TOOL SCHEMAS] — 走 SDK 原生 function_calling 字段(OpenAI tools /
+    // Anthropic tools),与 messages 解耦,不影响前 4 段 system cache key
+    List<Tool> tools = toolRegistry.list(cfg);  // 按 cfg.tools 顺序
+    List<ToolSpec> toolSpecs = tools.stream()
+        .map(t -> new ToolSpec(t.name(), t.description(), t.inputSchema()))
+        .collect(Collectors.toList());
+    // (空集合 → 留空;LLM 看不到 function_calling 入口,无 tool 可调)
+    // Schema 必须从 Tool.inputSchema() 拿,见 §4.6 + R-13 (d) dep-tree 自查
+
+    ModelHints hints = new ModelHints(
+        cfg.getLlm().getModel(),
+        cfg.getLlm().getTemperature(),
+        cfg.getLlm().getMaxTokens()
+    );
+
     return Prompt.builder()
-        .system(sys.toString())
-        .messages(ctx.history().messages())
-        .userMessage(ctx.currentUserInput())
-        .modelHints(cfg.getLlm().getMaxTokens(), cfg.getLlm().getTemperature())
+        .messages(messages)
+        .tools(toolSpecs)
+        .hints(hints)
         .build();
 }
 ```
 
 **Sub-agent 继承**(§6.6):父 Agent 启动子 Agent 时,若子 AgentConfig 没指定 `instructions`,自动继承父 Agent 的 `instructions.file`(路径不变);`memory.claudeMd` 路径默认沿用父 Agent 路径(避免每个 sub-agent 都重复声明 `./CLAUDE.md`)。
 
-> **为什么 [TOOL SCHEMAS] 放在 [CONVERSATION HISTORY] 与 [USER MESSAGE] 之间**(v1.5.9 修订):
+> **为什么 [TOOL SCHEMAS] 作为 Prompt.tools 独立字段**(v1.5.9 引入 + v1.5.13 修订为原生 SDK 字段):
 >
 > - **变更频率高** — Tool 列表随插件 / Skill / MCP server 动态增删,与 [ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] 三个相对稳定段分离
-> - **放末尾不破坏 prompt cache 命中** — OpenAI / Anthropic 协议的 prompt cache 按前缀命中;Tool schema 改写只影响 system 末尾与 history 段,前 4 段缓存全部命中,只增量计费新增 token(对齐 §14 N11 性能预算)
-> - **紧贴 [USER MESSAGE]** — LLM 在最新 user message 前先看到可用工具列表,自然在下一轮 function_call 决策中调用
+> - **走 SDK 原生 function_calling 字段** — `Prompt.tools(List<ToolSpec>)` 字段由 `LlmProvider` 序列化到 OpenAI `tools=[{type:function,...}]` / Anthropic `tools=[{name,description,input_schema}]` 字段;LLM 直接拿原生 schema 解析,**不用从 system 文本里 grep JSON**
+> - **与 messages 解耦,各 cache key 独立** — OpenAI 自动 prompt cache 按 prefix 命中,system 是稳定 cache key,tools 是另一个独立 cache key;Anthropic `cache_control` 可分别打 system / tools 的 cache breakpoint;**Tool schema 增删不影响 system 段缓存命中**(对齐 §14 N11 性能预算)
+> - **空 tools 集合 = 留空字段** — 不输出任何工具元数据,LLM 看不到 function_calling 入口,无 tool 可调
 > - **Schema 来源严格走 `Tool.inputSchema()`(§4.6)** — 不允许 prompt 模板里硬编码 / 拼接 / 转译;Spring AI `@Tool` 注解只用于**生成** schema(执行必须走我们自己的 `ToolExecutor.dispatch()`,见 §4.10.1 硬规则 2 + dsh §17 R-13 mitigation (d))
+> - **紧贴 [USER MESSAGE] 仅是概念顺序** — 实际 API 里 tools 在 messages 之外独立传;LLM 在生成下一轮 response 时把 tools 视作"上下文可用能力",与最近 user message 一起决策是否调用 function_call
 
 ### 4.6 Tool 与 ToolExecutor
 
