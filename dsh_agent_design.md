@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.8
+# DSH Agent Engine — 设计文档 v1.5.10
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.8(R-14 风险去重 — 合并入 R-06;R-13 风险细化 — 具体场景 + 实施者自查)
+> **版本**:v1.5.10(§0.1 Slot 计数修正 — 6+1=7 改为 8+1=9,与 §6 / CLAUDE.md 对齐)
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
+> **状态**:设计阶段冻结;**v1.5.10** §0.1 目标对齐 — "6 大原子 + 1 编排"改为"8 大能力 Slot(LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/A2aTransport)+ 1 编排 Slot(FlowEngine)";**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段 — 紧贴 [USER MESSAGE] 之前、Schema 严格走 §4.6 `Tool.inputSchema()`、避免破坏 prompt cache 命中;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -35,7 +35,7 @@
 ### 0.1 目标
 
 - 做一个**可扩展的 Java Agent 引擎**,核心能力对齐 Claude Code 类编码 Agent。
-- **插件化优先**:6 大原子 Slot + 1 个编排 Slot 全部走 Spring Boot SPI,每个 Slot 可独立替换。
+- **插件化优先**:8 大能力 Slot(LlmProvider / Tool / Sandbox / SkillSource / SessionStore / Compactor / PromptBuilder / A2aTransport)+ 1 个编排 Slot(FlowEngine)全部走 Spring Boot SPI,每个 Slot 可独立替换。
 - **兼容企业 JDK 8**(sealed / records / `var` / pattern-switch / `List.of` 全部回避)。
 - **第一公民级多 Agent 协作**:`Task` tool 直接落地,子 Agent 通过 `SubAgentType` 枚举 + yml 注册。
 - **运行时拓扑可替换**:v1 线性,后续用户自研 DAG 引擎无需改核心代码。
