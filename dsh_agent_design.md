@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.10
+# DSH Agent Engine — 设计文档 v1.5.11
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.10(§0.1 Slot 计数修正 — 6+1=7 改为 8+1=9,与 §6 / CLAUDE.md 对齐)
+> **版本**:v1.5.11(§4 启动序列 + Glossary Slot 名录 + §14.11 NFR 三处 Slot 计数 / 命名对齐 9 个 SPI)
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结;**v1.5.10** §0.1 目标对齐 — "6 大原子 + 1 编排"改为"8 大能力 Slot(LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/A2aTransport)+ 1 编排 Slot(FlowEngine)";**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段 — 紧贴 [USER MESSAGE] 之前、Schema 严格走 §4.6 `Tool.inputSchema()`、避免破坏 prompt cache 命中;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
+> **状态**:设计阶段冻结;**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI — §4.4.5 启动序列 "7 个 SlotRouter" / "7 个 resolve" → 9;Mermaid 时序图 `SevenSlotRouter` → `NineSlotRouter`;§16 Glossary Slot 名录从 "LLM/Tool/Sandbox/Skill/Compactor/SessionStore/FlowEngine/PromptCache/A2aTransport" 改为 "LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/FlowEngine/A2aTransport"(修 PromptCache → PromptBuilder + Skill → SkillSource + 顺序对齐 CLAUDE.md);§14.14 N1-N13 落地图 + §14.15.1 性能表 "§14.11 PromptCache" → "§14.11 CachingPromptBuilder";**v1.5.10** §0.1 目标对齐 — "6 大原子 + 1 编排"改为"8 大能力 Slot(LlmProvider/Tool/Sandbox/SkillSource/SessionStore/Compactor/PromptBuilder/A2aTransport)+ 1 编排 Slot(FlowEngine)";**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段 — 紧贴 [USER MESSAGE] 之前、Schema 严格走 §4.6 `Tool.inputSchema()`、避免破坏 prompt cache 命中;**v1.5.8** Risk Register 微调 — R-14 删除(已被 R-06 完全覆盖)+ R-13 重写为具体场景(Story #003/#009 误用 starter 致 transitive 污染 + binary 膨胀,banned-dependencies + 实施者 dependency:tree 自查);**v1.5.7** 新增 §4.10.1 Spring AI 边界硬规则 3 条 + §10.1 引入 `spring-ai-bom` 1.0.0-M6(R-13 跟踪);v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -196,8 +196,8 @@
 ┌────────────────────────────────────────────────────────────────────┐
 │  1. 扫描 META-INF/spring/...AutoConfiguration.imports              │
 │  2. 实例化所有 @Component Provider                                  │
-│  3. 7 个 SlotRouter 收集 + 同名竞争 + 启动日志                      │
-│  4. AgentFactory.create(config) → 7 个 resolve + 全部校验          │
+│  3. 9 个 SlotRouter 收集 + 同名竞争 + 启动日志                      │
+│  4. AgentFactory.create(config) → 9 个 resolve + 全部校验          │
 │     任一失败 → JVM 退出,启动日志明确指出哪个字段 / 哪个 name        │
 │  5. 返回 ready 的 Agent 实例                                         │
 └────────────────────────────────────────────────────────────────────┘
@@ -3721,7 +3721,7 @@ sequenceDiagram
     participant App as SpringApplication
     participant AC as AutoConfig扫描
     participant Prov as ProviderList
-    participant Router as SevenSlotRouter
+    participant Router as NineSlotRouter
     participant Factory as AgentFactory
 
     App->>AC: 扫描 META-INF spring imports 文件
@@ -4582,7 +4582,7 @@ N2 Retry ─┐    N3 CircuitBreaker ─┐    N12 Cancel ─┐
                   ↓                              ↓
               N1 OTel (跨切)             LinearTurnEngine
                   ↓                              ↓
-N4 CostBudget ──────────────→ TurnContext ←── N11 PromptCache
+N4 CostBudget ──────────────→ TurnContext ←── N11 CachingPromptBuilder
                                        ↓
                                  N6 GracefulShutdown
                                        ↓
@@ -4608,7 +4608,7 @@ N4 CostBudget ──────────────→ TurnContext ←─�
 | **Tool 调用单次延迟** | P99 ≤ toolTimeoutSec(默认 30s)| `agent.tool.duration` per-tool | 超时由 §14.3 CircuitBreaker 兜底 |
 | **最大并发 turn 数** | 默认 16(可配 `agent.factory.max-turns`) | `agent.turns.in_flight` gauge | 超过排队,排队深度 ≤ 32 |
 | **最大 session 数** | 默认 1000(可配 `agent.session-store.capacity`)| `agent.session.count` gauge | 超过 LRU 淘汰 |
-| **单 turn 最大 history tokens** | 100K(超过触发 §14.11 PromptCache 强制压缩)| `agent.history.tokens` gauge | 防御 OOM |
+| **单 turn 最大 history tokens** | 100K(超过触发 §14.11 CachingPromptBuilder 强制压缩)| `agent.history.tokens` gauge | 防御 OOM |
 | **单 session 最大 cost** | `agent.cost.session-budget-micros`(默认 1 USD)| `agent.cost.session.spent` counter | 超 §14.4 拒绝新 turn |
 | **JVM heap 上限** | 默认 4G(配置 `-Xmx` 可调)| `jvm.memory.heap.used` | LinearTurnEngine + Tool dispatch 各占约 30% |
 | **冷启动到首个 token 时间** | ≤ 30s(空 yml 场景,验证 AC-01)| `agent.startup.duration` timer | SPI 加载 + Bean 装配 + LLM 连接 |
@@ -4821,7 +4821,7 @@ ErrorCode = "LINGS-" + <域字母><2 位数字>
 
 | 术语 | 含义 | 首次定义 |
 |---|---|---|
-| **Slot** | LingShu 引擎的 9 个可插拔扩展点(LLM / Tool / Sandbox / Skill / Compactor / SessionStore / FlowEngine / PromptCache / A2aTransport)| §2 / §5.1 |
+| **Slot** | LingShu 引擎的 9 个可插拔扩展点(LlmProvider / Tool / Sandbox / SkillSource / SessionStore / Compactor / PromptBuilder / FlowEngine / A2aTransport)| §2 / §5.1 |
 | **Provider** | 一个 Slot 的 SPI 实现,带 `name()` / `version()` / `priority()` | §5.1 |
 | **SlotRouter** | 运行时从 N 个同 Slot Provider 中"按 yml 选 1 个"的策略器 | §5.2 |
 | **FlowEngine** | 控制 Agent turn 主循环的编排器(可替换为 ADK / LangGraph4j)| §4.11 |
