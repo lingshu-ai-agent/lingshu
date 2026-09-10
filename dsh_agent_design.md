@@ -435,6 +435,14 @@ public interface MemorySource {
 ┌─ [CONVERSATION HISTORY] ────────────────────────────────┐
 │ ...(现有 §6 行为) │
 └────────────────────────────────────────────────────┘
+┌─ [TOOL SCHEMAS] ─────────────────────────────────────────┐
+│ (按 cfg.tools 顺序遍历,每个 Tool 调 inputSchema()) │
+│ <tool#1.name>: <inputSchema#1 JSON> │
+│ <tool#2.name>: <inputSchema#2 JSON> │
+│ ... │
+│ (空集合 → 不输出该段,LLM 无工具可调) │
+│ (Schema 来源:Tool.inputSchema() — §4.6) │
+└────────────────────────────────────────────────────┘
 ┌─ [USER MESSAGE] ────────────────────────────────────────┐
 │ ... │
 └────────────────────────────────────────────────────┘
@@ -470,6 +478,19 @@ public Prompt build(TurnContext ctx) {
         appendFileIfExists(sys, extra);
     }
 
+    // [TOOL SCHEMAS] — 放末尾:Tool 列表变化频繁,不影响前 5 段 prompt cache
+    List<Tool> tools = toolRegistry.list(cfg);  // 按 cfg.tools 顺序
+    if (!tools.isEmpty()) {
+        sys.append("\n\n[TOOL SCHEMAS]\n");
+        for (Tool t : tools) {
+            sys.append("## ").append(t.name()).append("\n");
+            sys.append(t.description()).append("\n");
+            // 关键:Schema 必须从 Tool.inputSchema() 拿,见 §4.6 + R-13 (d) dep-tree 自查
+            sys.append("inputSchema: ").append(t.inputSchema().toString()).append("\n\n");
+        }
+    }
+    // (空 tools 集合 → 跳过整段;LLM 看不到 function_calling 入口,无 tool 可调)
+
     // 喂 LLM:先 system 块,再 history + user message(现有逻辑)
     return Prompt.builder()
         .system(sys.toString())
@@ -481,6 +502,13 @@ public Prompt build(TurnContext ctx) {
 ```
 
 **Sub-agent 继承**(§6.6):父 Agent 启动子 Agent 时,若子 AgentConfig 没指定 `instructions`,自动继承父 Agent 的 `instructions.file`(路径不变);`memory.claudeMd` 路径默认沿用父 Agent 路径(避免每个 sub-agent 都重复声明 `./CLAUDE.md`)。
+
+> **为什么 [TOOL SCHEMAS] 放在 [CONVERSATION HISTORY] 与 [USER MESSAGE] 之间**(v1.5.9 修订):
+>
+> - **变更频率高** — Tool 列表随插件 / Skill / MCP server 动态增删,与 [ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] 三个相对稳定段分离
+> - **放末尾不破坏 prompt cache 命中** — OpenAI / Anthropic 协议的 prompt cache 按前缀命中;Tool schema 改写只影响 system 末尾与 history 段,前 4 段缓存全部命中,只增量计费新增 token(对齐 §14 N11 性能预算)
+> - **紧贴 [USER MESSAGE]** — LLM 在最新 user message 前先看到可用工具列表,自然在下一轮 function_call 决策中调用
+> - **Schema 来源严格走 `Tool.inputSchema()`(§4.6)** — 不允许 prompt 模板里硬编码 / 拼接 / 转译;Spring AI `@Tool` 注解只用于**生成** schema(执行必须走我们自己的 `ToolExecutor.dispatch()`,见 §4.10.1 硬规则 2 + dsh §17 R-13 mitigation (d))
 
 ### 4.6 Tool 与 ToolExecutor(Slot 5)
 
@@ -777,7 +805,7 @@ public interface FlowEngine {
 
 **适配器契约**(写适配器时必须满足):
 
-```
+```text
 输入: TurnContext { session, config, sink, userInput, done, markDone, appendXxx }
 ↓
 [ 适配器内部 ]   把 TurnContext 翻译成外部引擎的 Runner/Graph 上下文
@@ -1556,7 +1584,7 @@ public class SlotResolver {
 
 每个 plugin JAR 写一行到 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`:
 
-```
+```text
 io.agent.plugin.prompt.rag.RagAutoConfiguration
 io.agent.plugin.sandbox.StrictSandBoxerAutoConfiguration
 io.agent.tools.local.LocalToolsAutoConfiguration
@@ -1609,7 +1637,7 @@ public class DefaultPromptBuilderAutoConfiguration {
 
 #### 5.6.2 四层架构
 
-```
+```text
 ┌────────────────────────────────────────────────────────────────────┐
 │ FlowEngine (Slot 8)                                               │
 │   ├ 在 DAG 节点上直接调用 RemoteAgentRef(由 AgentCard 发现)      │
