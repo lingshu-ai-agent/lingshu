@@ -3,7 +3,7 @@
 > 给 Claude Code 的项目级上下文。**每个新 Claude 会话 turn 1 自动加载。**
 >
 > **配套文档**(按需加载,不重复):
-> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.19 / 4768+ 行 / 项目真理(v1.5.19 §6.1 LinearTurnEngine + Provider 加类级 Javadoc 澄清「6/8 Router」是有意设计 — MemorySource 走 PromptBuilder.build() 内部 + A2aTransport 留给 DagTurnEngine v1.5+;v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 — 补 MemorySourceRouter(Slot 7 多源列表解析)+ A2aTransportRouter(Slot 9 单解析)与 §5.6.4 SPI 总表 9 Slot 对齐;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行 — 与 §5.6.4 SPI 总表第 9 行对齐;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复 — 删单行让 L1471 ` ```java ` 重新生效 — 严格 CommonMark 状态机审计发现;v1.5.15 §4.11 Java 代码块缺 closing fence 修复 + Markdown 渲染兼容;v1.5.14 §4.5.1 [TOOL SCHEMAS] 措辞修订 + 明确分层;v1.5.13 PromptBuilder API 对齐 .tools 字段;v1.5.12 删 stale Slot N;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
+> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.20 / 5128 行 / 项目真理(v1.5.20 §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 边界行为表 —— 落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置,实施者只需按模板填 `<P, T>` 即可;纯文档补全,代码逻辑零改动;v1.5.19 §6.1 LinearTurnEngine + Provider 加类级 Javadoc 澄清「6/8 Router」是有意设计 — MemorySource 走 PromptBuilder.build() 内部 + A2aTransport 留给 DagTurnEngine v1.5+;v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 — 补 MemorySourceRouter(Slot 7 多源列表解析)+ A2aTransportRouter(Slot 9 单解析)与 §5.6.4 SPI 总表 9 Slot 对齐;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行 — 与 §5.6.4 SPI 总表第 9 行对齐;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复 — 删单行让 L1471 ` ```java ` 重新生效 — 严格 CommonMark 状态机审计发现;v1.5.15 §4.11 Java 代码块缺 closing fence 修复 + Markdown 渲染兼容;v1.5.14 §4.5.1 [TOOL SCHEMAS] 措辞修订 + 明确分层;v1.5.13 PromptBuilder API 对齐 .tools 字段;v1.5.12 删 stale Slot N;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
 > - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.3 / 859 行 / 操作手册(R-13 mitigation (d) 镜像)
 > - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0.2 / 368 行 / 新窗口 Prompt 模板
 > - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.0.8 / 192 行 / 自动触发(R-13 dep-tree 自查链路已纳入)
@@ -213,7 +213,7 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-14
-**Version**: 1.3.11(+dsh §6.1 LinearTurnEngine + Provider 加类级 Javadoc 澄清「6/8 Router」是有意设计;CLAUDE.md §4 配套描述更新;配套同步 dsh v1.5.19;SKILL v1.0.8 / SOP v1.3 / prompts v1.0.2 不变)
-**对应设计文档**: `dsh_agent_design.md` v1.5.19
+**Version**: 1.3.12(+dsh §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router concrete 类 stub + 模板 + 边界行为表,落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置;CLAUDE.md §4 配套描述更新;配套同步 dsh v1.5.20;SKILL v1.0.8 / SOP v1.3 / prompts v1.0.2 不变)
+**对应设计文档**: `dsh_agent_design.md` v1.5.20
 **对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.3
 **对应 SKILL**: `lingshu-spec-driven-dev` v1.0.8

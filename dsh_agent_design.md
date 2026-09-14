@@ -1,9 +1,9 @@
-# DSH Agent Engine — 设计文档 v1.5.19
+# DSH Agent Engine — 设计文档 v1.5.20
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.19(§6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc,说明「SlotResolver 8 Router vs LinearTurnEngine 6 字段」是有意设计 —— `MemorySource` 走 `PromptBuilder.build()` 内部 `[PROJECT MEMORY]` 段消化;`A2aTransport` 留给 DagTurnEngine v1.5+ `A2aNode`,不在 LinearTurnEngine v0.5 必交付范围;纯文档补全,代码逻辑零改动;2026-09-14);v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
+> **版本**:v1.5.20(§5.3.1 新增子节,补齐 `MemorySourceRouter` + `A2aTransportRouter` concrete 类 stub + 模板 + 边界表 —— 落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置;纯文档补全,代码逻辑零改动;2026-09-14);v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
-> **状态**:设计阶段冻结;**v1.5.19** §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc,说明「SlotResolver 8 Router vs LinearTurnEngine 6 字段」是有意设计 —— `MemorySource` 走 `PromptBuilder.build()` 内部 `[PROJECT MEMORY]` 段消化;`A2aTransport` 留给 DagTurnEngine v1.5+ `A2aNode`,不在 LinearTurnEngine v0.5 必交付范围;纯文档补全,代码逻辑零改动;**v1.5.18** §5.3 `SlotResolver` 屏蔽的 Router 数 6 → 8 —— 补 `MemorySourceRouter`(Slot 7 多源列表解析,`List<MemorySource>`,按 `MemorySource::priority` 升序排序,null 表示该 source 此次无内容)+ `A2aTransportRouter`(Slot 9 单解析,`A2aTransport`,与 6 个 Slot 的 resolve 模式一致);comment `屏蔽 6 个 Router` 改 `屏蔽 8 个 Router`;ctor 参数从 6 个增到 8 个;新增 6 个 import:`MemorySource` / `A2aTransport` / `ArrayList` / `Collections` / `Comparator` / `List`;Router 本体 concrete 定义留给 Story #001/#009 实施期补(与现有 6 Router 引用未定义模式一致);**v1.5.17** §5.1 typed-Provider 列表补 `A2aTransportProvider` 行(与 §5.6.4 SPI 总表第 9 行对齐,§5.1 原本只列 8 个 Provider 缺第 9 行);v0.5 新增标识;**注**:L38 项目身份陈述与 §5.6.4 SPI 总表存在轻微差异(L38 列 Sandbox/SkillSource,§5.6.4 不列 —— Sandbox 走 `RuntimeSandbox` 独立接口、SkillSource 走独立 `SkillSourceProvider`),RFC 待决,本次不动 L38 / §5.6.4;**v1.5.16** §5.1 `SlotProvider` 段 L1463 处存在 orphan fence opener(无前置 ``` 对应,但紧接其后 L1471 的 ` ```java ` 因带 info string 不被识别为 closer,导致 L1463-L1482 共 20 行内容被吞进 plain-text 代码块,§5.1 第一个 Java 代码块未生效 + §5.1 标题与 prose 错位);**补丁** 删除 L1463 单行零字符内容(orphan opener),让 L1471 ` ```java ` 重新成为有效 opener,L1483 ` ``` ` 关 L1471,L1487-L1496 第二个 Java 块不受波及;**v1.5.15** §4.11 `FlowEngine` Java 代码块原版缺 closing fence,严格 CommonMark 渲染器(Pandoc / mdbook)下 §4.11.1 标题 + 14 行 prose 会被吞进 Java 块,§4.11.1 之后内容错位;**补丁** L815 `}` 后插入一行 ` ``` ` 关闭 fence(零代码改动,纯 Markdown 兼容);**v1.5.14** §4.5.1 [TOOL SCHEMAS] 措辞修订 — 明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层):`Prompt.tools` 是抽象层概念(我们的代码 / Prompt 模型 / cache 策略),到 LLM 实际收到的 JSON body(wire format 层)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string**,在 wire format 层两者等价;rationale 块引用加"先说分层"段(7 条理由全部归到抽象层收益:变更频率分类维度 / Prompt 模型三件套各司其职 / cache key 独立 / Provider 协议透明化 / 空 tools 留空 / Schema 来源严格 / 紧贴 USER MESSAGE 是概念顺序);ASCII 框图 [TOOL SCHEMAS] 块标题从"独立 API 字段(非 system 文本)"改"Prompt 抽象的独立字段(非 system 文本段)";伪代码 L490-497 注释从"走 SDK 原生 function_calling"改"Prompt 抽象的 .tools 字段 + LlmProvider 按 provider 协议序列化";**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
+> **状态**:设计阶段冻结;**v1.5.20** §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 2 个边界行为表;落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置 —— 实施者只需按模板填构造器参数对 `<P, T>`,业务逻辑全由父类 `SlotRouter<P, T>` 提供;**v1.5.19** §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc,说明「SlotResolver 8 Router vs LinearTurnEngine 6 字段」是有意设计 —— `MemorySource` 走 `PromptBuilder.build()` 内部 `[PROJECT MEMORY]` 段消化;`A2aTransport` 留给 DagTurnEngine v1.5+ `A2aNode`,不在 LinearTurnEngine v0.5 必交付范围;纯文档补全,代码逻辑零改动;**v1.5.18** §5.3 `SlotResolver` 屏蔽的 Router 数 6 → 8 —— 补 `MemorySourceRouter`(Slot 7 多源列表解析,`List<MemorySource>`,按 `MemorySource::priority` 升序排序,null 表示该 source 此次无内容)+ `A2aTransportRouter`(Slot 9 单解析,`A2aTransport`,与 6 个 Slot 的 resolve 模式一致);comment `屏蔽 6 个 Router` 改 `屏蔽 8 个 Router`;ctor 参数从 6 个增到 8 个;新增 6 个 import:`MemorySource` / `A2aTransport` / `ArrayList` / `Collections` / `Comparator` / `List`;Router 本体 concrete 定义留给 Story #001/#009 实施期补(与现有 6 Router 引用未定义模式一致);**v1.5.17** §5.1 typed-Provider 列表补 `A2aTransportProvider` 行(与 §5.6.4 SPI 总表第 9 行对齐,§5.1 原本只列 8 个 Provider 缺第 9 行);v0.5 新增标识;**注**:L38 项目身份陈述与 §5.6.4 SPI 总表存在轻微差异(L38 列 Sandbox/SkillSource,§5.6.4 不列 —— Sandbox 走 `RuntimeSandbox` 独立接口、SkillSource 走独立 `SkillSourceProvider`),RFC 待决,本次不动 L38 / §5.6.4;**v1.5.16** §5.1 `SlotProvider` 段 L1463 处存在 orphan fence opener(无前置 ``` 对应,但紧接其后 L1471 的 ` ```java ` 因带 info string 不被识别为 closer,导致 L1463-L1482 共 20 行内容被吞进 plain-text 代码块,§5.1 第一个 Java 代码块未生效 + §5.1 标题与 prose 错位);**补丁** 删除 L1463 单行零字符内容(orphan opener),让 L1471 ` ```java ` 重新成为有效 opener,L1483 ` ``` ` 关 L1471,L1487-L1496 第二个 Java 块不受波及;**v1.5.15** §4.11 `FlowEngine` Java 代码块原版缺 closing fence,严格 CommonMark 渲染器(Pandoc / mdbook)下 §4.11.1 标题 + 14 行 prose 会被吞进 Java 块,§4.11.1 之后内容错位;**补丁** L815 `}` 后插入一行 ` ``` ` 关闭 fence(零代码改动,纯 Markdown 兼容);**v1.5.14** §4.5.1 [TOOL SCHEMAS] 措辞修订 — 明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层):`Prompt.tools` 是抽象层概念(我们的代码 / Prompt 模型 / cache 策略),到 LLM 实际收到的 JSON body(wire format 层)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string**,在 wire format 层两者等价;rationale 块引用加"先说分层"段(7 条理由全部归到抽象层收益:变更频率分类维度 / Prompt 模型三件套各司其职 / cache key 独立 / Provider 协议透明化 / 空 tools 留空 / Schema 来源严格 / 紧贴 USER MESSAGE 是概念顺序);ASCII 框图 [TOOL SCHEMAS] 块标题从"独立 API 字段(非 system 文本)"改"Prompt 抽象的独立字段(非 system 文本段)";伪代码 L490-497 注释从"走 SDK 原生 function_calling"改"Prompt 抽象的 .tools 字段 + LlmProvider 按 provider 协议序列化";**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
 ---
 
@@ -1631,6 +1631,162 @@ public class SlotResolver {
     public A2aTransport     a2aTransport(AgentConfig c)     { return a2aTransportRouter.resolve(c.getA2a().getTransport(), c); }
 }
 ```
+
+### 5.3.1 Router concrete 类(8 个 — 6 个隐式 + 2 个本节显式)
+
+> **设计原则**:8 个 Router 都是 §5.2 `SlotRouter<P, T>` 的**薄包装**,差别只在 `<P, T>` 类型对。
+> 构造时把 Spring 注入的同类型 `List<P>` 交给父类做同名竞争 + 启动日志,Router 本体不增加任何方法。
+
+**6 个隐式**(由 §5.3 SlotResolver 字段引用,concrete 定义与本节 2 个 Router 模式完全一致):
+
+- `PromptBuilderRouter` ↔ Story #002 / `LlmProviderRouter` ↔ Story #003
+- `CompactorRouter` ↔ Story #015 / `SessionStoreRouter` ↔ Story #014
+- `PermissionPolicyRouter` + `ToolExecutorRouter` ↔ Story #001
+
+**2 个显式(本节补齐)**:`MemorySourceRouter`(Slot 7,🆕 v1.5.18)+ `A2aTransportRouter`(Slot 9,🆕 v1.5.18)。
+
+#### 模板(所有 Router concrete 类的统一形态)
+
+```java
+package io.agent.impl.spi;
+
+import io.agent.core.spi.SlotProvider;
+import io.agent.core.spi.SlotRouter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import java.util.List;
+
+/**
+ * <SlotName>Router —— 模板说明:
+ * - <P> 是 §5.1 typed Provider 接口(如 PromptBuilderProvider)
+ * - <T> 是该 Slot 的核心接口(如 PromptBuilder)
+ * - resolve(name, config) / available() / 同名竞争 / 启动日志全部由父类 SlotRouter 提供
+ * - Router 本体不增加任何方法(避免破坏 Slot 协议统一性)
+ */
+@Component
+public class <SlotName>Router extends SlotRouter<<P>, <T>> {
+
+    public <SlotName>Router(List<<P>> providers) {
+        super(providers, "<SlotName>", LoggerFactory.getLogger(<SlotName>Router.class));
+    }
+}
+```
+
+启动日志样例(由父类 SlotRouter §5.2 输出,与现有 PromptBuilderRouter 等格式完全一致):
+
+```text
+INFO PromptBuilderRouter    : [PromptBuilder] resolved 2 provider(s):
+INFO PromptBuilderRouter    :   ✓ default       -> DefaultPromptBuilderProvider [priority=0]
+INFO PromptBuilderRouter    :   ✓ rag-augmented -> RagPromptBuilderProvider   [priority=10]
+INFO A2aTransportRouter     : [A2aTransport] resolved 1 provider(s):
+INFO A2aTransportRouter     :   ✓ http-jsonrpc  -> HttpJsonRpcA2aTransportProvider [priority=10]
+INFO MemorySourceRouter     : [MemorySource] resolved 2 provider(s):
+INFO MemorySourceRouter     :   ✓ identity      -> IdentityMemorySourceProvider [priority=0]
+INFO MemorySourceRouter     :   ✓ project-tree  -> ProjectTreeMemorySourceProvider [priority=10]
+```
+
+#### 5.3.1.1 `MemorySourceRouter`(Slot 7 — 🆕 v1.5.18,Story #002/#005 实施期补)
+
+```java
+package io.agent.impl.spi;
+
+import io.agent.core.spi.MemorySourceProvider;
+import io.agent.core.prompt.MemorySource;
+import io.agent.core.spi.SlotRouter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import java.util.List;
+
+/**
+ * MemorySource 的 Router(Slot 7,🆕 v1.5.18)。
+ *
+ * 调用契约:
+ *   SlotResolver.memorySources(AgentConfig c) 拿 List<String> names,
+ *   逐个 names -> MemorySourceRouter.resolve(name, c) -> MemorySource 实例,
+ *   filter null 后按 MemorySource::priority 升序排序(§4.5 MemorySource SPI 决定每个
+ *   source 自己的 priority,Router 不参与排序 —— 排序由 SlotResolver 完成)。
+ *
+ * 重要:本 Router 只负责单个 name -> MemorySource,**不感知"多源列表"**。
+ * 多源过滤 + 排序的逻辑全部在 §5.3 SlotResolver.memorySources() 里。
+ *
+ * 实施期补:Story #002 identity-instructions-memory / Story #005 memory-layers(详见各 Story spec.md);
+ * 届时 DefaultMemorySourceProvider 实现 IdentityMemorySourceProvider / ProjectTreeMemorySourceProvider /
+ * ConversationMemorySourceProvider 等(详见 §4.5)。
+ */
+@Component
+public class MemorySourceRouter extends SlotRouter<MemorySourceProvider, MemorySource> {
+
+    public MemorySourceRouter(List<MemorySourceProvider> providers) {
+        super(providers, "MemorySource", LoggerFactory.getLogger(MemorySourceRouter.class));
+    }
+}
+```
+
+**边界与约束**:
+
+| 情形 | 行为 |
+|---|---|
+| `c.getPrompt().getMemorySources()` 为 null 或 empty | SlotResolver 直接返回 `Collections.emptyList()`,**不调用**本 Router |
+| 配置了某个 source name 但没有对应 Provider | 父类 `SlotRouter.resolve()` 抛 `IllegalArgumentException("Unknown MemorySourceRouter 'xxx'. Available: [...]")`,由 AgentFactory 启动期捕获 fail-fast |
+| `MemorySource.load(AgentConfig)` 返回 null/empty | 表示该 source 此次无内容(见 §4.5 MemorySource SPI),由 SlotResolver 的 `if (ms != null) out.add(ms)` filter 掉 |
+| 同名 source(`memory: identity` 同时配 2 个 Provider) | 父类按 `priority()` 选最大,其余进 conflict 日志(§5.2 同名竞争逻辑) |
+
+#### 5.3.1.2 `A2aTransportRouter`(Slot 9 — 🆕 v1.5.18,Story #009 实施期补)
+
+```java
+package io.agent.impl.spi;
+
+import io.agent.core.spi.A2aTransportProvider;
+import io.agent.core.a2a.A2aTransport;
+import io.agent.core.spi.SlotRouter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import java.util.List;
+
+/**
+ * A2aTransport 的 Router(Slot 9,🆕 v1.5.18,🆕 v0.5)。
+ *
+ * 调用契约:
+ *   SlotResolver.a2aTransport(AgentConfig c) 取 c.getA2a().getTransport() 拿 String name,
+ *   -> A2aTransportRouter.resolve(name, c) -> A2aTransport 实例。
+ *
+ * 与 6 个单解析 Router(PromptBuilder / LlmProvider / Compactor / PermissionPolicy /
+ * ToolExecutor / SessionStore)模式完全一致:resolve(name, config) 单一返回,无列表,
+ * 无排序,无 null filter。
+ *
+ * 实施期补:Story #009 a2a-agent-card(本 Router 的内置默认 Provider 为
+ * HttpJsonRpcA2aTransportProvider,详见 §5.6 / §5.6.4 / Story #009 spec.md)。
+ *
+ * 注:v0.5 LinearTurnEngine **不引用**本 Router —— LinearTurnEngine v0.5 仅消费 6 个 Slot
+ * (PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore,
+ * 详见 §6.1 类级 Javadoc),A2aTransport 留给 DagTurnEngine v1.5+ A2aNode。
+ * Spring 容器仍会实例化本 Router(SlotResolver 引用),但不参与 LinearTurnEngine turn 循环。
+ */
+@Component
+public class A2aTransportRouter extends SlotRouter<A2aTransportProvider, A2aTransport> {
+
+    public A2aTransportRouter(List<A2aTransportProvider> providers) {
+        super(providers, "A2aTransport", LoggerFactory.getLogger(A2aTransportRouter.class));
+    }
+}
+```
+
+**边界与约束**:
+
+| 情形 | 行为 |
+|---|---|
+| `c.getA2a()` 为 null(用户没配 a2a 段) | **启动期 fail** —— AgentFactory 启动期校验需 `c.getA2a() != null`(Story #009 实施时在 AgentFactory.require 加 `agent.a2a` 校验;v0.5 暂跳过 —— LinearTurnEngine 不消费) |
+| `c.getA2a().getTransport()` 为 null/empty | 父类抛 `IllegalArgumentException("transport name required")`,fail-fast |
+| `getTransport()` 给未注册名字(如 `grpc` 但只有 `http-jsonrpc` Provider) | 父类抛 `IllegalArgumentException("Unknown A2aTransportRouter 'grpc'. Available: [http-jsonrpc]")`,fail-fast |
+| 同名 Transport 多 Provider | 父类按 `priority()` 选最大,其余进 conflict 日志(§5.2 同名竞争) |
+| `A2aTransport.create(AgentConfig)` 返回 null | **不该发生** —— Provider 契约要求非 null,父类 resolve 不做 null filter(单解析模式) |
+
+**A2aTransport 实例生命周期**:`create(AgentConfig)` 每次都返回新实例(无状态服务,HttpClient 内部池化),与 LlmProvider / PromptBuilder 模式一致;Router 不做缓存(避免 AgentConfig 热更新感知不到)。
+
+---
 
 ### 5.4 Plugin 发现(Spring Boot Auto-Config)
 
@@ -4265,6 +4421,7 @@ agent:
 | 1.5.6 | 2026-09-06 | **需求工程层补全(SpecKit + Claude Code 输入源就绪)**:**§0.3 Personas** 新增 3 类典型用户故事(Alice 插件开发者 / Bob 业务配置方 / Charlie 核心仓贡献者)+ KPI 验证路径;**§0.4 v1.0 Acceptance Criteria** 新增 10 条黑盒可断言标准(AC-01 零配置启动 / AC-02 SPI 全 Slot 可替换 / AC-03 Tool 并发加速 / AC-04 取消传播 / AC-05 多租户隔离 / AC-06 YAML 热更无中断 / AC-07 ReAct 上限 / AC-08 插件版本治理 / AC-09 业务配置三件套 / AC-10 A2A AgentCard 自动生成);**§10.1 父 POM** 补 12 项依赖版本表(Spring Boot 3.2.x / Lombok 1.18.30 / OTel 1.32.x / JUnit 5.10.x / AssertJ 3.24.x / Mockito 5.x / Awaitility 4.2.x 等)+ 测试模块依赖完整清单 + 版本升级政策;**§14.15 NFR 总账** 新增 8 个子节(性能预算 9 项 / 安全威胁模型 8 项 / SLO 8 项 / 可观测性四件套 / 兼容性矩阵 11 项 / 支持矩阵 6 项 LTS 政策 / 测试策略 7 层金字塔 / 文档完整度自检 14 项 GA 卡点);**§15 Error Catalog** 新增 8 域 24 条 ErrorCode 全表(Config / Slot / LLM / Tool / Sandbox / ReAct / Audit / 其他)+ `LINGS-<域><编号>` 编码约定;**§16 Glossary** 新增 22 个术语集中释义表(Slot / Provider / SlotRouter / FlowEngine / LinearTurnEngine / ReAct Loop / DelegateTool / SubAgentType / A2aTransport / AgentCard / SkillSource / Skill / Session / Turn / TurnContext / Identity / Instructions / CLAUDE.md / CircuitBreaker / TenantContext / CancellationToken / Zero-config / @Value);**§17 Risk Register** 新增 12 条风险登记(R-01—R-12,带概率×影响=分值排序 + Owner + 触发条件)+ review 节奏(月度 + RC + GA);**§13** 加 v1.5.6 条目;**§0** 标题块状态描述补"进入 SpecKit + Claude Code 实施准备期" |
 | 1.5.7 | 2026-09-08 | **Spring AI 边界硬规则 + 新依赖引入(本次单人 RFC 决议)**:**§4.10.1 新增** `Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则)` 章节,3 条硬规则:(1) ReAct Loop 必须自实现,不得用 Spring AI `ChatClient.prompt().call()` 自动执行;(2) Spring AI 只用两件事 — LLM 协议转换 + `@Tool` Schema 生成,自动 tool 执行禁用(否则 tool 被调两次 + 绕过沙箱);(3) 多 Provider 并存时 `provider name → ChatModel` 必须显式映射表,不得靠 Spring 容器扫 Bean 类型;**§10.1 新增依赖** `org.springframework.ai:spring-ai-bom` 1.0.0-M6(BOM 引入,只引 LlmProvider 协议转换 + Tool Schema 实际用到的子模块,见 R-13 bundle 体积控制);**§17 新增 R-13 / R-14** — R-13 Spring AI bundle 体积膨胀 + transitive 污染(banned-dependencies enforcer 控);R-14 Spring AI 1.x 自身 JDK 17+ 要求 vs LingShu compile target=8 的兼容约束(JDK 8/11/17/21 matrix CI 验证);**§15** 引用 LINGS-L01(未知 Provider)对应硬规则 3;**§13** 加 v1.5.7 条目;**§0** 标题块版本号 + 状态描述同步 |
 | 1.5.8 | 2026-09-08 | **R-14 风险去重 + R-13 风险细化**:**§17** R-14 **删除**(Spring AI 1.x JDK 17+ 要求与 Spring Boot 3.x 完全同类,R-06 已覆盖;R-06 文字补"含 Spring AI 1.x"明确同步);**§17** R-13 重写为**具体场景**(Story #003/#009 实施者误用 `spring-ai-spring-boot-starter` 全家桶 → 拉入 openai-java-client + anthropic-java + jtokkit + Jackson/Netty 版本冲突 → binary 膨胀 40MB+,mitigation 加 `banned-dependencies` enforcer build 阶段 fail + Story 实施者必须 `mvn dependency:tree` 自查后提交);**§10.1** 依赖行 `R-13 / R-14 跟踪` → `R-13 跟踪`(同步去 R-14 引用);**§13** 加 v1.5.8 条目;**§0** 标题块版本号 + 状态描述同步 |
+| 1.5.20 | 2026-09-14 | **§5.3.1 新增子节,补齐 v1.5.18 新增的 2 个 Router concrete 类 stub**:**问题** v1.5.18 在 §5.3 SlotResolver 引入 2 个 Router 引用 `MemorySourceRouter` / `A2aTransportRouter`,但只展示了 SlotResolver 屏蔽类型的形态,Router 本体 concrete 类未在 dsh 里定义;v1.5.18 changelog 备注「Router 本体 concrete 定义留给 Story #001/#009 实施期补」;实施者在开 Story #001 / Story #009 时需要有一个**契约前置**(模板 + 字段命名 + 构造器签名 + 边界行为表),避免各自实现风格漂移;**补丁** (1) §5.3 后新增 §5.3.1 子节,首段说明 8 Router 都是 `SlotRouter<P, T>` 薄包装原则 + 6 隐式 + 2 显式分工;(2) 提供通用模板 `<SlotName>Router extends SlotRouter<<P>, <T>>` —— 单构造器 `List<P> providers` 转交父类,附启动日志样例;(3) §5.3.1.1 `MemorySourceRouter` 完整 stub(extends `SlotRouter<MemorySourceProvider, MemorySource>`,super 传 `"MemorySource"` + Logger;附 4 行边界表:null names / unknown name / load 返回 null / 同名 source priority 收敛);(4) §5.3.1.2 `A2aTransportRouter` 完整 stub(extends `SlotRouter<A2aTransportProvider, A2aTransport>`,super 传 `"A2aTransport"` + Logger;附 5 行边界表:getA2a() null / transport name null / 未注册 name / 同名 priority / create 返回 null;外加 A2aTransport 实例生命周期说明);(5) §5.3.1 整段附 `**纯文档补全,代码逻辑零改动**` 标识 + 实施期 Story 归属(`MemorySourceRouter` ↔ Story #002/#005、`A2aTransportRouter` ↔ Story #009);**注** 6 隐式 Router 的 concrete 类本体的具体实施归属也已列出(PromptBuilderRouter ↔ #002 / LlmProviderRouter ↔ #003 / CompactorRouter ↔ #015 / SessionStoreRouter ↔ #014 / PermissionPolicyRouter + ToolExecutorRouter ↔ #001),与 §5.3 字段引用严格对齐;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.19 → v1.5.20`;CLAUDE.md 版本号同步 `1.3.11 → 1.3.12`;**修复者**:Claude Code(根据用户 2026-09-14 会话反馈,用户问「§5.3 MemorySourceRouter / A2aTransportRouter concrete 类未在 dsh 里定义 —— 留给 Story #001/#009 实施期补,现在文档中帮我补齐」) |
 | 1.5.19 | 2026-09-14 | **§6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc 澄清「6/8 Router」是有意设计**:**问题** v1.5.18 修完 §5.3 SlotResolver 屏蔽 8 个 Router 后,§6.1 LinearTurnEngine 只引用 6 个 Slot(无 MemorySource / A2aTransport 字段),读者会怀疑漏写;**澄清**(纯文档,代码逻辑零改动):(1) `MemorySource` —— 由 `PromptBuilder.build()` 在 5 段 Prompt 装配的 `[PROJECT MEMORY]` 段内部消化(§4.5);LinearTurnEngine 拿到的 `Prompt` 已含 memory,不需要直接持有 `MemorySource` 字段;(2) `A2aTransport` —— §5.6 v0.5+ 引入,LinearTurnEngine 是单 turn 顺序循环无 A2A 调用点;该 Slot 由 `DagTurnEngine` v1.5+ 新增的 `A2aNode` 节点类型使用(原 L1752);LinearTurnEngine v0.5 不必交付使用 A2aTransport;**补丁** (1) §6.1 LinearTurnEngine 类声明前加 Javadoc 类级注释,逐条说明 8 Router vs 6 字段对应关系 + 设计 rationale;(2) §6.1 LinearTurnEngineProvider.create() 方法加 Javadoc,引用 LinearTurnEngine 类 Javadoc,说明本方法只调 6 个 resolver.X() 方法;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.18 → v1.5.19`;CLAUDE.md 版本号同步 `1.3.10 → 1.3.11`;**修复者**:Claude Code(根据用户 2026-09-14 会话反馈,用户核对 §6.1 LinearTurnEngine 与 §5.3 SlotResolver 8 Router 不一致) |
 | 1.5.18 | 2026-09-14 | **§5.3 `SlotResolver` 屏蔽 Router 数 6 → 8**:**问题** §5.3 `SlotResolver` 只引 6 个 Router(PromptBuilderRouter / LlmProviderRouter / CompactorRouter / PermissionPolicyRouter / ToolExecutorRouter / SessionStoreRouter),与 §5.6.4 SPI 总表 9 Slot 缺 2 个 —— `MemorySourceRouter`(Slot 7)+ `A2aTransportRouter`(Slot 9);comment `屏蔽 6 个 Router` 与实际不一致;ctor 参数不全导致 FlowEngineProvider 无法解析 MemorySource / A2aTransport;**根因** §5.6.4 是 v1.5.4 引入 A2A 时(2026-09-04)新增,§5.3 SlotResolver 写于 v1.5.0 之前(早于 §5.6.4),未同步;MemorySource 是 v1.5.5 才加入的 Slot(§4.5 PromptBuilder 扩展时);**补丁** (1) §5.3 imports +5:`MemorySource` / `A2aTransport` / `ArrayList` / `Collections` / `Comparator` / `List`(共 6 个,新加 import 都标 🆕 v1.5.18);(2) fields +2:`memorySourceRouter` + `a2aTransportRouter`;(3) ctor 参数 +2 + 赋值 +2;(4) comment `屏蔽 6 个 Router` 改 `屏蔽 8 个 Router`;(5) 新增 `public List<MemorySource> memorySources(AgentConfig c)` —— 多源列表解析,从 `c.getPrompt().getMemorySources()` 拿 `List<String>`,遍历 `MemorySourceRouter.resolve(n, c)`,filter null,按 `MemorySource::priority` 升序排序;(6) 新增 `public A2aTransport a2aTransport(AgentConfig c)` —— 单解析,`c.getA2a().getTransport()` 给 String 名称,镜像其他 6 个 Slot 的 resolve 模式;**注** `MemorySourceRouter` / `A2aTransportRouter` concrete 类本体的定义留给 Story #001 / Story #009 实施期补 —— 与现有 6 Router 引用但未定义模式一致(dsh §5.3 只展示 SlotResolver 屏蔽类型,Router concrete 留给实现);**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.17 → v1.5.18`;CLAUDE.md 版本号同步 `1.3.9 → 1.3.10`;**修复者**:Claude Code(根据用户 2026-09-14 会话反馈,用户核对 §5.3 SlotResolver 6 Router 与 §5.6.4 SPI 总表 9 Slot 不一致) |
 | 1.5.17 | 2026-09-14 | **§5.1 typed-Provider 列表补 `A2aTransportProvider` 行**:**问题** §5.1 第二个代码块列 8 个 typed Provider(PromptBuilder / LlmProvider / ToolExecutor / PermissionPolicy / Compactor / SessionStore / MemorySource / FlowEngine),缺第 9 个 `A2aTransportProvider`,与 §5.6.4 SPI 总表第 9 行「A2aTransport — 🆕 v0.5」不对齐;**根因** §5.6.4 是 v1.5.4 引入 A2A 时新增的总表(2026-09-04),§5.1 typed-Provider 列表生成早于 §5.6.4,未同步;**补丁** §5.1 FlowEngineProvider 行后追加 `public interface A2aTransportProvider extends SlotProvider<A2aTransport> {} // 🆕 v0.5`,与 §5.6.4 严格对齐;**注** L38 项目身份陈述仍含 Sandbox/SkillSource,§5.6.4 不含 —— Sandbox 走独立 `RuntimeSandbox`(L641),SkillSource 走独立 `SkillSourceProvider`(L2387,非 SlotProvider 子类型),两者**不算 SlotProvider 体系但属于 Slot 概念** —— RFC 待决,本次不动 L38/§5.6.4;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.16 → v1.5.17`;CLAUDE.md 版本号同步 `1.3.8 → 1.3.9`;**修复者**:Claude Code(根据用户 2026-09-14 会话反馈,用户截图+核对发现 §5.1 Provider 数量与 §5.6.4 SPI 总表 8→9 不一致) |
