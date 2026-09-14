@@ -3,7 +3,7 @@
 > 给 Claude Code 的项目级上下文。**每个新 Claude 会话 turn 1 自动加载。**
 >
 > **配套文档**(按需加载,不重复):
-> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.14 / 4768+ 行 / 项目真理(v1.5.14 §4.5.1 [TOOL SCHEMAS] 措辞修订 + 明确分层;v1.5.13 PromptBuilder API 对齐 .tools 字段;v1.5.12 删 stale Slot N;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
+> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.15 / 4768+ 行 / 项目真理(v1.5.15 §4.11 Java 代码块缺 closing fence 修复 + Markdown 渲染兼容;v1.5.14 §4.5.1 [TOOL SCHEMAS] 措辞修订 + 明确分层;v1.5.13 PromptBuilder API 对齐 .tools 字段;v1.5.12 删 stale Slot N;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
 > - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.3 / 859 行 / 操作手册(R-13 mitigation (d) 镜像)
 > - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0.2 / 368 行 / 新窗口 Prompt 模板
 > - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.0.8 / 192 行 / 自动触发(R-13 dep-tree 自查链路已纳入)
@@ -212,8 +212,8 @@ chore: <一句话>
 
 ---
 
-**Last updated**: 2026-09-10  
-**Version**: 1.3.6(+§4.5.1 [TOOL SCHEMAS] 字段措辞修订,明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层);配套同步 dsh v1.5.14;SKILL v1.0.8 / SOP v1.3 / prompts v1.0.2 不变)
-**对应设计文档**: `dsh_agent_design.md` v1.5.14  
-**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.3  
+**Last updated**: 2026-09-14
+**Version**: 1.3.7(+dsh §4.11 Java 代码块缺 closing fence — Markdown 渲染兼容性修复;CLAUDE.md §4 配套描述更新;配套同步 dsh v1.5.15;SKILL v1.0.8 / SOP v1.3 / prompts v1.0.2 不变)
+**对应设计文档**: `dsh_agent_design.md` v1.5.15
+**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.3
 **对应 SKILL**: `lingshu-spec-driven-dev` v1.0.8
