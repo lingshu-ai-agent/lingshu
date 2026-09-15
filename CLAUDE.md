@@ -186,7 +186,7 @@ chore: <一句话>
 3. **不跨 Story 改 constitution**(改宪章必须走 RFC 流程,先开 issue + 评审)
 4. **Story 边界**:≤ 5 个核心文件改动,≤ 3 个 ErrorCode 引入(超过就拆)
 5. **不绕过 Spring Boot SPI**(新增 Slot 必须走 Provider + SlotRouter,**不要硬编码**)
-6. **不引入额外依赖**(dsh §10.1 已锁 14 项[v1.5.8 起,含 `spring-ai-bom`],新依赖需 RFC + `dependency:tree` CI 卡点 + **`banned-dependencies` enforcer build 阶段 fail**(见 dsh §17 R-13);任何 Story 实施者必须按 SOP §3.2 AC-NN-deps-* + §3.4 T-dep-tree-* 流程自查后提交,**PR body 末尾**必须有 `### R-13 dependency:tree 自查` 节)
+6. **不引入额外依赖**(dsh §10.1 已锁 13 项[含 `spring-ai-bom`,v1.5.7 引入],新依赖需 RFC + `dependency:tree` CI 卡点 + **`banned-dependencies` enforcer build 阶段 fail**(见 dsh §17 R-13);任何 Story 实施者必须按 SOP §3.2 AC-NN-deps-* + §3.4 T-dep-tree-* 流程自查后提交,**PR body 末尾**必须有 `### R-13 dependency:tree 自查` 节)
 7. **ReAct Loop 必须自实现**(不得用 Spring AI `ChatClient.prompt().call()` 自动工具执行;核心循环 ~ 数十行,完整掌握 Agent 工作机制,保留定制循环行为的空间 — dsh §4.10.1 硬规则 1)
 8. **Spring AI 只用两件事**:① LLM Provider 协议转换(OpenAI / Anthropic / Gemini / DeepSeek / Qwen / Kimi 等格式差异) ② `@Tool` 注解 JSON Schema 生成。**必须禁用** Spring AI 自动 tool 执行 — 会绕过 ToolExecutor 的沙箱/权限/checkpoint,导致 tool 被调两次(dsh §4.10.1 硬规则 2)
 9. **Provider 必须显式映射**:多 `ChatModel` 并存时 Bean 类型相同,必须维护 `Map<String, ChatModel> providerMap` 显式查找;不得靠 Spring 容器扫 Bean 类型区分(dsh §4.10.1 硬规则 3)
@@ -213,8 +213,8 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-15
-**Version**: 1.3.14(依赖版本同步 — SKILL v1.0.9 → v1.0.10 / SOP v1.4 → v1.5 / prompts v1.0.3 → v1.0.4;CLAUDE.md §5.7 内容不变;dsh v1.5.21 不变;§11.6 "14 项" 仍待对齐 §10.1 实际 13 项,不在本轮处理)
-**对应设计文档**: `dsh_agent_design.md` v1.5.21
-**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.5
-**对应 SKILL**: `lingshu-spec-driven-dev` v1.0.10
-**对应 Prompt 速查**: `lingshu_spec_prompts.md` v1.0.4
+**Version**: 1.3.15(§11.6 硬约束 #6 历史 drift 修正 — "dsh §10.1 已锁 14 项[v1.5.8 起,含 `spring-ai-bom`]" → "已锁 13 项[含 `spring-ai-bom`,v1.5.7 引入]",数字 + 版本注解两处对齐 dsh §10.1 表实际 13 行 / v1.5.7 引入;dsh v1.5.21 → v1.5.22(§10.1 末追加合计 13 项 blockquote 锁死 count);SKILL v1.0.10 → v1.0.11 / SOP v1.5 → v1.6 / prompts v1.0.4 → v1.0.5 同步)
+**对应设计文档**: `dsh_agent_design.md` v1.5.22
+**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.6
+**对应 SKILL**: `lingshu-spec-driven-dev` v1.0.11
+**对应 Prompt 速查**: `lingshu_spec_prompts.md` v1.0.5
