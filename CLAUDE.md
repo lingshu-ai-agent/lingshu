@@ -3,10 +3,10 @@
 > 给 Claude Code 的项目级上下文。**每个新 Claude 会话 turn 1 自动加载。**
 >
 > **配套文档**(按需加载,不重复):
-> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.21 / 5190 行 / 项目真理(v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节 — 一站式回答"为什么 LingShu 用 Spring Boot SPI 而不是 OSGi / Pf4j / 自定义 ClassLoader 隔离";含决策结论 + 8 维机制对比表 + LingShu 7 个决策点场景契合度 + 主动放弃能力表 + 重新评估触发条件与演进路径;纯文档补全,代码逻辑零改动;v1.5.20 §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 边界行为表 —— 落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置,实施者只需按模板填 `<P, T>` 即可;纯文档补全,代码逻辑零改动;v1.5.19 §6.1 LinearTurnEngine + Provider 加类级 Javadoc 澄清「6/8 Router」是有意设计 — MemorySource 走 PromptBuilder.build() 内部 + A2aTransport 留给 DagTurnEngine v1.5+;v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 — 补 MemorySourceRouter(Slot 7 多源列表解析)+ A2aTransportRouter(Slot 9 单解析)与 §5.6.4 SPI 总表 9 Slot 对齐;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行 — 与 §5.6.4 SPI 总表第 9 行对齐;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复 — 删单行让 L1471 ` ```java ` 重新生效 — 严格 CommonMark 状态机审计发现;v1.5.15 §4.11 Java 代码块缺 closing fence 修复 + Markdown 渲染兼容;v1.5.14 §4.5.1 [TOOL SCHEMAS] 措辞修订 + 明确分层;v1.5.13 PromptBuilder API 对齐 .tools 字段;v1.5.12 删 stale Slot N;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
-> - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.5 / 859 行 / 操作手册(R-13 mitigation (d) 镜像 + 依赖同步到 dsh v1.5.21)
-> - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0.4 / 368 行 / 新窗口 Prompt 模板(同步 dsh v1.5.21)
-> - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.0.10 / 192 行 / 自动触发(R-13 dep-tree 自查链路已纳入 + 同步 dsh v1.5.21)
+> - 设计文档:[`dsh_agent_design.md`](./dsh_agent_design.md) v1.5.23 / 5350 行 / 项目真理(v1.5.23 §5.3.1.0 新增「6 个隐式 Router concrete 类」子节 — 补齐 v1.5.18 SlotResolver 屏蔽 8 Router 时,§5.3.1.1/§5.3.1.2 只给了 2 Router 显式 stub(`MemorySourceRouter` + `A2aTransportRouter`),剩 6 个(`PromptBuilderRouter` / `LlmProviderRouter` / `ToolExecutorRouter` / `PermissionPolicyRouter` / `SessionStoreRouter` / `CompactorRouter`)只列名未给 concrete 定义;单 Java 文件给 6 Router 完整 stub,共享 `package` + `import`,附 6 Router ↔ Slot ↔ `<P, T>` ↔ Story 总表 + 5 行边界约束表 + 与 MemorySourceRouter 关键差异说明 + 实施期顺序建议(Story #001 → #002 → #003 → #014 → #015);纯文档补全,代码逻辑零改动;v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节 — 一站式回答"为什么 LingShu 用 Spring Boot SPI 而不是 OSGi / Pf4j / 自定义 ClassLoader 隔离";含决策结论 + 8 维机制对比表 + LingShu 7 个决策点场景契合度 + 主动放弃能力表 + 重新评估触发条件与演进路径;v1.5.20 §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 边界行为表;v1.5.19 §6.1 LinearTurnEngine + Provider 加类级 Javadoc;v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 措辞修订 + 明确分层;v1.5.13 PromptBuilder API 对齐 .tools 字段;v1.5.12 删 stale Slot N;v1.5.11 Slot 命名对齐;v1.5.10 修 §0.1;v1.5.9 增 §4.5.1 [TOOL SCHEMAS] 段)
+> - SpecKit SOP:[`speckit_operator_prompt.md`](./speckit_operator_prompt.md) v1.7 / 859 行 / 操作手册(R-13 mitigation (d) 镜像 + 依赖同步到 dsh v1.5.23)
+> - Prompt 速查:[`lingshu_spec_prompts.md`](./lingshu_spec_prompts.md) v1.0.6 / 368 行 / 新窗口 Prompt 模板(同步 dsh v1.5.23)
+> - SKILL:`~/.claude/skills/lingshu-spec-driven-dev/SKILL.md` v1.0.12 / 192 行 / 自动触发(R-13 dep-tree 自查链路已纳入 + 同步 dsh v1.5.23)
 
 ---
 
@@ -213,8 +213,8 @@ chore: <一句话>
 ---
 
 **Last updated**: 2026-09-15
-**Version**: 1.3.15(§11.6 硬约束 #6 历史 drift 修正 — "dsh §10.1 已锁 14 项[v1.5.8 起,含 `spring-ai-bom`]" → "已锁 13 项[含 `spring-ai-bom`,v1.5.7 引入]",数字 + 版本注解两处对齐 dsh §10.1 表实际 13 行 / v1.5.7 引入;dsh v1.5.21 → v1.5.22(§10.1 末追加合计 13 项 blockquote 锁死 count);SKILL v1.0.10 → v1.0.11 / SOP v1.5 → v1.6 / prompts v1.0.4 → v1.0.5 同步)
-**对应设计文档**: `dsh_agent_design.md` v1.5.22
-**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.6
-**对应 SKILL**: `lingshu-spec-driven-dev` v1.0.11
-**对应 Prompt 速查**: `lingshu_spec_prompts.md` v1.0.5
+**Version**: 1.3.16(依赖同步 — dsh v1.5.22 → v1.5.23(§5.3.1.0 新增「6 个隐式 Router concrete 类」子节,补齐 6 Router stub + 6 Router ↔ Slot ↔ `<P, T>` ↔ Story 总表 + 5 行边界约束表 + 与 MemorySourceRouter 关键差异说明 + 实施期顺序建议 + 为何不一次建 6 concrete 类 rationale;Story #001 实施者打开 IDE 时 8 Router 全部有完整 stub,无需看 SlotResolver 字段自己猜 Router 长什么样);SKILL v1.0.11 → v1.0.12 / SOP v1.6 → v1.7 / prompts v1.0.5 → v1.0.6 同步;§11.6 历史 drift 修正(上轮 v1.3.15)不变)
+**对应设计文档**: `dsh_agent_design.md` v1.5.23
+**对应 SpecKit SOP**: `speckit_operator_prompt.md` v1.7
+**对应 SKILL**: `lingshu-spec-driven-dev` v1.0.12
+**对应 Prompt 速查**: `lingshu_spec_prompts.md` v1.0.6
