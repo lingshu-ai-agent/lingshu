@@ -1,7 +1,7 @@
-# DSH Agent Engine — 设计文档 v1.5.23
+# DSH Agent Engine — 设计文档 v1.5.24
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.23(§5.3.1.0 新增「6 个隐式 Router concrete 类」子节 — 补齐 v1.5.18 SlotResolver 屏蔽 8 Router 时,§5.3.1.1/§5.3.1.2 只给了 2 Router 显式 stub(`MemorySourceRouter` + `A2aTransportRouter`),剩 6 个(`PromptBuilderRouter` / `LlmProviderRouter` / `ToolExecutorRouter` / `PermissionPolicyRouter` / `SessionStoreRouter` / `CompactorRouter`)只列名未给 concrete 定义;**补丁** §5.3.1.0 单 Java 文件给出 6 Router stub,共享 `package` + `import`,每个 Router 5-7 行 Javadoc 说明调用契约 + 实施期 Story 归属 + 默认 Provider 类名;附 6 Router ↔ Slot ↔ `<P, T>` ↔ Story 总表(L1810-1819)+ 5 行边界与约束表(共享 §5.3.1.1/§5.3.1.2 同模式)+ 与 `MemorySourceRouter` 关键差异说明(单解析 vs 多源列表解析)+ 实施期顺序建议(Story #001 → #002 → #003 → #014 → #015)+ 为何不一次建 6 concrete 类 rationale(避免 Story AC 因缺默认 Provider 集体挂掉);**效果** Story #001 实施者打开 IDE 时 8 Router 全部有完整 stub,无需"看 SlotResolver 字段自己猜 Router 长什么样";**契约前置** 同 v1.5.20 性质(那时只补 2 Router);纯文档补全,代码逻辑零改动;2026-09-15);v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节;v1.5.20 §5.3.1 新增子节补齐 2 个 Router concrete 类 stub + 模板 + 边界表;v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
+> **版本**:v1.5.24(§5.5 「默认实现的注册约定」 子节扩展 — 原版只给 `DefaultPromptBuilderProvider` 1 个 `@AutoConfiguration` 模板,**问题** §5.6.4 SPI 总表 9 Slot × 默认 Provider 中,`DefaultPromptBuilderProvider`(Slot 1 模板) / `LinearTurnEngineProvider`(Slot 8,§6.1 L2530) / `HttpJsonRpcA2aTransportProvider`(Slot 9,§5.6.x L2058)3 个有完整 stub,**剩 6 个默认 Provider**(`TruncatingCompactorProvider` Slot 2 / `AnthropicLlmProviderFactory` Slot 3 / `StrictPermissionPolicyProvider` Slot 4 / `DefaultToolExecutorProvider` Slot 5 / `FileSessionStoreProvider` Slot 6 / `ProjectClaudeMdSourceProvider` Slot 7)**只列名未给 AutoConfiguration stub** —— 用户看到 §5.5 误以为"§5.6.4 ✅ 已有"全表已落实,但打开 IDE 找 `XxxProviderAutoConfiguration` 源码时只 3/9 有,其余 6/9 需对应 Story #001 / #002 / #003 / #014 / #015 实施期自己新建,样板零散;**根因** §5.5 最初只用于说明"默认实现怎么注册"模式,模板只列 1 例;§5.6.4 总表是契约层(每个 Slot 一个默认 Provider),§5.5 是样板层(每个默认 Provider 一个 AutoConfiguration)—— 两层之前未对齐:§5.6.4 9 行「✅ 已有」只代表「Slot 接口 + 1 个默认 Provider 类名」就位,不代表「Provider AutoConfiguration 落地样板」就位;**补丁** §5.5 扩展为 6 个新 AutoConfiguration stub(Slot 2—7,每个 18—22 行,`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(<X>Provider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig c)` —— 与 Slot 1 模板同模式;`create()` body 抛 `UnsupportedOperationException("TODO: Story #NNN")`,留给对应 Story 实施期填);附 (1) **9 Slot × 默认 Provider ↔ `create()` 返回类型 ↔ Story ↔ stub 位置 总表** 9 行(L2118-2128),§5.6.4 与 §5.5 双向 cross-ref,Story 实施者一眼定位;(2) **10 个替代实现**(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)**追加约定** —— 由各自 Story 实施期补,模式与默认实现完全一致,`name()` / `priority()` 一般 ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**(命名空间严格隔离);(3) §0 状态块同步 + §13 加本条目;**效果** Story #001 / #002 / #003 / #014 / #015 实施者打开 IDE 时,6 个默认 Provider 全部有 AutoConfiguration 样板(模板 + 4 个 Stub + 1 个总表),不再需要"按 §5.1 Provider 列表自己写样板"或"找不到样板复制 DefaultPromptBuilderProvider 后改类名"——直接 §5.5 复制对应 Slot 段 + 替换 `name()` / `priority()` / `create()` 返回类型即可;纯文档补全,代码逻辑零改动;2026-09-15);v1.5.23 §5.3.1.0 新增「6 个隐式 Router concrete 类」子节;v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节;v1.5.20 §5.3.1 新增子节补齐 2 个 Router concrete 类 stub + 模板 + 边界表;v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
 > **状态**:设计阶段冻结;**v1.5.21** §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 2 个边界行为表;落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置 —— 实施者只需按模板填构造器参数对 `<P, T>`,业务逻辑全由父类 `SlotRouter<P, T>` 提供;**v1.5.19** §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc,说明「SlotResolver 8 Router vs LinearTurnEngine 6 字段」是有意设计 —— `MemorySource` 走 `PromptBuilder.build()` 内部 `[PROJECT MEMORY]` 段消化;`A2aTransport` 留给 DagTurnEngine v1.5+ `A2aNode`,不在 LinearTurnEngine v0.5 必交付范围;纯文档补全,代码逻辑零改动;**v1.5.18** §5.3 `SlotResolver` 屏蔽的 Router 数 6 → 8 —— 补 `MemorySourceRouter`(Slot 7 多源列表解析,`List<MemorySource>`,按 `MemorySource::priority` 升序排序,null 表示该 source 此次无内容)+ `A2aTransportRouter`(Slot 9 单解析,`A2aTransport`,与 6 个 Slot 的 resolve 模式一致);comment `屏蔽 6 个 Router` 改 `屏蔽 8 个 Router`;ctor 参数从 6 个增到 8 个;新增 6 个 import:`MemorySource` / `A2aTransport` / `ArrayList` / `Collections` / `Comparator` / `List`;Router 本体 concrete 定义留给 Story #001/#009 实施期补(与现有 6 Router 引用未定义模式一致);**v1.5.17** §5.1 typed-Provider 列表补 `A2aTransportProvider` 行(与 §5.6.4 SPI 总表第 9 行对齐,§5.1 原本只列 8 个 Provider 缺第 9 行);v0.5 新增标识;**注**:L38 项目身份陈述与 §5.6.4 SPI 总表存在轻微差异(L38 列 Sandbox/SkillSource,§5.6.4 不列 —— Sandbox 走 `RuntimeSandbox` 独立接口、SkillSource 走独立 `SkillSourceProvider`),RFC 待决,本次不动 L38 / §5.6.4;**v1.5.16** §5.1 `SlotProvider` 段 L1463 处存在 orphan fence opener(无前置 ``` 对应,但紧接其后 L1471 的 ` ```java ` 因带 info string 不被识别为 closer,导致 L1463-L1482 共 20 行内容被吞进 plain-text 代码块,§5.1 第一个 Java 代码块未生效 + §5.1 标题与 prose 错位);**补丁** 删除 L1463 单行零字符内容(orphan opener),让 L1471 ` ```java ` 重新成为有效 opener,L1483 ` ``` ` 关 L1471,L1487-L1496 第二个 Java 块不受波及;**v1.5.15** §4.11 `FlowEngine` Java 代码块原版缺 closing fence,严格 CommonMark 渲染器(Pandoc / mdbook)下 §4.11.1 标题 + 14 行 prose 会被吞进 Java 块,§4.11.1 之后内容错位;**补丁** L815 `}` 后插入一行 ` ``` ` 关闭 fence(零代码改动,纯 Markdown 兼容);**v1.5.14** §4.5.1 [TOOL SCHEMAS] 措辞修订 — 明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层):`Prompt.tools` 是抽象层概念(我们的代码 / Prompt 模型 / cache 策略),到 LLM 实际收到的 JSON body(wire format 层)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string**,在 wire format 层两者等价;rationale 块引用加"先说分层"段(7 条理由全部归到抽象层收益:变更频率分类维度 / Prompt 模型三件套各司其职 / cache key 独立 / Provider 协议透明化 / 空 tools 留空 / Schema 来源严格 / 紧贴 USER MESSAGE 是概念顺序);ASCII 框图 [TOOL SCHEMAS] 块标题从"独立 API 字段(非 system 文本)"改"Prompt 抽象的独立字段(非 system 文本段)";伪代码 L490-497 注释从"走 SDK 原生 function_calling"改"Prompt 抽象的 .tools 字段 + LlmProvider 按 provider 协议序列化";**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
@@ -1959,6 +1959,11 @@ io.agent.delegate.DelegateToolAutoConfiguration
 
 ### 5.5 默认实现的注册约定
 
+> **设计原则**:每个 Slot 的默认 Provider 走「`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(XxxProvider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig)`」三件套;用户自带 `XxxProvider` Bean 时框架自动跳过默认;**匿名 inner class** 形态让用户在 `application.yml` 里写 `agent.<slot>: <name>` 即可选默认实现,无需 import 完整类名。
+> **契约前置**:本节把 §5.6.4 SPI 总表 9 Slot × 默认 Provider 中**剩 6 个尚未给 stub 的**补齐(`Slot 1 DefaultPromptBuilderProvider` 已在下面给出作为模板 / `Slot 8 LinearTurnEngineProvider` 见 §6.1 L2530 / `Slot 9 HttpJsonRpcA2aTransportProvider` 见 §5.6.x L2058 —— 3 个不在本节重复)。**替代实现**(OpenAi / Gemini / DeepSeek / Memory / Redis / Jdbc / Summary / Identity / ProjectTree / Conversation 10 个)由各自 Story 实施期补,模式与下面默认实现完全一致 —— 见本节末「替代实现追加约定」段。
+
+#### 模板:DefaultPromptBuilderProvider(Slot 1)
+
 ```java
 @AutoConfiguration
 public class DefaultPromptBuilderAutoConfiguration {
@@ -1973,6 +1978,166 @@ public class DefaultPromptBuilderAutoConfiguration {
     }
 }
 ```
+
+#### Slot 2 Compactor(Story #015)— `TruncatingCompactorProvider`
+
+```java
+@AutoConfiguration
+public class TruncatingCompactorAutoConfiguration {
+    @Bean @ConditionalOnMissingBean(CompactorProvider.class)
+    public CompactorProvider truncatingCompactorProvider() {
+        return new CompactorProvider() {
+            public String name()     { return "truncating"; }
+            public int    priority() { return 0; }
+            public Compactor create(AgentConfig c) {
+                // 实施期补:Story #015 创建 TruncatingCompactor(默认 §14.11)
+                //   按 c.getCompactor().getKeepLastN() 截断 history,保留最近 N 轮
+                throw new UnsupportedOperationException("TODO: Story #015 — TruncatingCompactor");
+            }
+        };
+    }
+}
+// 替代:SummaryCompactorProvider 同模式,name "summary",create() 返回 SummaryCompactor(用 LLM 摘要历史)— 见 §14.11
+```
+
+#### Slot 3 LlmProvider(Story #003)— `AnthropicLlmProviderFactory`
+
+```java
+@AutoConfiguration
+public class AnthropicLlmProviderAutoConfiguration {
+    @Bean @ConditionalOnMissingBean(LlmProviderProvider.class)
+    public LlmProviderProvider anthropicLlmProviderProvider() {
+        return new LlmProviderProvider() {
+            public String name()     { return "anthropic"; }
+            public int    priority() { return 10; }
+            public LlmProvider create(AgentConfig c) {
+                // 实施期补:Story #003 创建 AnthropicLlmProvider
+                //   §4.10.1 硬规则 3「Provider 必须显式映射表」:
+                //   providerMap.get("anthropic") -> Spring AI ChatModel(由 spring.ai.anthropic 配置)
+                //   c.getLlm().getModel() -> AnthropicLlmProvider(chatModel, modelName)
+                throw new UnsupportedOperationException("TODO: Story #003 — AnthropicLlmProvider");
+            }
+        };
+    }
+}
+// 替代:OpenAi / Gemini / DeepSeek 3 个 LlmProviderProvider 同模式,name 分别 "openai" / "gemini" / "deepseek"
+//   create() 返回对应协议的 LlmProvider,Provider Map 同样走 §4.10.1 硬规则 3
+//   DeepSeek 无官方 Spring AI starter,需手写 HttpClient(详见 Story #003 spec.md)
+```
+
+#### Slot 4 PermissionPolicy(Story #001)— `StrictPermissionPolicyProvider`
+
+```java
+@AutoConfiguration
+public class StrictPermissionPolicyAutoConfiguration {
+    @Bean @ConditionalOnMissingBean(PermissionPolicyProvider.class)
+    public PermissionPolicyProvider strictPermissionPolicyProvider() {
+        return new PermissionPolicyProvider() {
+            public String name()     { return "strict"; }
+            public int    priority() { return 10; }
+            public PermissionPolicy create(AgentConfig c) {
+                // 实施期补:Story #001 创建 StrictPermissionPolicy
+                //   集成 c.getSandbox().getCommandWhitelist() + domainWhitelist 默认白名单
+                //   集成 §4.10.1 硬规则 2(沙箱白名单生效)
+                throw new UnsupportedOperationException("TODO: Story #001 — StrictPermissionPolicy");
+            }
+        };
+    }
+}
+```
+
+#### Slot 5 ToolExecutor(Story #001)— `DefaultToolExecutorProvider`
+
+```java
+@AutoConfiguration
+public class DefaultToolExecutorAutoConfiguration {
+    @Bean @ConditionalOnMissingBean(ToolExecutorProvider.class)
+    public ToolExecutorProvider defaultToolExecutorProvider() {
+        return new ToolExecutorProvider() {
+            public String name()     { return "default"; }
+            public int    priority() { return 0; }
+            public ToolExecutor create(AgentConfig c) {
+                // 实施期补:Story #001 创建 DefaultToolExecutor
+                //   集成 §4.10.1 硬规则 2(禁用 Spring AI 自动 tool 执行)
+                //   走 §4.6 ToolExecutionContext 完整定义(ToolSink / NetworkClient / ApprovalGate / CancellationToken)
+                throw new UnsupportedOperationException("TODO: Story #001 — DefaultToolExecutor");
+            }
+        };
+    }
+}
+```
+
+#### Slot 6 SessionStore(Story #014)— `FileSessionStoreProvider`
+
+```java
+@AutoConfiguration
+public class FileSessionStoreAutoConfiguration {
+    @Bean @ConditionalOnMissingBean(SessionStoreProvider.class)
+    public SessionStoreProvider fileSessionStoreProvider() {
+        return new SessionStoreProvider() {
+            public String name()     { return "file"; }
+            public int    priority() { return 0; }
+            public SessionStore create(AgentConfig c) {
+                // 实施期补:Story #014 创建 FileSessionStore(默认 §14.7)
+                //   路径 c.getSessionStore().getPath() 默认 ~/.lingshu/sessions/
+                throw new UnsupportedOperationException("TODO: Story #014 — FileSessionStore");
+            }
+        };
+    }
+}
+// 替代:Memory / Redis / Jdbc 3 个 SessionStoreProvider 同模式,name 分别 "memory" / "redis" / "jdbc"
+//   create() 返回对应后端实例(redis / jdbc 需要外部 client 配置 bean)
+//   §14.7 列出 4 后端的完整实现细节
+```
+
+#### Slot 7 MemorySource(Story #002)— `ProjectClaudeMdSourceProvider`
+
+```java
+@AutoConfiguration
+public class ProjectClaudeMdSourceAutoConfiguration {
+    @Bean @ConditionalOnMissingBean(MemorySourceProvider.class)
+    public MemorySourceProvider projectClaudeMdSourceProvider() {
+        return new MemorySourceProvider() {
+            public String name()     { return "project-claude-md"; }
+            public int    priority() { return 0; }
+            public MemorySource create(AgentConfig c) {
+                // 实施期补:Story #002 创建 ProjectClaudeMdSource(默认 §4.5)
+                //   从 ./CLAUDE.md 加载项目级 memory,组成 [PROJECT MEMORY] 段
+                throw new UnsupportedOperationException("TODO: Story #002 — ProjectClaudeMdSource");
+            }
+        };
+    }
+}
+// 替代:Identity / ProjectTree / Conversation 3 个 MemorySourceProvider 同模式,name 分别
+//   "identity" / "project-tree" / "conversation",create() 返回对应 MemorySource 实现
+//   §4.5 列出 4 源完整细节;§5.3.1.1 MemorySourceRouter §5.3 末段说明 priority 排序由 SlotResolver 完成
+```
+
+#### 9 Slot × 默认 Provider ↔ create() 返回类型 ↔ Story ↔ stub 状态 总表
+
+| Slot | 默认 Provider 类 | `name()` | `create()` 返回类型 | Story | stub 位置 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `DefaultPromptBuilderProvider` | "default" | `DefaultPromptBuilder` | #002 | §5.5 本节(模板) |
+| 2 | `TruncatingCompactorProvider` | "truncating" | `TruncatingCompactor` | #015 | §5.5 本节 |
+| 3 | `AnthropicLlmProviderFactory` | "anthropic" | `AnthropicLlmProvider` | #003 | §5.5 本节(Spring AI ChatModel) |
+| 4 | `StrictPermissionPolicyProvider` | "strict" | `StrictPermissionPolicy` | #001 | §5.5 本节 |
+| 5 | `DefaultToolExecutorProvider` | "default" | `DefaultToolExecutor` | #001 | §5.5 本节 |
+| 6 | `FileSessionStoreProvider` | "file" | `FileSessionStore` | #014 | §5.5 本节 |
+| 7 | `ProjectClaudeMdSourceProvider` | "project-claude-md" | `ProjectClaudeMdSource` | #002 | §5.5 本节 |
+| 8 | `LinearTurnEngineProvider` | "linear" | `LinearTurnEngine` | #001 | §6.1 L2530(已有完整 stub) |
+| 9 | `HttpJsonRpcA2aTransportProvider` | "http-jsonrpc" | `HttpJsonRpcA2aTransport` | #009 | §5.6.x L2058(已有完整 stub) |
+
+**与 §5.6.4 SPI 总表的 cross-ref**:§5.6.4 表 9 行「✅ 已有」状态全部有 concrete stub 出处 —— Story 实施者打开 IDE 找「`XxxProvider` 怎么写」时,直接看本节对应 AutoConfiguration 即可。
+
+#### 替代实现追加约定
+
+10 个替代 Provider(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)由各自 Story 实施期补,模式与上面默认实现**完全一致**:
+
+- `name()` 返回该实现的标识(如 "openai" / "redis" / "identity")
+- `priority()` 一般 ≥ 10(同名时胜过默认 `priority=0`)
+- `create(AgentConfig c)` 返回对应具体实现类(可能依赖外部 SDK 如 Spring AI ChatModel / Lettuce Redis client / JDBC DataSource —— 由 `@Bean` 注入或 `@Autowired` 字段)
+
+**禁止**替代实现改 `name()` 与默认 Provider 冲突(如同时返回 "default")—— Spring 容器会按 `priority()` 选大,但日志和 `application.yml` 易混淆,**命名空间要严格隔离**。
 
 ---
 
@@ -4640,6 +4805,7 @@ agent:
 | 1.5.6 | 2026-09-06 | **需求工程层补全(SpecKit + Claude Code 输入源就绪)**:**§0.3 Personas** 新增 3 类典型用户故事(Alice 插件开发者 / Bob 业务配置方 / Charlie 核心仓贡献者)+ KPI 验证路径;**§0.4 v1.0 Acceptance Criteria** 新增 10 条黑盒可断言标准(AC-01 零配置启动 / AC-02 SPI 全 Slot 可替换 / AC-03 Tool 并发加速 / AC-04 取消传播 / AC-05 多租户隔离 / AC-06 YAML 热更无中断 / AC-07 ReAct 上限 / AC-08 插件版本治理 / AC-09 业务配置三件套 / AC-10 A2A AgentCard 自动生成);**§10.1 父 POM** 补 12 项依赖版本表(Spring Boot 3.2.x / Lombok 1.18.30 / OTel 1.32.x / JUnit 5.10.x / AssertJ 3.24.x / Mockito 5.x / Awaitility 4.2.x 等)+ 测试模块依赖完整清单 + 版本升级政策;**§14.15 NFR 总账** 新增 8 个子节(性能预算 9 项 / 安全威胁模型 8 项 / SLO 8 项 / 可观测性四件套 / 兼容性矩阵 11 项 / 支持矩阵 6 项 LTS 政策 / 测试策略 7 层金字塔 / 文档完整度自检 14 项 GA 卡点);**§15 Error Catalog** 新增 8 域 24 条 ErrorCode 全表(Config / Slot / LLM / Tool / Sandbox / ReAct / Audit / 其他)+ `LINGS-<域><编号>` 编码约定;**§16 Glossary** 新增 22 个术语集中释义表(Slot / Provider / SlotRouter / FlowEngine / LinearTurnEngine / ReAct Loop / DelegateTool / SubAgentType / A2aTransport / AgentCard / SkillSource / Skill / Session / Turn / TurnContext / Identity / Instructions / CLAUDE.md / CircuitBreaker / TenantContext / CancellationToken / Zero-config / @Value);**§17 Risk Register** 新增 12 条风险登记(R-01—R-12,带概率×影响=分值排序 + Owner + 触发条件)+ review 节奏(月度 + RC + GA);**§13** 加 v1.5.6 条目;**§0** 标题块状态描述补"进入 SpecKit + Claude Code 实施准备期" |
 | 1.5.7 | 2026-09-08 | **Spring AI 边界硬规则 + 新依赖引入(本次单人 RFC 决议)**:**§4.10.1 新增** `Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则)` 章节,3 条硬规则:(1) ReAct Loop 必须自实现,不得用 Spring AI `ChatClient.prompt().call()` 自动执行;(2) Spring AI 只用两件事 — LLM 协议转换 + `@Tool` Schema 生成,自动 tool 执行禁用(否则 tool 被调两次 + 绕过沙箱);(3) 多 Provider 并存时 `provider name → ChatModel` 必须显式映射表,不得靠 Spring 容器扫 Bean 类型;**§10.1 新增依赖** `org.springframework.ai:spring-ai-bom` 1.0.0-M6(BOM 引入,只引 LlmProvider 协议转换 + Tool Schema 实际用到的子模块,见 R-13 bundle 体积控制);**§17 新增 R-13 / R-14** — R-13 Spring AI bundle 体积膨胀 + transitive 污染(banned-dependencies enforcer 控);R-14 Spring AI 1.x 自身 JDK 17+ 要求 vs LingShu compile target=8 的兼容约束(JDK 8/11/17/21 matrix CI 验证);**§15** 引用 LINGS-L01(未知 Provider)对应硬规则 3;**§13** 加 v1.5.7 条目;**§0** 标题块版本号 + 状态描述同步 |
 | 1.5.8 | 2026-09-08 | **R-14 风险去重 + R-13 风险细化**:**§17** R-14 **删除**(Spring AI 1.x JDK 17+ 要求与 Spring Boot 3.x 完全同类,R-06 已覆盖;R-06 文字补"含 Spring AI 1.x"明确同步);**§17** R-13 重写为**具体场景**(Story #003/#009 实施者误用 `spring-ai-spring-boot-starter` 全家桶 → 拉入 openai-java-client + anthropic-java + jtokkit + Jackson/Netty 版本冲突 → binary 膨胀 40MB+,mitigation 加 `banned-dependencies` enforcer build 阶段 fail + Story 实施者必须 `mvn dependency:tree` 自查后提交);**§10.1** 依赖行 `R-13 / R-14 跟踪` → `R-13 跟踪`(同步去 R-14 引用);**§13** 加 v1.5.8 条目;**§0** 标题块版本号 + 状态描述同步 |
+| 1.5.24 | 2026-09-15 | **§5.5「默认实现的注册约定」子节扩展(6 个默认 Provider AutoConfiguration stub + 10 个替代实现追加约定)**:**问题** §5.5 原版只给 `DefaultPromptBuilderProvider` 1 个 `@AutoConfiguration` 模板,而 §5.6.4 SPI 总表 9 Slot × 默认 Provider 中,只有 3 个有完整 stub:`DefaultPromptBuilderProvider`(Slot 1,§5.5 模板)/ `LinearTurnEngineProvider`(Slot 8,§6.1 L2530)/ `HttpJsonRpcA2aTransportProvider`(Slot 9,§5.6.x L2058);**剩 6 个默认 Provider**(`TruncatingCompactorProvider` Slot 2 / `AnthropicLlmProviderFactory` Slot 3 / `StrictPermissionPolicyProvider` Slot 4 / `DefaultToolExecutorProvider` Slot 5 / `FileSessionStoreProvider` Slot 6 / `ProjectClaudeMdSourceProvider` Slot 7)**只列名未给 AutoConfiguration stub** —— 用户看到 §5.6.4 全表「✅ 已有」误以为 9/9 全部就位,实际打开 IDE 找 `XxxProviderAutoConfiguration` 源码时只 3/9 有,其余 6/9 需 Story #001 / #002 / #003 / #014 / #015 实施者自己新建样板(从 §5.1 typed Provider 反推接口、从 §5.5 1 个模板改类名);**根因** §5.5 最初只用于说明「默认实现怎么注册」模式,模板只列 1 例(Slot 1 的 `DefaultPromptBuilderProvider`);§5.6.4 总表是契约层(每个 Slot 一个默认 Provider 类名),§5.5 是样板层(每个默认 Provider 一个 AutoConfiguration)—— 两层之前未对齐:§5.6.4 9 行「✅ 已有」只代表「Slot 接口 + 1 个默认 Provider 类名」就位,不代表「Provider AutoConfiguration 落地样板」就位;**补丁** (1) §5.5 保留 Slot 1 模板(`DefaultPromptBuilderProvider`)作为「**模板**」标识;(2) §5.5 追加 Slot 2—7 共 6 个新 AutoConfiguration stub —— 每个 18—22 行,`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(<X>Provider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig c)` —— 与 Slot 1 模板同模式;`create()` body 抛 `UnsupportedOperationException("TODO: Story #NNN")` 留给对应 Story 实施期填,等价于骨架架子;(3) §5.5 末尾新增 **9 Slot × 默认 Provider ↔ `create()` 返回类型 ↔ Story ↔ stub 位置 总表** 9 行(L2118-2128),把 §5.6.4 契约层 + §5.5 样板层双向 cross-ref,Story 实施者一眼定位「这个 Slot 该复制 §5.5 哪段」;(4) §5.5 末新增 **替代实现追加约定** 段 —— 10 个替代 Provider(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)由各自 Story 实施期补,模式与默认实现完全一致,`name()` 走该实现标识(如 "openai" / "redis" / "identity"),`priority()` 一般 ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**(Spring 容器按 `priority()` 选大,但日志和 `application.yml` 易混淆,**命名空间严格隔离**);(5) §0 标题块版本号同步 `v1.5.23 → v1.5.24`;(6) CLAUDE.md 版本号同步 `1.3.16 → 1.3.17` + 描述补齐「§5.5 补齐 6 默认 Provider stub」;**注** L2118-2128 总表第 8、9 行(`LinearTurnEngineProvider` / `HttpJsonRpcA2aTransportProvider`)stub 位置标「§6.1 L2530 / §5.6.x L2058」,**不重复列在 §5.5** —— 与 §5.3.1.0 子节「为何不一次建 6 concrete 类」同理:已 stub 就保持 single-source-of-truth,§5.5 总表只做 cross-ref;**§13** 加本条目;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问「这几个接口的实现类是不是需要实现 `create(config)` 方法啊,这几个接口实现类在文档里面有体现吗」,确认 §5.5 只 1/9 默认 Provider 有 stub、§6.1 / §5.6.x 也只各 1,共 3/9,剩 6/9 需补;要求「补充一下」) |
 | 1.5.23 | 2026-09-15 | **§5.3.1.0 新增「6 个隐式 Router concrete 类」子节**:**问题** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,把 2 个新 Router(`MemorySourceRouter` + `A2aTransportRouter`)引用加进 SlotResolver 字段 + 构造器 + resolve 方法;v1.5.20 §5.3.1.1 + §5.3.1.2 只给这 2 个补了 concrete 类 stub;**但剩 6 个 Router**(`PromptBuilderRouter` / `LlmProviderRouter` / `ToolExecutorRouter` / `PermissionPolicyRouter` / `SessionStoreRouter` / `CompactorRouter`)**自 v1.5.0 起就只有 SlotResolver 字段引用 + 各自 Story 归属,无 concrete 类定义** — 读者打开 IDE 找不到这 6 个 Router 类源码,只能从 §5.1 typed Provider 列表 + §5.3 SlotResolver 字段反推 Router 形态;**根因** v1.5.0 引入 SlotResolver 时,6 个 Router 走"等对应 Story 实施期补"约定(每 Router 绑 1 个 Story 的默认 Provider,见 SKILL.md L118-135),v1.5.18 加 2 Router 时同样模式,v1.5.20 触发用户问"§5.3 Router 本体 concrete 定义何时补" → 只补了 v1.5.18 新增的 2 个,剩 6 个仍未补;**问题暴露** Story #001 实施者要做 AgentFactory 启动校验,需要 8 Router 全部在 Spring 容器里;8 Router 缺 6 个时 SlotResolver 构造器编译都过不了;**补丁** §5.3.1.0 单 Java 文件给出 6 Router 完整 stub —— 共享 `package io.agent.impl.spi` + 共享 imports(7 个 Slot 接口 + 6 个 typed Provider + SlotRouter + slf4j + spring + List,共 14 行),每个 Router 5-7 行 Javadoc(说明调用契约 / 实施期 Story / 默认 Provider 类名)+ 3 行 class body(`extends SlotRouter<<P>, <T>>` + 单构造器 `List<P> providers` 转交父类 + super 传 `<SlotName>` + Logger);附 (1) **6 Router ↔ Slot ↔ `<P, T>` ↔ Story 总表** L1810-1819 6 行 + 表头,便于实施者一眼定位;(2) **5 行边界与约束表** L1823-1829(共享 §5.3.1.1/§5.3.1.2 同模式 —— null name / 未注册 name / 同名 priority / null create 不该发生 等);(3) **与 `MemorySourceRouter` 关键差异说明** L1831(6 Router 单解析模式 vs MemorySourceRouter 多源列表解析模式 —— MemorySource 是唯一需要在 SlotResolver 端做 null filter + priority 排序的);(4) **实施期顺序建议** 5 步,Story #001 → #002 → #003 → #014 → #015 按 Story 顺序落地;(5) **为何不一次建 6 concrete 类 rationale** L1840 —— 避免 Story AC 因缺默认 Provider 集体挂掉(Spring 启动时 Router 注入 0 个 Provider 不报错但 SlotResolver.resolve 会一律抛 "Unknown XXX",Story AC 反而过不了);**为何 `5.3.1.0` 编号** 而非 `5.3.1.3`-`5.3.1.8`:6 Router 之间是平行关系无内在顺序,合并一节比拆 6 节好读;`0` 是"基础/前置"位置惯例;§5.3.1.1 / §5.3.1.2 编号保持不变(`MemorySourceRouter` + `A2aTransportRouter` 仍按 v1.5.20 顺序);**效果** Story #001 实施者打开 IDE 时 8 Router 全部有完整 stub —— 不再需要"看 SlotResolver 字段自己猜 Router 长什么样";**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.22 → v1.5.23`;CLAUDE.md 版本号同步 `1.3.15 → 1.3.16`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问"dsh 中 PromptBuilderRouter 这些具体的 Router 是待实现的吗",确认 6 个隐式 Router 仍只列名未给 concrete,要求"先实现基础的伪代码") |
 | 1.5.22 | 2026-09-15 | **§10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正**:**问题** `CLAUDE.md §11.6 硬约束 #6` 此前误标"dsh §10.1 已锁 14 项[v1.5.8 起,含 `spring-ai-bom`]",与 §10.1 表实际 13 行不符 —— **数字** 14 不对(实际 13 = 1 项编译目标 + 12 项 Maven 依赖)、**版本注解** v1.5.8 不对(`spring-ai-bom` 实际 v1.5.7 引入,v1.5.8 仅去掉 R-14 引用未引入新依赖);**根因** 该 hard rule 在 v1.5.7 引入 `spring-ai-bom` 时,CLAUDE.md §11.6 改为"14 项"但 §10.1 表只 13 行;CLAUDE.md 计数与 §10.1 表未在同一处对齐,后续 v1.5.8 / v1.5.21 都没校对回来;**补丁** (1) **§10.1 表格末追加 blockquote 显式声明**:"§10.1 锁定合计 13 项(1 项编译目标 + 12 项 Maven 依赖),v1.5.7 起为 13,后续不再增;CLAUDE.md §11.6 硬约束 #6 引用此数",把"13"明确锁在 §10.1 真理源(之前 §10.1 表只是事实,无显式 count statement);(2) **CLAUDE.md §11.6 硬约束 #6 同步刷新** "已锁 14 项[v1.5.8 起,含 `spring-ai-bom`]" → "已锁 13 项[含 `spring-ai-bom`,v1.5.7 引入]";(3) CLAUDE.md 版本 `1.3.14 → 1.3.15`,版本底部 footnote 注明本轮修正;**注** 之所以是"修正"而非"补全":§10.1 表 13 行从未变过(只是 v1.5.7 加 spring-ai-bom 第 13 行);CLAUDE.md "14 项"是 v1.5.7 当时误标,v1.5.8 / v1.5.21 都没发现;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.21 → v1.5.22`;CLAUDE.md 版本号同步 `1.3.14 → 1.3.15`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户希望解决 §11.6 "14 项" 历史遗留 drift) |
 | 1.5.21 | 2026-09-15 | **§5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」**:**问题** 团队/社区在审 LingShu 设计时反复问"为什么用 Spring Boot SPI 而不用 OSGi / Pf4j / 自定义 ClassLoader 隔离";既有 dsh §5.1—§5.6 只描述机制本身,未给出选型 rationale,半年后回看 / 新成员 onboarding 都需要一份"决策档案";**根因** 当时 v0.5 RFC 选 SPI 时未单独成文,理由散落在 §5(机制)/ §10.1(依赖治理)/ §17 R-13(风险登记)三处,新人难以拼出完整拼图;**补丁** §5.6 后新增 §5.7 子节,6 个小节:(1) 决策结论(SPI 选 + ClassLoader 不选,9 Slot + Spring Boot + JDK 8 src / JDK 17+ runtime + 单租户场景契合);(2) 机制对比表(8 维度:加载方式 / 接口契约 / 依赖共享 / 版本共存 / 运行时 install / AOT native / 类型同一性 / CL leak / 学习曲线);(3) LingShu 场景契合度表(7 个决策点逐一评估);(4) 主动放弃能力表(运行时热插拔 / 多版本共存 / 插件崩溃隔离 / Security 边界)+ 何时重新评估的扳机条件;(5) 重新评估触发条件 + 演进路径表(签名 JAR / Pf4j-spring 第三方市场 / Layrry 多版本 / JPMS 重构 —— 工作量 + 兼容性评估);(6) 一句话总结 + 配套阅读引用(§5.1—§5.6 / §17 R-13 / §4.10.1);**关键不变项** Slot / SlotRouter / SlotResolver / Spring AI 边界硬规则 / R-13 三位一体治理 —— 这五条抽象与硬规则无论演进到 Pf4j / Layrry / OSGi / JPMS 哪条路径都原样可用,只换"如何加载 Provider"的实现层;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.20 → v1.5.21`;CLAUDE.md 版本号同步 `1.3.12 → 1.3.13`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户看到社区有项目用 ClassLoader 实现插件,问 SPI vs ClassLoader 优劣势,要求将对比固化到 dsh + 官网) |
