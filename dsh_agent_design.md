@@ -1,7 +1,7 @@
-# DSH Agent Engine — 设计文档 v1.5.27
+# DSH Agent Engine — 设计文档 v1.5.28
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.27(§4.6 ToolExecutor 接口定义补全 — 标题「Tool 与 ToolExecutor」但 §4.6 缺 `ToolExecutor` 本体,Story 实施者只能从 §4.10.1 / §5.5 / §6.5 散落引用反推;**补丁** 在 §4.6 `Skill extends Tool` 之后 / `ToolExecutionContext` 之前插入 `ToolExecutor` 接口完整定义 —— 单方法 `dispatch(ToolCall call, ToolExecutionContext ctx) → ToolResult`;Javadoc 覆盖 (1) 调用契约 `executor.dispatch(call, ctx)` + ReAct Action 阶段每个 `LlmResponse.getToolCalls()` 元素**必须**走此方法(不得直调 `tool.execute()`);(2) §4.10.1 硬规则 2 强制要求 —— ToolExecutor 内部统一串入 5 步流水线 `PermissionPolicy.check() §4.7 → ToolRegistry.lookup(name) → TimeoutWrap → SandboxApply(fs / http / process) §4.7 → tool.execute() → Checkpoint`,任何一步绕过 = 沙箱 / 权限 / 取消 / 超时全失效,Spring AI `ChatClient.tools().call()` 自动执行**禁止**使用;(3) ToolExecutor 与 Tool 接口解耦 —— ToolExecutor 不 import Tool 内部细节,只看 `ToolCall(name + args JSON)` + `ToolExecutionContext`,Tool 实现可手写(§6.5 (1))/ MCP server 暴露(§6.5 (2))/ Spring AI `@Tool` 注解生成仅 schema(§6.5 (3))—— ToolExecutor 一视同仁;(4) Provider 可插拔 —— 默认 `DefaultToolExecutorProvider`(stub §5.5 L2121)同步串行 dispatch;替代实现 `ParallelToolExecutorProvider`(并发)/ `ObservabilityToolExecutorProvider`(metric / trace),`name()` 走该实现标识("default" / "parallel" / "observability"),`priority()` ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**;(5) `@throws` 完整标注 —— `PermissionDeniedException`(§4.7)/ `ToolNotFoundException` / `TimeoutException`(`callConfig.timeoutSeconds`)/ `CancellationException`(Ctrl+C / FlowEngine markDone / 超时联动)4 类异常;**效果** Story 实施者打开 §4.6 即可看到完整 Slot 5 接口契约,无需散落反推;§4.10.1 硬规则 2 引用 `ToolExecutor.dispatch()` 现在有 single-source-of-truth 锚点;5590 → 5639 行(+49);**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.26(§5.3.1.0 补齐 `FlowEngineRouter` 第 7 个隐式 Router concrete stub + §5.3.1 标题计数 8 → 9 Router + §5.6.4 SPI 总表新增「Router stub 位置」列 — **问题** §5.3.1 标题写「8 个 Router — 6 隐式 + 2 显式」,但实际 `AgentFactory` L3676 直接 `@Autowired` 了 `FlowEngineRouter`,而 §5.3.1.0 只给了 6 个隐式 Router stub(PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore)**漏了** Slot 8 FlowEngineRouter —— 用户/实施者找「`FlowEngineRouter` 类源码」会以为它不存在,只能在 `AgentFactory` 字段引用里看到字段名但没有类定义;**根因** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,只补了 SlotResolver 内部 2 Router(MemorySource + A2aTransport);AgentFactory 的 `FlowEngineRouter` 是 v1.5.18 **之前**就已存在的字段(L3676),但当时没单独成 Router stub 写到 §5.3.1.0 —— **Slot 8 FlowEngine 完全漏在 §5.3.1 体系外**,实际 §5.3 SlotResolver 8 字段 + AgentFactory 1 字段 = **9 Router**;v1.5.23 §5.3.1.0 新增 6 隐式 Router stub 时也没补 `FlowEngineRouter`(只列名说「PromptBuilderRouter / LlmProviderRouter / ToolExecutorRouter / PermissionPolicyRouter / SessionStoreRouter / CompactorRouter」共 6),到 v1.5.25 §5.4 plugin AutoConfiguration 编写约定才暴露出「`FlowEngineRouter` 没有 concrete 类定义」;**补丁** (1) §5.3.1 标题改「9 Router — 7 隐式 + 2 显式」;(2) §5.3.1.0 标题改「7 个隐式 Router concrete 类(SlotResolver 6 + AgentFactory 1)」,imports 块加 `FlowEngineProvider` + `FlowEngine`;(3) §5.3.1.0 末尾(`CompactorRouter` 之后)追加 `FlowEngineRouter` 第 7 个 stub —— `extends SlotRouter<FlowEngineProvider, FlowEngine>`,super 传 `"FlowEngine"` + Logger,Javadoc 说明**不在 SlotResolver 字段里,由 AgentFactory 直接 `@Autowired`** + 默认 `LinearTurnEngineProvider`(§6.1 L2530)+ 替代 `GoogleAdkFlowEngineProvider`(§4.11.2)/ `AlibabaGraphFlowEngineProvider`(§4.11.3);(4) §5.3.1.0 总表加 1 行(Slot 8 FlowEngineRouter,注入位置 `AgentFactory.flowRouter`,**不在 SlotResolver**),并补「注入位置」新列,Slot 编号对齐 §5.6.4 SPI 总表(1—9);(5) §5.3.1.0 边界与约束 / 与 `MemorySourceRouter` 关键差异 / 实施期顺序建议 全部 6 → 7(Story #001 加 `FlowEngineRouter`);(6) §5.6.4 SPI 总表加「Router stub 位置」列 9 行 —— 7 行指 §5.3.1.0 + 1 行指 §5.3.1.1 + 1 行指 §5.3.1.2;Slot 8 行强调 `FlowEngineRouter` 注入 `AgentFactory` 而**不在 SlotResolver**;**效果** Story #001 实施者打开 IDE 时,AgentFactory 启动校验所需 3 Router(`PermissionPolicyRouter` + `ToolExecutorRouter` + `FlowEngineRouter`)全部有完整 stub,§5.3.1.0 + §5.6.4 双向 cross-ref 一眼定位;§5.3.1 计数从 8 → 9,与实际代码一致;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.25 §5.4 末尾新增「plugin AutoConfiguration 编写约定(双 `@ConditionalOnMissingBean` 模式,避免双胜出)」子段 — **问题** §5.4 原版只列 `META-INF/spring/...imports` 文件内容,没规定 plugin 自己的 `XxxProvider` Bean 怎么写;§5.5 默认 AutoConfiguration 一侧已标 `@ConditionalOnMissingBean` 防用户覆盖默认,但**plugin 一侧未约束** —— 如果 plugin A `RagAutoConfiguration` 没标 `@ConditionalOnMissingBean`,plugin B `McpPromptAutoConfiguration` 也没标,加载顺序不确定时 **BeanDefinitionOverrideException**(Spring Boot 2.1+ `spring.main.allow-bean-definition-overriding=false` 默认启动失败);**根因** Spring `@ConditionalOnMissingBean(X.class)` 检查的是**整个 `BeanFactory`** 而非"当前 `@Configuration` 类内其他 `@Bean` 方法",**跨 AutoConfiguration 类的 Bean 可见性**取决于 `@AutoConfigureOrder` / `@AutoConfigureBefore` / `@AutoConfigureAfter`,**不保证** plugin 一定在默认 AutoConfiguration 之前/之后加载;**补丁** (1) §5.4 末新增子段,标题明确「双 `@ConditionalOnMissingBean` 模式」;(2) 机制说明 + plugin 样例代码 `RagAutoConfiguration` 标 `@ConditionalOnMissingBean(PromptBuilderProvider.class)`(与 §5.5 默认对称);(3) **双 `@ConditionalOnMissingBean` 模式加载顺序矩阵** 4 行 4 列(plugin A 先 / plugin B 先 / 默认 / 漏标 四种情形)—— 一眼看清"漏标 = 启动失败";(4) 明确禁止 plugin 漏标 + 启动期 `BeanDefinitionOverrideException` 应急路径("第一时间检查 plugin 的 `@Bean` 方法是否漏标",不要去开 `spring.main.allow-bean-definition-overriding=true`);(5) 区分"plugin 注册 `XxxProvider` Bean(需双标)" vs "plugin 注册 `Tool` / `MemorySource` / `SkillSource` 等非 Slot 类型 Bean(按需创建,无需 `@ConditionalOnMissingBean`)" + 给出 `LocalToolsAutoConfiguration` 多 Tool 样例;(6) 传递依赖规则 + cross-ref §5.5 / §5.3 / §5.2;**效果** plugin 实施者打开 IDE 写 `XxxProvider` Bean 时,知道必须标 `@ConditionalOnMissingBean`(与默认对称),漏标会导致启动失败;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.24 §5.5 「默认实现的注册约定」 子节扩展 — 原版只给 `DefaultPromptBuilderProvider` 1 个 `@AutoConfiguration` 模板,**问题** §5.6.4 SPI 总表 9 Slot × 默认 Provider 中,`DefaultPromptBuilderProvider`(Slot 1 模板) / `LinearTurnEngineProvider`(Slot 8,§6.1 L2530) / `HttpJsonRpcA2aTransportProvider`(Slot 9,§5.6.x L2058)3 个有完整 stub,**剩 6 个默认 Provider**(`TruncatingCompactorProvider` Slot 2 / `AnthropicLlmProviderFactory` Slot 3 / `StrictPermissionPolicyProvider` Slot 4 / `DefaultToolExecutorProvider` Slot 5 / `FileSessionStoreProvider` Slot 6 / `ProjectClaudeMdSourceProvider` Slot 7)**只列名未给 AutoConfiguration stub** —— 用户看到 §5.5 误以为"§5.6.4 ✅ 已有"全表已落实,但打开 IDE 找 `XxxProviderAutoConfiguration` 源码时只 3/9 有,其余 6/9 需对应 Story #001 / #002 / #003 / #014 / #015 实施期自己新建,样板零散;**根因** §5.5 最初只用于说明"默认实现怎么注册"模式,模板只列 1 例;§5.6.4 总表是契约层(每个 Slot 一个默认 Provider),§5.5 是样板层(每个默认 Provider 一个 AutoConfiguration)—— 两层之前未对齐:§5.6.4 9 行「✅ 已有」只代表「Slot 接口 + 1 个默认 Provider 类名」就位,不代表「Provider AutoConfiguration 落地样板」就位;**补丁** §5.5 扩展为 6 个新 AutoConfiguration stub(Slot 2—7,每个 18—22 行,`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(<X>Provider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig c)` —— 与 Slot 1 模板同模式;`create()` body 抛 `UnsupportedOperationException("TODO: Story #NNN")`,留给对应 Story 实施期填);附 (1) **9 Slot × 默认 Provider ↔ `create()` 返回类型 ↔ Story ↔ stub 位置 总表** 9 行(L2118-2128),§5.6.4 与 §5.5 双向 cross-ref,Story 实施者一眼定位;(2) **10 个替代实现**(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)**追加约定** —— 由各自 Story 实施期补,模式与默认实现完全一致,`name()` / `priority()` 一般 ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**(命名空间严格隔离);(3) §0 状态块同步 + §13 加本条目;**效果** Story #001 / #002 / #003 / #014 / #015 实施者打开 IDE 时,6 个默认 Provider 全部有 AutoConfiguration 样板(模板 + 4 个 Stub + 1 个总表),不再需要"按 §5.1 Provider 列表自己写样板"或"找不到样板复制 DefaultPromptBuilderProvider 后改类名"——直接 §5.5 复制对应 Slot 段 + 替换 `name()` / `priority()` / `create()` 返回类型即可;纯文档补全,代码逻辑零改动;2026-09-15);v1.5.23 §5.3.1.0 新增「6 个隐式 Router concrete 类」子节;v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节;v1.5.20 §5.3.1 新增子节补齐 2 个 Router concrete 类 stub + 模板 + 边界表;v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
+> **版本**:v1.5.28(§5.5 改「多 Provider 模式」样板 + §5.4 同步改「唯一 Bean 名约定」+ §5.6 Slot 9 HttpJsonRpcA2aTransportProvider stub 同步 — **问题** v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制"部署期二选一",同一 Slot 最多 1 个 `XxxProvider` Bean 注册到 Spring 容器 → 用户切换 Provider 必须改 classpath / exclude / 改 Bean 名;但 §5.3.1.0 `SlotRouter<P, T>` 父类**一直是多 Provider 友好** —— 构造器收 `List<P> providers`,启动期按 `name()` 收 `Map<String, P>`,`resolve(name, cfg)` 按 name 选 → List<P> **被设计为 size=N**,而 v1.5.27 `@ConditionalOnMissingBean` 把它阉割到 size=1,**多 Provider 能力框架自身不用**;**根因** v1.5.24 §5.5 引入 6 默认 Provider stub 时直接复用 v1.5.0 `DefaultPromptBuilderProvider` 模板的 `@ConditionalOnMissingBean`,当时设计意图是"防止用户覆盖默认",但代价是阉割 §5.3.1.0 Router 的多 Provider 能力;v1.5.25 §5.4 双 `@ConditionalOnMissingBean` 模式进一步固化单 Provider 假设(plugin 之间也互斥);到 v1.5.27 §4.6 ToolExecutor + §5.5 默认 6 Provider stub + §5.3.1.0 7 Router 体系成熟,**单 Provider 假设与 Router 多 Provider 设计目标的张力被放大**;用户需要"同 Slot 多 Provider 共存 + 按 name 路由"的能力;**补丁** (1) **§5.5 改「多 Provider 模式」样板**:头部设计原则 blockquote 改写,说明 v1.5.28 起默认 Provider 用 plain `@Bean(name = "<slot>Provider_<name>")` 而**不再用 `@ConditionalOnMissingBean`**;**所有 6 个默认 Provider stub 改写** —— Slot 1 `DefaultPromptBuilderProvider` / Slot 2 `TruncatingCompactorProvider` / Slot 3 `AnthropicLlmProviderFactory` / Slot 4 `StrictPermissionPolicyProvider` / Slot 5 `DefaultToolExecutorProvider` / Slot 6 `FileSessionStoreProvider` / Slot 7 `ProjectClaudeMdSourceProvider` 全部 `@Bean(name = "...")` 显式 Bean 名;每段注释补「`name()` 必须唯一(§5.2 同名竞争)」说明;(2) **§5.5 头部新增「用户切换示例」blockquote** —— `application.yml` 写 `agent.<slot>.name: <provider-name>` 切换 Provider + 启动日志样例 `resolved N provider(s)` 列出全部 N;(3) **§5.5 9-Slot 总表加「Bean 名」列** —— 9 行「Bean 名(🆕 v1.5.28)」字段,如 `promptBuilderProvider_default` / `llmProviderProvider_anthropic` / `flowEngineProvider_linear` / `a2aTransportProvider_http-jsonrpc`,Story 实施者写 `@Bean(name = "...")` 直接抄;Slot 8 / Slot 9 标 🆕 v1.5.28 建议同步改名(§6.1 LinearTurnEngineProvider / §5.6.x HttpJsonRpcA2aTransportProvider);(4) **§5.5「替代实现追加约定」段改写** —— 加 `OpenAiLlmProviderProvider` 完整样板(Bean 名 `llmProviderProvider_openai` + name "openai")+ 用户配置示例 + 启动日志样例(4 个 LlmProvider 共存);(5) **§5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步改多 Provider 模式** —— `@Bean(name = "a2aTransportProvider_http-jsonrpc")`;(6) **§5.4 plugin AutoConfiguration 编写约定改写** —— 双 `@ConditionalOnMissingBean` 模式 → 唯一 Bean 名约定:🆕 v1.5.28 起 plugin `@Bean` 必须显式 `name = "<slot>Provider_<pluginName>"`,禁止复用默认 Bean 名;🗑️ v1.5.25 双 `@ConditionalOnMissingBean` 模式加载顺序矩阵已废弃(基于「全 ApplicationContext 最多 1 个 `XxxProvider` Bean」单 Provider 假设,多 Provider 模式下该假设不再成立),但 BeanDefinitionOverrideException 应急路径不变;**效果** Story #001 / #002 / #003 / #014 / #015 实施者写 `@Bean` 时,统一规范为 `@Bean(name = "<slot>Provider_<name>")`,无需 `@ConditionalOnMissingBean`;同 Slot 多 Provider 共存(默认 + 替代)由 §5.2 SlotRouter 按 name 路由,`agent.<slot>.name` 改 yaml 即可切换 Provider,无需 exclude / rebuild classpath;§5.3.1.0 Router 多 Provider 能力终于被框架自身利用,**List<P> size=N 实际生效**;**纯文档改动**,代码逻辑零改动;5639→5708 行(+69);2026-09-16);v1.5.27(§4.6 ToolExecutor 接口定义补全 — 标题「Tool 与 ToolExecutor」但 §4.6 缺 `ToolExecutor` 本体,Story 实施者只能从 §4.10.1 / §5.5 / §6.5 散落引用反推;**补丁** 在 §4.6 `Skill extends Tool` 之后 / `ToolExecutionContext` 之前插入 `ToolExecutor` 接口完整定义 —— 单方法 `dispatch(ToolCall call, ToolExecutionContext ctx) → ToolResult`;Javadoc 覆盖 (1) 调用契约 `executor.dispatch(call, ctx)` + ReAct Action 阶段每个 `LlmResponse.getToolCalls()` 元素**必须**走此方法(不得直调 `tool.execute()`);(2) §4.10.1 硬规则 2 强制要求 —— ToolExecutor 内部统一串入 5 步流水线 `PermissionPolicy.check() §4.7 → ToolRegistry.lookup(name) → TimeoutWrap → SandboxApply(fs / http / process) §4.7 → tool.execute() → Checkpoint`,任何一步绕过 = 沙箱 / 权限 / 取消 / 超时全失效,Spring AI `ChatClient.tools().call()` 自动执行**禁止**使用;(3) ToolExecutor 与 Tool 接口解耦 —— ToolExecutor 不 import Tool 内部细节,只看 `ToolCall(name + args JSON)` + `ToolExecutionContext`,Tool 实现可手写(§6.5 (1))/ MCP server 暴露(§6.5 (2))/ Spring AI `@Tool` 注解生成仅 schema(§6.5 (3))—— ToolExecutor 一视同仁;(4) Provider 可插拔 —— 默认 `DefaultToolExecutorProvider`(stub §5.5 L2121)同步串行 dispatch;替代实现 `ParallelToolExecutorProvider`(并发)/ `ObservabilityToolExecutorProvider`(metric / trace),`name()` 走该实现标识("default" / "parallel" / "observability"),`priority()` ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**;(5) `@throws` 完整标注 —— `PermissionDeniedException`(§4.7)/ `ToolNotFoundException` / `TimeoutException`(`callConfig.timeoutSeconds`)/ `CancellationException`(Ctrl+C / FlowEngine markDone / 超时联动)4 类异常;**效果** Story 实施者打开 §4.6 即可看到完整 Slot 5 接口契约,无需散落反推;§4.10.1 硬规则 2 引用 `ToolExecutor.dispatch()` 现在有 single-source-of-truth 锚点;5590 → 5639 行(+49);**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.26(§5.3.1.0 补齐 `FlowEngineRouter` 第 7 个隐式 Router concrete stub + §5.3.1 标题计数 8 → 9 Router + §5.6.4 SPI 总表新增「Router stub 位置」列 — **问题** §5.3.1 标题写「8 个 Router — 6 隐式 + 2 显式」,但实际 `AgentFactory` L3676 直接 `@Autowired` 了 `FlowEngineRouter`,而 §5.3.1.0 只给了 6 个隐式 Router stub(PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore)**漏了** Slot 8 FlowEngineRouter —— 用户/实施者找「`FlowEngineRouter` 类源码」会以为它不存在,只能在 `AgentFactory` 字段引用里看到字段名但没有类定义;**根因** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,只补了 SlotResolver 内部 2 Router(MemorySource + A2aTransport);AgentFactory 的 `FlowEngineRouter` 是 v1.5.18 **之前**就已存在的字段(L3676),但当时没单独成 Router stub 写到 §5.3.1.0 —— **Slot 8 FlowEngine 完全漏在 §5.3.1 体系外**,实际 §5.3 SlotResolver 8 字段 + AgentFactory 1 字段 = **9 Router**;v1.5.23 §5.3.1.0 新增 6 隐式 Router stub 时也没补 `FlowEngineRouter`(只列名说「PromptBuilderRouter / LlmProviderRouter / ToolExecutorRouter / PermissionPolicyRouter / SessionStoreRouter / CompactorRouter」共 6),到 v1.5.25 §5.4 plugin AutoConfiguration 编写约定才暴露出「`FlowEngineRouter` 没有 concrete 类定义」;**补丁** (1) §5.3.1 标题改「9 Router — 7 隐式 + 2 显式」;(2) §5.3.1.0 标题改「7 个隐式 Router concrete 类(SlotResolver 6 + AgentFactory 1)」,imports 块加 `FlowEngineProvider` + `FlowEngine`;(3) §5.3.1.0 末尾(`CompactorRouter` 之后)追加 `FlowEngineRouter` 第 7 个 stub —— `extends SlotRouter<FlowEngineProvider, FlowEngine>`,super 传 `"FlowEngine"` + Logger,Javadoc 说明**不在 SlotResolver 字段里,由 AgentFactory 直接 `@Autowired`** + 默认 `LinearTurnEngineProvider`(§6.1 L2530)+ 替代 `GoogleAdkFlowEngineProvider`(§4.11.2)/ `AlibabaGraphFlowEngineProvider`(§4.11.3);(4) §5.3.1.0 总表加 1 行(Slot 8 FlowEngineRouter,注入位置 `AgentFactory.flowRouter`,**不在 SlotResolver**),并补「注入位置」新列,Slot 编号对齐 §5.6.4 SPI 总表(1—9);(5) §5.3.1.0 边界与约束 / 与 `MemorySourceRouter` 关键差异 / 实施期顺序建议 全部 6 → 7(Story #001 加 `FlowEngineRouter`);(6) §5.6.4 SPI 总表加「Router stub 位置」列 9 行 —— 7 行指 §5.3.1.0 + 1 行指 §5.3.1.1 + 1 行指 §5.3.1.2;Slot 8 行强调 `FlowEngineRouter` 注入 `AgentFactory` 而**不在 SlotResolver**;**效果** Story #001 实施者打开 IDE 时,AgentFactory 启动校验所需 3 Router(`PermissionPolicyRouter` + `ToolExecutorRouter` + `FlowEngineRouter`)全部有完整 stub,§5.3.1.0 + §5.6.4 双向 cross-ref 一眼定位;§5.3.1 计数从 8 → 9,与实际代码一致;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.25 §5.4 末尾新增「plugin AutoConfiguration 编写约定(双 `@ConditionalOnMissingBean` 模式,避免双胜出)」子段 — **问题** §5.4 原版只列 `META-INF/spring/...imports` 文件内容,没规定 plugin 自己的 `XxxProvider` Bean 怎么写;§5.5 默认 AutoConfiguration 一侧已标 `@ConditionalOnMissingBean` 防用户覆盖默认,但**plugin 一侧未约束** —— 如果 plugin A `RagAutoConfiguration` 没标 `@ConditionalOnMissingBean`,plugin B `McpPromptAutoConfiguration` 也没标,加载顺序不确定时 **BeanDefinitionOverrideException**(Spring Boot 2.1+ `spring.main.allow-bean-definition-overriding=false` 默认启动失败);**根因** Spring `@ConditionalOnMissingBean(X.class)` 检查的是**整个 `BeanFactory`** 而非"当前 `@Configuration` 类内其他 `@Bean` 方法",**跨 AutoConfiguration 类的 Bean 可见性**取决于 `@AutoConfigureOrder` / `@AutoConfigureBefore` / `@AutoConfigureAfter`,**不保证** plugin 一定在默认 AutoConfiguration 之前/之后加载;**补丁** (1) §5.4 末新增子段,标题明确「双 `@ConditionalOnMissingBean` 模式」;(2) 机制说明 + plugin 样例代码 `RagAutoConfiguration` 标 `@ConditionalOnMissingBean(PromptBuilderProvider.class)`(与 §5.5 默认对称);(3) **双 `@ConditionalOnMissingBean` 模式加载顺序矩阵** 4 行 4 列(plugin A 先 / plugin B 先 / 默认 / 漏标 四种情形)—— 一眼看清"漏标 = 启动失败";(4) 明确禁止 plugin 漏标 + 启动期 `BeanDefinitionOverrideException` 应急路径("第一时间检查 plugin 的 `@Bean` 方法是否漏标",不要去开 `spring.main.allow-bean-definition-overriding=true`);(5) 区分"plugin 注册 `XxxProvider` Bean(需双标)" vs "plugin 注册 `Tool` / `MemorySource` / `SkillSource` 等非 Slot 类型 Bean(按需创建,无需 `@ConditionalOnMissingBean`)" + 给出 `LocalToolsAutoConfiguration` 多 Tool 样例;(6) 传递依赖规则 + cross-ref §5.5 / §5.3 / §5.2;**效果** plugin 实施者打开 IDE 写 `XxxProvider` Bean 时,知道必须标 `@ConditionalOnMissingBean`(与默认对称),漏标会导致启动失败;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.24 §5.5 「默认实现的注册约定」 子节扩展 — 原版只给 `DefaultPromptBuilderProvider` 1 个 `@AutoConfiguration` 模板,**问题** §5.6.4 SPI 总表 9 Slot × 默认 Provider 中,`DefaultPromptBuilderProvider`(Slot 1 模板) / `LinearTurnEngineProvider`(Slot 8,§6.1 L2530) / `HttpJsonRpcA2aTransportProvider`(Slot 9,§5.6.x L2058)3 个有完整 stub,**剩 6 个默认 Provider**(`TruncatingCompactorProvider` Slot 2 / `AnthropicLlmProviderFactory` Slot 3 / `StrictPermissionPolicyProvider` Slot 4 / `DefaultToolExecutorProvider` Slot 5 / `FileSessionStoreProvider` Slot 6 / `ProjectClaudeMdSourceProvider` Slot 7)**只列名未给 AutoConfiguration stub** —— 用户看到 §5.5 误以为"§5.6.4 ✅ 已有"全表已落实,但打开 IDE 找 `XxxProviderAutoConfiguration` 源码时只 3/9 有,其余 6/9 需对应 Story #001 / #002 / #003 / #014 / #015 实施期自己新建,样板零散;**根因** §5.5 最初只用于说明"默认实现怎么注册"模式,模板只列 1 例;§5.6.4 总表是契约层(每个 Slot 一个默认 Provider),§5.5 是样板层(每个默认 Provider 一个 AutoConfiguration)—— 两层之前未对齐:§5.6.4 9 行「✅ 已有」只代表「Slot 接口 + 1 个默认 Provider 类名」就位,不代表「Provider AutoConfiguration 落地样板」就位;**补丁** §5.5 扩展为 6 个新 AutoConfiguration stub(Slot 2—7,每个 18—22 行,`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(<X>Provider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig c)` —— 与 Slot 1 模板同模式;`create()` body 抛 `UnsupportedOperationException("TODO: Story #NNN")`,留给对应 Story 实施期填);附 (1) **9 Slot × 默认 Provider ↔ `create()` 返回类型 ↔ Story ↔ stub 位置 总表** 9 行(L2118-2128),§5.6.4 与 §5.5 双向 cross-ref,Story 实施者一眼定位;(2) **10 个替代实现**(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)**追加约定** —— 由各自 Story 实施期补,模式与默认实现完全一致,`name()` / `priority()` 一般 ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**(命名空间严格隔离);(3) §0 状态块同步 + §13 加本条目;**效果** Story #001 / #002 / #003 / #014 / #015 实施者打开 IDE 时,6 个默认 Provider 全部有 AutoConfiguration 样板(模板 + 4 个 Stub + 1 个总表),不再需要"按 §5.1 Provider 列表自己写样板"或"找不到样板复制 DefaultPromptBuilderProvider 后改类名"——直接 §5.5 复制对应 Slot 段 + 替换 `name()` / `priority()` / `create()` 返回类型即可;纯文档补全,代码逻辑零改动;2026-09-15);v1.5.23 §5.3.1.0 新增「6 个隐式 Router concrete 类」子节;v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节;v1.5.20 §5.3.1 新增子节补齐 2 个 Router concrete 类 stub + 模板 + 边界表;v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
 > **状态**:设计阶段冻结;**v1.5.21** §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 2 个边界行为表;落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置 —— 实施者只需按模板填构造器参数对 `<P, T>`,业务逻辑全由父类 `SlotRouter<P, T>` 提供;**v1.5.19** §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc,说明「SlotResolver 8 Router vs LinearTurnEngine 6 字段」是有意设计 —— `MemorySource` 走 `PromptBuilder.build()` 内部 `[PROJECT MEMORY]` 段消化;`A2aTransport` 留给 DagTurnEngine v1.5+ `A2aNode`,不在 LinearTurnEngine v0.5 必交付范围;纯文档补全,代码逻辑零改动;**v1.5.18** §5.3 `SlotResolver` 屏蔽的 Router 数 6 → 8 —— 补 `MemorySourceRouter`(Slot 7 多源列表解析,`List<MemorySource>`,按 `MemorySource::priority` 升序排序,null 表示该 source 此次无内容)+ `A2aTransportRouter`(Slot 9 单解析,`A2aTransport`,与 6 个 Slot 的 resolve 模式一致);comment `屏蔽 6 个 Router` 改 `屏蔽 8 个 Router`;ctor 参数从 6 个增到 8 个;新增 6 个 import:`MemorySource` / `A2aTransport` / `ArrayList` / `Collections` / `Comparator` / `List`;Router 本体 concrete 定义留给 Story #001/#009 实施期补(与现有 6 Router 引用未定义模式一致);**v1.5.17** §5.1 typed-Provider 列表补 `A2aTransportProvider` 行(与 §5.6.4 SPI 总表第 9 行对齐,§5.1 原本只列 8 个 Provider 缺第 9 行);v0.5 新增标识;**注**:L38 项目身份陈述与 §5.6.4 SPI 总表存在轻微差异(L38 列 Sandbox/SkillSource,§5.6.4 不列 —— Sandbox 走 `RuntimeSandbox` 独立接口、SkillSource 走独立 `SkillSourceProvider`),RFC 待决,本次不动 L38 / §5.6.4;**v1.5.16** §5.1 `SlotProvider` 段 L1463 处存在 orphan fence opener(无前置 ``` 对应,但紧接其后 L1471 的 ` ```java ` 因带 info string 不被识别为 closer,导致 L1463-L1482 共 20 行内容被吞进 plain-text 代码块,§5.1 第一个 Java 代码块未生效 + §5.1 标题与 prose 错位);**补丁** 删除 L1463 单行零字符内容(orphan opener),让 L1471 ` ```java ` 重新成为有效 opener,L1483 ` ``` ` 关 L1471,L1487-L1496 第二个 Java 块不受波及;**v1.5.15** §4.11 `FlowEngine` Java 代码块原版缺 closing fence,严格 CommonMark 渲染器(Pandoc / mdbook)下 §4.11.1 标题 + 14 行 prose 会被吞进 Java 块,§4.11.1 之后内容错位;**补丁** L815 `}` 后插入一行 ` ``` ` 关闭 fence(零代码改动,纯 Markdown 兼容);**v1.5.14** §4.5.1 [TOOL SCHEMAS] 措辞修订 — 明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层):`Prompt.tools` 是抽象层概念(我们的代码 / Prompt 模型 / cache 策略),到 LLM 实际收到的 JSON body(wire format 层)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string**,在 wire format 层两者等价;rationale 块引用加"先说分层"段(7 条理由全部归到抽象层收益:变更频率分类维度 / Prompt 模型三件套各司其职 / cache key 独立 / Provider 协议透明化 / 空 tools 留空 / Schema 来源严格 / 紧贴 USER MESSAGE 是概念顺序);ASCII 框图 [TOOL SCHEMAS] 块标题从"独立 API 字段(非 system 文本)"改"Prompt 抽象的独立字段(非 system 文本段)";伪代码 L490-497 注释从"走 SDK 原生 function_calling"改"Prompt 抽象的 .tools 字段 + LlmProvider 按 provider 协议序列化";**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
@@ -2028,39 +2028,34 @@ io.agent.mcp.McpClientAutoConfiguration
 io.agent.delegate.DelegateToolAutoConfiguration
 ```
 
-**plugin AutoConfiguration 编写约定(双 `@ConditionalOnMissingBean` 模式,避免双胜出)**:
+**plugin AutoConfiguration 编写约定(🆕 v1.5.28 唯一 Bean 名约定, 多 Provider 模式)**:
 
-> **机制**:Spring Boot 的 `@ConditionalOnMissingBean(X.class)` 检查的是**整个 `ApplicationContext`(即 `BeanFactory`)是否已经注册了 `X.class` 类型的 Bean** — 不是只检查"当前 `@Configuration` 类里其他 `@Bean` 方法"。**跨 AutoConfiguration 类的 Bean 可见性**取决于加载顺序,加载顺序由 `@AutoConfigureOrder` / `@AutoConfigureBefore` / `@AutoConfigureAfter` 决定,**并不保证** plugin AutoConfiguration 一定在默认 `DefaultXxxProviderAutoConfiguration` 之前/之后。
+> **机制**:Spring Boot 2.1+ 默认 `spring.main.allow-bean-definition-overriding=false`,**同名 Bean 注册会抛 `BeanDefinitionOverrideException`(启动失败)**。多 Provider 模式下(§5.5 v1.5.28 起),默认 Provider + 多个 plugin 替代 Provider **全部都要注册**(没有 `@ConditionalOnMissingBean` 屏蔽),因此**每个 `@Bean` 必须显式指定唯一 Bean 名**(格式:`<slot>Provider_<pluginName>`),否则两个 plugin 都写 `@Bean public PromptBuilderProvider provider()` 时,Spring 按方法名生成 Bean 名 `provider`,**冲突 + 启动失败**。
 >
-> 因此 §5.5「默认实现只标 `@ConditionalOnMissingBean`」**不足以防止 plugin 之间的双胜出** — plugin 自己的 `XxxProvider` Bean **也必须**加 `@ConditionalOnMissingBean(XxxProvider.class)`,这样无论加载顺序如何,同一类型的 `XxxProvider` Bean 全 ApplicationContext **最多只有一个**:
+> **🆕 v1.5.28 起替代 v1.5.25 的"双 `@ConditionalOnMissingBean` 模式"**:v1.5.25 §5.4 引入"双 `@ConditionalOnMissingBean` 模式"防 plugin 之间的双胜出,但 v1.5.28 §5.5 取消 `@ConditionalOnMissingBean` 走多 Provider 模式 → plugin 也不再标 → 唯一约束变成"显式 Bean 名约定"。**`name()` 命名空间仍走 §5.5 末「替代实现追加约定」**,不靠 `@ConditionalOnMissingBean` 兜底。
+>
+> **🗑️ v1.5.25 双 `@ConditionalOnMissingBean` 模式加载顺序矩阵 已废弃**(v1.5.28 起):原 4 行 4 列矩阵(plugin A 先 / plugin B 先 / 默认 / 漏标)基于"全 ApplicationContext 最多 1 个 `XxxProvider` Bean"的单 Provider 假设,多 Provider 模式下该假设不再成立 —— 现在 §5.5 默认 + §5.4 多个 plugin **全部都注册**,`@ConditionalOnMissingBean` 不再存在 → 矩阵行「漏标」变成"显式 Bean 名忘了唯一" → 应急路径不变(`BeanDefinitionOverrideException` → 检查 Bean 名是否唯一,不要去开 `spring.main.allow-bean-definition-overriding=true`)。
 
 ```java
 @AutoConfiguration
 public class RagAutoConfiguration {
-    @Bean
-    @ConditionalOnMissingBean(PromptBuilderProvider.class)  // plugin 也必须加 —— 与 §5.5 默认对称
+    @Bean(name = "promptBuilderProvider_rag")           // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public PromptBuilderProvider ragPromptBuilderProvider() {
         return new PromptBuilderProvider() {
-            public String name()     { return "rag"; }
-            public int    priority() { return 10; }            // > 默认 0,application.yml 可选 rag
+            public String name()     { return "rag"; }    // 与默认 "default" 不同,§5.2 命名空间隔离
+            public int    priority() { return 10; }
             public PromptBuilder create(AgentConfig c) { return new RagPromptBuilder(); }
         };
     }
 }
 ```
 
-**双 `@ConditionalOnMissingBean` 模式加载顺序矩阵**(以 `PromptBuilderProvider` 为例,plugin A = `RagAutoConfiguration`,plugin B = `McpPromptAutoConfiguration`):
+**🆕 v1.5.28 plugin Bean 名约束**:
+- **必须显式 `@Bean(name = "<slot>Provider_<pluginName>")`**,**不要**靠方法名兜底(`@Bean public PromptBuilderProvider ragPromptBuilderProvider()` 也可,但跨 plugin 同方法名会冲突)
+- Bean 名格式:`<slot>Provider_<pluginName>`,全小写,hyphen 分隔(如 `promptBuilderProvider_rag` / `toolExecutorProvider_parallel` / `llmProviderProvider_openai`)
+- **禁止 plugin 复用默认 Bean 名**:`@Bean(name = "promptBuilderProvider_default")` 虽然技术上不报错(只有一个 plugin 用),但与 §5.5 默认冲突 → Router 启动期 `name()` 同名 "default" → §5.2 SlotRouter 同名竞争按 priority 选大 + conflict 日志 → 行为不可预测
 
-| 提供者 | 是否标 `@ConditionalOnMissingBean` | plugin A 先加载 | plugin B 先加载 |
-| --- | --- | --- | --- |
-| `DefaultPromptBuilderAutoConfiguration`(§5.5) | ✅ | 默认跳过(A 已注册) | 默认跳过(B 已注册) |
-| `RagAutoConfiguration`(plugin A) | ✅ | A 注册(默认后跳过) | A 跳过(B 已注册) |
-| `McpPromptAutoConfiguration`(plugin B) | ✅ | B 跳过(A 已注册) | B 注册(默认后跳过) |
-| `McpPromptAutoConfiguration`(plugin B)**漏标** | ❌ | B 注册(**冲突 + BeanDefinitionOverrideException**) | **冲突 + BeanDefinitionOverrideException** |
-
-**禁止 plugin 漏标 `@ConditionalOnMissingBean`**:`spring.main.allow-bean-definition-overriding=false` 是 Spring Boot 2.1+ 默认,**漏标的 plugin 会让启动失败**(而非"沉默覆盖")。Story 实施者写 plugin 时若发现启动期 `BeanDefinitionOverrideException`,**第一时间检查 plugin 的 `@Bean` 方法是否漏标**,不要去开 `spring.main.allow-bean-definition-overriding=true`(那是掩盖问题,会导致两个 `XxxProvider` Bean 共存,运行时 `SlotResolver.resolve` 行为不可预测)。
-
-**`name()` 命名空间仍走 §5.5 末「替代实现追加约定」**:同类型多个 plugin Bean 各自 `name()` 唯一("rag" / "mcp" / ...),`priority()` 字段控制 `application.yml` 里的选择 —— **不是**加载顺序;`priority` 高者胜出,与加载先后无关(参考 §5.2 同名竞争规则)。
+**`name()` 命名空间严格隔离**:与 §5.5 末「替代实现追加约定」同规则 —— 同类型多个 Provider 各自 `name()` 唯一("rag" / "mcp" / ...)。`priority()` 字段在 §5.2 同名竞争时生效,**多 Provider 模式下应避免同名**;`priority` 高者胜出,与加载先后无关(参考 §5.2 同名竞争规则)。
 
 **plugin 注册的非 Slot 类型 Bean(`Tool` / `MemorySource` / `SkillSource` 等)** — 不存在"双胜出"风险(每个实现类是独立类型,Spring 容器按类型 + Bean 名区分),可**不**加 `@ConditionalOnMissingBean`,按需创建:
 
@@ -2079,19 +2074,44 @@ public class LocalToolsAutoConfiguration {
 
 ### 5.5 默认实现的注册约定
 
-> **设计原则**:每个 Slot 的默认 Provider 走「`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(XxxProvider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig)`」三件套;用户自带 `XxxProvider` Bean 时框架自动跳过默认;**匿名 inner class** 形态让用户在 `application.yml` 里写 `agent.<slot>: <name>` 即可选默认实现,无需 import 完整类名。
+> **设计原则(🆕 多 Provider 模式, v1.5.28 起生效)**:每个 Slot 的 Provider 走「`@AutoConfiguration` + `@Bean(name = "<slot>Provider_<name>")` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig)`」三件套;**不再使用 `@ConditionalOnMissingBean`** —— 多 Provider 模式下,默认 Provider 与所有替代 Provider **都注册到 Spring 容器**,§5.2 `SlotRouter(List<P> providers)` 收到 size=N 列表,启动日志列出全部 N 个 Provider + 优先级 + 覆盖关系。**`name()` 命名空间严格隔离** —— 同 Slot 下不同 Provider 的 `name()` 必须唯一,否则 §5.2 SlotRouter 启动期会按 `priority()` 收敛一个 + 剩余进 conflict 日志(行为不可预测)。**匿名 inner class** 形态让用户在 `application.yml` 里写 `agent.<slot>.name: <provider-name>` 即可切换 Provider,无需 import 完整类名。
+>
+> **为什么从 v1.5.27 `@ConditionalOnMissingBean` 改成 v1.5.28 多 Provider 模式**:
+> - v1.5.27 §5.5 默认 Provider 用 `@ConditionalOnMissingBean`,**强制单 Provider 模式** —— 同一 Slot 全 ApplicationContext 最多 1 个 `XxxProvider` Bean,要切换 Provider 必须改 classpath / exclude / 改 Bean 名
+> - 但 §5.3.1.0 `SlotRouter<P, T>` 父类**一直是多 Provider 友好** —— 构造器收 `List<P> providers`,启动期按 `name()` 收 `Map<String, P>`,`resolve(name, cfg)` 按 name 选 → List<P> **被设计为 size=N**,而 v1.5.27 `@ConditionalOnMissingBean` 把它阉割到 size=1,**多 Provider 能力框架自身不用**
+> - v1.5.28 取消 `@ConditionalOnMissingBean`,改 plain `@Bean(name = "<slot>Provider_<name>")` + 唯一 `name()` —— 多 Provider 模式全开,Router List<P> size=N 实际生效,`agent.<slot>.name` 按名路由无需 exclude / rebuild classpath
+> - **对应 §5.4 plugin AutoConfiguration 编写约定**也同步从"双 `@ConditionalOnMissingBean` 模式"(v1.5.25 引入,避免 plugin 之间的 BeanDefinitionOverrideException)改为"**唯一 Bean 名约定**"(v1.5.28 起生效)
+>
 > **契约前置**:本节把 §5.6.4 SPI 总表 9 Slot × 默认 Provider 中**剩 6 个尚未给 stub 的**补齐(`Slot 1 DefaultPromptBuilderProvider` 已在下面给出作为模板 / `Slot 8 LinearTurnEngineProvider` 见 §6.1 L2530 / `Slot 9 HttpJsonRpcA2aTransportProvider` 见 §5.6.x L2058 —— 3 个不在本节重复)。**替代实现**(OpenAi / Gemini / DeepSeek / Memory / Redis / Jdbc / Summary / Identity / ProjectTree / Conversation 10 个)由各自 Story 实施期补,模式与下面默认实现完全一致 —— 见本节末「替代实现追加约定」段。
+>
+> **用户切换示例**(以 Slot 3 LlmProvider 为例,默认 `anthropic` → 替代 `openai`):
+>
+> ```yaml
+> # application.yml —— 改这一行即可切换 Provider,无需 exclude / rebuild
+> agent:
+>   llm:
+>     model: openai             # Router.resolve("openai", cfg) -> OpenAiLlmProviderProvider -> OpenAiLlmProvider
+> ```
+>
+> 启动日志(§5.2 SlotRouter 多 Provider 模式):
+>
+> ```text
+> [LlmProvider] resolved 4 provider(s):
+>   ✓ anthropic -> AnthropicLlmProviderFactory$1 [priority=10]
+>   ✓ openai    -> OpenAiLlmProviderFactory$1 [priority=10]
+>   ✓ gemini    -> GeminiLlmProviderFactory$1 [priority=10]
+>   ✓ deepseek  -> DeepSeekLlmProviderFactory$1 [priority=10]
+> ```
 
 #### 模板:DefaultPromptBuilderProvider(Slot 1)
 
 ```java
 @AutoConfiguration
 public class DefaultPromptBuilderAutoConfiguration {
-    @Bean
-    @ConditionalOnMissingBean(PromptBuilderProvider.class)  // 用户自带则跳过
+    @Bean(name = "promptBuilderProvider_default")         // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public PromptBuilderProvider defaultPromptBuilderProvider() {
         return new PromptBuilderProvider() {
-            public String name()     { return "default"; }
+            public String name()     { return "default"; }  // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 0; }
             public PromptBuilder create(AgentConfig c) { return new DefaultPromptBuilder(); }
         };
@@ -2104,10 +2124,10 @@ public class DefaultPromptBuilderAutoConfiguration {
 ```java
 @AutoConfiguration
 public class TruncatingCompactorAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(CompactorProvider.class)
+    @Bean(name = "compactorProvider_truncating")          // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public CompactorProvider truncatingCompactorProvider() {
         return new CompactorProvider() {
-            public String name()     { return "truncating"; }
+            public String name()     { return "truncating"; }  // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 0; }
             public Compactor create(AgentConfig c) {
                 // 实施期补:Story #015 创建 TruncatingCompactor(默认 §14.11)
@@ -2117,7 +2137,7 @@ public class TruncatingCompactorAutoConfiguration {
         };
     }
 }
-// 替代:SummaryCompactorProvider 同模式,name "summary",create() 返回 SummaryCompactor(用 LLM 摘要历史)— 见 §14.11
+// 替代:SummaryCompactorProvider 同模式,Bean 名 "compactorProvider_summary",name "summary",create() 返回 SummaryCompactor(用 LLM 摘要历史)— 见 §14.11
 ```
 
 #### Slot 3 LlmProvider(Story #003)— `AnthropicLlmProviderFactory`
@@ -2125,10 +2145,10 @@ public class TruncatingCompactorAutoConfiguration {
 ```java
 @AutoConfiguration
 public class AnthropicLlmProviderAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(LlmProviderProvider.class)
+    @Bean(name = "llmProviderProvider_anthropic")         // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public LlmProviderProvider anthropicLlmProviderProvider() {
         return new LlmProviderProvider() {
-            public String name()     { return "anthropic"; }
+            public String name()     { return "anthropic"; }  // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 10; }
             public LlmProvider create(AgentConfig c) {
                 // 实施期补:Story #003 创建 AnthropicLlmProvider
@@ -2140,7 +2160,8 @@ public class AnthropicLlmProviderAutoConfiguration {
         };
     }
 }
-// 替代:OpenAi / Gemini / DeepSeek 3 个 LlmProviderProvider 同模式,name 分别 "openai" / "gemini" / "deepseek"
+// 替代:OpenAi / Gemini / DeepSeek 3 个 LlmProviderProvider 同模式,Bean 名分别 "llmProviderProvider_openai" /
+//   "llmProviderProvider_gemini" / "llmProviderProvider_deepseek",name() 同样分别 "openai" / "gemini" / "deepseek"
 //   create() 返回对应协议的 LlmProvider,Provider Map 同样走 §4.10.1 硬规则 3
 //   DeepSeek 无官方 Spring AI starter,需手写 HttpClient(详见 Story #003 spec.md)
 ```
@@ -2150,10 +2171,10 @@ public class AnthropicLlmProviderAutoConfiguration {
 ```java
 @AutoConfiguration
 public class StrictPermissionPolicyAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(PermissionPolicyProvider.class)
+    @Bean(name = "permissionPolicyProvider_strict")        // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public PermissionPolicyProvider strictPermissionPolicyProvider() {
         return new PermissionPolicyProvider() {
-            public String name()     { return "strict"; }
+            public String name()     { return "strict"; }      // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 10; }
             public PermissionPolicy create(AgentConfig c) {
                 // 实施期补:Story #001 创建 StrictPermissionPolicy
@@ -2164,6 +2185,8 @@ public class StrictPermissionPolicyAutoConfiguration {
         };
     }
 }
+// 替代:TrustlessPermissionPolicyProvider 同模式,Bean 名 "permissionPolicyProvider_trustless",name "trustless",
+//   create() 返回 TrustlessPermissionPolicy(用户每次都确认,无白名单)— Story #001 完成后由维护者按需追加
 ```
 
 #### Slot 5 ToolExecutor(Story #001)— `DefaultToolExecutorProvider`
@@ -2171,10 +2194,10 @@ public class StrictPermissionPolicyAutoConfiguration {
 ```java
 @AutoConfiguration
 public class DefaultToolExecutorAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(ToolExecutorProvider.class)
+    @Bean(name = "toolExecutorProvider_default")          // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public ToolExecutorProvider defaultToolExecutorProvider() {
         return new ToolExecutorProvider() {
-            public String name()     { return "default"; }
+            public String name()     { return "default"; }   // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 0; }
             public ToolExecutor create(AgentConfig c) {
                 // 实施期补:Story #001 创建 DefaultToolExecutor
@@ -2185,6 +2208,9 @@ public class DefaultToolExecutorAutoConfiguration {
         };
     }
 }
+// 替代:ParallelToolExecutorProvider(并发 dispatch) / ObservabilityToolExecutorProvider(加 metric / trace spans)
+//   同模式,Bean 名分别 "toolExecutorProvider_parallel" / "toolExecutorProvider_observability",
+//   name() 同样 "parallel" / "observability",priority ≥ 10 即可(多 Provider 模式下同名不会发生,但留作安全垫)
 ```
 
 #### Slot 6 SessionStore(Story #014)— `FileSessionStoreProvider`
@@ -2192,10 +2218,10 @@ public class DefaultToolExecutorAutoConfiguration {
 ```java
 @AutoConfiguration
 public class FileSessionStoreAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(SessionStoreProvider.class)
+    @Bean(name = "sessionStoreProvider_file")             // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public SessionStoreProvider fileSessionStoreProvider() {
         return new SessionStoreProvider() {
-            public String name()     { return "file"; }
+            public String name()     { return "file"; }      // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 0; }
             public SessionStore create(AgentConfig c) {
                 // 实施期补:Story #014 创建 FileSessionStore(默认 §14.7)
@@ -2205,7 +2231,8 @@ public class FileSessionStoreAutoConfiguration {
         };
     }
 }
-// 替代:Memory / Redis / Jdbc 3 个 SessionStoreProvider 同模式,name 分别 "memory" / "redis" / "jdbc"
+// 替代:Memory / Redis / Jdbc 3 个 SessionStoreProvider 同模式,Bean 名分别 "sessionStoreProvider_memory" /
+//   "sessionStoreProvider_redis" / "sessionStoreProvider_jdbc",name() 同样 "memory" / "redis" / "jdbc"
 //   create() 返回对应后端实例(redis / jdbc 需要外部 client 配置 bean)
 //   §14.7 列出 4 后端的完整实现细节
 ```
@@ -2215,10 +2242,10 @@ public class FileSessionStoreAutoConfiguration {
 ```java
 @AutoConfiguration
 public class ProjectClaudeMdSourceAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(MemorySourceProvider.class)
+    @Bean(name = "memorySourceProvider_project-claude-md") // 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public MemorySourceProvider projectClaudeMdSourceProvider() {
         return new MemorySourceProvider() {
-            public String name()     { return "project-claude-md"; }
+            public String name()     { return "project-claude-md"; }  // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 0; }
             public MemorySource create(AgentConfig c) {
                 // 实施期补:Story #002 创建 ProjectClaudeMdSource(默认 §4.5)
@@ -2228,36 +2255,78 @@ public class ProjectClaudeMdSourceAutoConfiguration {
         };
     }
 }
-// 替代:Identity / ProjectTree / Conversation 3 个 MemorySourceProvider 同模式,name 分别
-//   "identity" / "project-tree" / "conversation",create() 返回对应 MemorySource 实现
+// 替代:Identity / ProjectTree / Conversation 3 个 MemorySourceProvider 同模式,Bean 名分别
+//   "memorySourceProvider_identity" / "memorySourceProvider_project-tree" / "memorySourceProvider_conversation",
+//   name() 同样 "identity" / "project-tree" / "conversation",create() 返回对应 MemorySource 实现
 //   §4.5 列出 4 源完整细节;§5.3.1.1 MemorySourceRouter §5.3 末段说明 priority 排序由 SlotResolver 完成
 ```
 
-#### 9 Slot × 默认 Provider ↔ create() 返回类型 ↔ Story ↔ stub 状态 总表
+#### 9 Slot × 默认 Provider ↔ `name()` ↔ Bean 名 ↔ `create()` 返回类型 ↔ Story ↔ stub 状态 总表
 
-| Slot | 默认 Provider 类 | `name()` | `create()` 返回类型 | Story | stub 位置 |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `DefaultPromptBuilderProvider` | "default" | `DefaultPromptBuilder` | #002 | §5.5 本节(模板) |
-| 2 | `TruncatingCompactorProvider` | "truncating" | `TruncatingCompactor` | #015 | §5.5 本节 |
-| 3 | `AnthropicLlmProviderFactory` | "anthropic" | `AnthropicLlmProvider` | #003 | §5.5 本节(Spring AI ChatModel) |
-| 4 | `StrictPermissionPolicyProvider` | "strict" | `StrictPermissionPolicy` | #001 | §5.5 本节 |
-| 5 | `DefaultToolExecutorProvider` | "default" | `DefaultToolExecutor` | #001 | §5.5 本节 |
-| 6 | `FileSessionStoreProvider` | "file" | `FileSessionStore` | #014 | §5.5 本节 |
-| 7 | `ProjectClaudeMdSourceProvider` | "project-claude-md" | `ProjectClaudeMdSource` | #002 | §5.5 本节 |
-| 8 | `LinearTurnEngineProvider` | "linear" | `LinearTurnEngine` | #001 | §6.1 L2530(已有完整 stub) |
-| 9 | `HttpJsonRpcA2aTransportProvider` | "http-jsonrpc" | `HttpJsonRpcA2aTransport` | #009 | §5.6.x L2058(已有完整 stub) |
+| Slot | 默认 Provider 类 | `name()` | Bean 名(🆕 v1.5.28) | `create()` 返回类型 | Story | stub 位置 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `DefaultPromptBuilderProvider` | "default" | `promptBuilderProvider_default` | `DefaultPromptBuilder` | #002 | §5.5 本节(模板) |
+| 2 | `TruncatingCompactorProvider` | "truncating" | `compactorProvider_truncating` | `TruncatingCompactor` | #015 | §5.5 本节 |
+| 3 | `AnthropicLlmProviderFactory` | "anthropic" | `llmProviderProvider_anthropic` | `AnthropicLlmProvider` | #003 | §5.5 本节(Spring AI ChatModel) |
+| 4 | `StrictPermissionPolicyProvider` | "strict" | `permissionPolicyProvider_strict` | `StrictPermissionPolicy` | #001 | §5.5 本节 |
+| 5 | `DefaultToolExecutorProvider` | "default" | `toolExecutorProvider_default` | `DefaultToolExecutor` | #001 | §5.5 本节 |
+| 6 | `FileSessionStoreProvider` | "file" | `sessionStoreProvider_file` | `FileSessionStore` | #014 | §5.5 本节 |
+| 7 | `ProjectClaudeMdSourceProvider` | "project-claude-md" | `memorySourceProvider_project-claude-md` | `ProjectClaudeMdSource` | #002 | §5.5 本节 |
+| 8 | `LinearTurnEngineProvider` | "linear" | `flowEngineProvider_linear`(🆕 v1.5.28) | `LinearTurnEngine` | #001 | §6.1 L2530(已有完整 stub) |
+| 9 | `HttpJsonRpcA2aTransportProvider` | "http-jsonrpc" | `a2aTransportProvider_http-jsonrpc`(🆕 v1.5.28) | `HttpJsonRpcA2aTransport` | #009 | §5.6.x L2058(已有完整 stub) |
 
-**与 §5.6.4 SPI 总表的 cross-ref**:§5.6.4 表 9 行「✅ 已有」状态全部有 concrete stub 出处 —— Story 实施者打开 IDE 找「`XxxProvider` 怎么写」时,直接看本节对应 AutoConfiguration 即可。
+**与 §5.6.4 SPI 总表的 cross-ref**:§5.6.4 表 9 行「✅ 已有」状态全部有 concrete stub 出处 —— Story 实施者打开 IDE 找「`XxxProvider` 怎么写」时,直接看本节对应 AutoConfiguration 即可。**Bean 名列(🆕 v1.5.28)** 用于 Story 实施者写 `@Bean(name = "...")` 时直接抄 —— 命名约定:`<slot>Provider_<name>`(全小写,hyphen 分隔;§6.1 LinearTurnEngineProvider / §5.6.x HttpJsonRpcA2aTransportProvider 这两个已在 v1.5.27 之前存在,🆕 v1.5.28 起建议同步改名到新约定以避免方法名兜底)。
 
 #### 替代实现追加约定
 
-10 个替代 Provider(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)由各自 Story 实施期补,模式与上面默认实现**完全一致**:
+10 个替代 Provider(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)由各自 Story 实施期补,模式与上面默认实现**完全一致**(🆕 v1.5.28 起适用多 Provider 模式):
 
-- `name()` 返回该实现的标识(如 "openai" / "redis" / "identity")
-- `priority()` 一般 ≥ 10(同名时胜过默认 `priority=0`)
+- `@Bean(name = "<slot>Provider_<name>")` 显式指定唯一 Bean 名(避免同名 BeanDefinitionOverrideException;命名约定:`<slot>Provider_<name>`,全小写,hyphen 分隔,如 `llmProviderProvider_openai` / `sessionStoreProvider_redis`)
+- `name()` 返回该实现的标识(如 "openai" / "redis" / "identity"),**必须与全 ApplicationContext 内同类型其他 Provider 的 `name()` 不冲突** —— §5.2 SlotRouter 同名竞争会让 Router 启动期按 `priority()` 收敛一个 + 其余进 conflict 日志,行为不可预测
+- `priority()` 一般 ≥ 10(多 Provider 模式下应该不出现同名,但 `priority` 仍作为 §5.2 同名竞争时的兜底)
 - `create(AgentConfig c)` 返回对应具体实现类(可能依赖外部 SDK 如 Spring AI ChatModel / Lettuce Redis client / JDBC DataSource —— 由 `@Bean` 注入或 `@Autowired` 字段)
 
-**禁止**替代实现改 `name()` 与默认 Provider 冲突(如同时返回 "default")—— Spring 容器会按 `priority()` 选大,但日志和 `application.yml` 易混淆,**命名空间要严格隔离**。
+**禁止**替代实现改 `name()` 与默认 Provider 冲突(如同时返回 "default")—— 多 Provider 模式下所有 Provider 都注册,同名会让 §5.2 SlotRouter 按 priority 收敛 + conflict 日志;`application.yml` 写 `agent.<slot>.name: <name>` 时也会歧义,**命名空间要严格隔离**。
+
+**示例**(`OpenAiLlmProviderProvider`,Slot 3 替代实现,Story #003 实施期补):
+
+```java
+@AutoConfiguration
+public class OpenAiLlmProviderAutoConfiguration {
+    @Bean(name = "llmProviderProvider_openai")           // 多 Provider 模式:plain @Bean + 唯一 Bean 名
+    public LlmProviderProvider openAiLlmProviderProvider() {
+        return new LlmProviderProvider() {
+            public String name()     { return "openai"; }  // 与默认 "anthropic" 不同,§5.2 命名空间隔离
+            public int    priority() { return 10; }
+            public LlmProvider create(AgentConfig c) {
+                // 实施期补:Story #003 创建 OpenAiLlmProvider
+                //   §4.10.1 硬规则 3「Provider 必须显式映射表」:
+                //   providerMap.get("openai") -> Spring AI ChatModel(由 spring.ai.openai 配置)
+                //   c.getLlm().getModel() -> OpenAiLlmProvider(chatModel, modelName)
+                throw new UnsupportedOperationException("TODO: Story #003 — OpenAiLlmProvider");
+            }
+        };
+    }
+}
+```
+
+**用户切换**(无需 exclude / rebuild classpath):
+
+```yaml
+agent:
+  llm:
+    model: openai            # Router.resolve("openai", cfg) -> OpenAiLlmProviderProvider -> OpenAiLlmProvider
+```
+
+启动日志(§5.2 SlotRouter 多 Provider 模式,Slot 3 实际有 4 Provider 时):
+
+```text
+[LlmProvider] resolved 4 provider(s):
+  ✓ anthropic -> AnthropicLlmProviderFactory$1 [priority=10]
+  ✓ openai    -> OpenAiLlmProviderFactory$1 [priority=10]
+  ✓ gemini    -> GeminiLlmProviderFactory$1 [priority=10]
+  ✓ deepseek  -> DeepSeekLlmProviderFactory$1 [priority=10]
+```
 
 ---
 
@@ -2341,10 +2410,10 @@ public interface A2aTransportProvider extends SlotProvider<A2aTransport> {}
 // 默认实现:
 @AutoConfiguration
 public class HttpJsonRpcA2aTransportAutoConfiguration {
-    @Bean @ConditionalOnMissingBean(A2aTransportProvider.class)
+    @Bean(name = "a2aTransportProvider_http-jsonrpc")     // 🆕 v1.5.28 多 Provider 模式:plain @Bean + 唯一 Bean 名
     public A2aTransportProvider defaultA2aTransportProvider() {
         return new A2aTransportProvider() {
-            public String name() { return "http-jsonrpc"; }
+            public String name() { return "http-jsonrpc"; }  // 必须唯一(§5.2 同名竞争)
             public int    priority() { return 10; }
             public A2aTransport create(AgentConfig c) {
                 return new HttpJsonRpcA2aTransport(
@@ -4925,6 +4994,7 @@ agent:
 | 1.5.6 | 2026-09-06 | **需求工程层补全(SpecKit + Claude Code 输入源就绪)**:**§0.3 Personas** 新增 3 类典型用户故事(Alice 插件开发者 / Bob 业务配置方 / Charlie 核心仓贡献者)+ KPI 验证路径;**§0.4 v1.0 Acceptance Criteria** 新增 10 条黑盒可断言标准(AC-01 零配置启动 / AC-02 SPI 全 Slot 可替换 / AC-03 Tool 并发加速 / AC-04 取消传播 / AC-05 多租户隔离 / AC-06 YAML 热更无中断 / AC-07 ReAct 上限 / AC-08 插件版本治理 / AC-09 业务配置三件套 / AC-10 A2A AgentCard 自动生成);**§10.1 父 POM** 补 12 项依赖版本表(Spring Boot 3.2.x / Lombok 1.18.30 / OTel 1.32.x / JUnit 5.10.x / AssertJ 3.24.x / Mockito 5.x / Awaitility 4.2.x 等)+ 测试模块依赖完整清单 + 版本升级政策;**§14.15 NFR 总账** 新增 8 个子节(性能预算 9 项 / 安全威胁模型 8 项 / SLO 8 项 / 可观测性四件套 / 兼容性矩阵 11 项 / 支持矩阵 6 项 LTS 政策 / 测试策略 7 层金字塔 / 文档完整度自检 14 项 GA 卡点);**§15 Error Catalog** 新增 8 域 24 条 ErrorCode 全表(Config / Slot / LLM / Tool / Sandbox / ReAct / Audit / 其他)+ `LINGS-<域><编号>` 编码约定;**§16 Glossary** 新增 22 个术语集中释义表(Slot / Provider / SlotRouter / FlowEngine / LinearTurnEngine / ReAct Loop / DelegateTool / SubAgentType / A2aTransport / AgentCard / SkillSource / Skill / Session / Turn / TurnContext / Identity / Instructions / CLAUDE.md / CircuitBreaker / TenantContext / CancellationToken / Zero-config / @Value);**§17 Risk Register** 新增 12 条风险登记(R-01—R-12,带概率×影响=分值排序 + Owner + 触发条件)+ review 节奏(月度 + RC + GA);**§13** 加 v1.5.6 条目;**§0** 标题块状态描述补"进入 SpecKit + Claude Code 实施准备期" |
 | 1.5.7 | 2026-09-08 | **Spring AI 边界硬规则 + 新依赖引入(本次单人 RFC 决议)**:**§4.10.1 新增** `Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则)` 章节,3 条硬规则:(1) ReAct Loop 必须自实现,不得用 Spring AI `ChatClient.prompt().call()` 自动执行;(2) Spring AI 只用两件事 — LLM 协议转换 + `@Tool` Schema 生成,自动 tool 执行禁用(否则 tool 被调两次 + 绕过沙箱);(3) 多 Provider 并存时 `provider name → ChatModel` 必须显式映射表,不得靠 Spring 容器扫 Bean 类型;**§10.1 新增依赖** `org.springframework.ai:spring-ai-bom` 1.0.0-M6(BOM 引入,只引 LlmProvider 协议转换 + Tool Schema 实际用到的子模块,见 R-13 bundle 体积控制);**§17 新增 R-13 / R-14** — R-13 Spring AI bundle 体积膨胀 + transitive 污染(banned-dependencies enforcer 控);R-14 Spring AI 1.x 自身 JDK 17+ 要求 vs LingShu compile target=8 的兼容约束(JDK 8/11/17/21 matrix CI 验证);**§15** 引用 LINGS-L01(未知 Provider)对应硬规则 3;**§13** 加 v1.5.7 条目;**§0** 标题块版本号 + 状态描述同步 |
 | 1.5.8 | 2026-09-08 | **R-14 风险去重 + R-13 风险细化**:**§17** R-14 **删除**(Spring AI 1.x JDK 17+ 要求与 Spring Boot 3.x 完全同类,R-06 已覆盖;R-06 文字补"含 Spring AI 1.x"明确同步);**§17** R-13 重写为**具体场景**(Story #003/#009 实施者误用 `spring-ai-spring-boot-starter` 全家桶 → 拉入 openai-java-client + anthropic-java + jtokkit + Jackson/Netty 版本冲突 → binary 膨胀 40MB+,mitigation 加 `banned-dependencies` enforcer build 阶段 fail + Story 实施者必须 `mvn dependency:tree` 自查后提交);**§10.1** 依赖行 `R-13 / R-14 跟踪` → `R-13 跟踪`(同步去 R-14 引用);**§13** 加 v1.5.8 条目;**§0** 标题块版本号 + 状态描述同步 |
+| 1.5.28 | 2026-09-16 | **§5.5 改「多 Provider 模式」样板 + §5.4 同步改「唯一 Bean 名约定」 + §5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步**:**问题** v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制"部署期二选一",同一 Slot 全 ApplicationContext 最多 1 个 `XxxProvider` Bean 注册到 Spring 容器 —— 用户切换 Provider 必须改 classpath / exclude / 改 Bean 名;但 §5.3.1.0 `SlotRouter<P, T>` 父类**一直是多 Provider 友好** —— 构造器收 `List<P> providers`,启动期按 `name()` 收 `Map<String, P>`,`resolve(name, cfg)` 按 name 选 → List<P> **被设计为 size=N**,而 v1.5.27 `@ConditionalOnMissingBean` 把它阉割到 size=1,**多 Provider 能力框架自身不用**;**根因** v1.5.24 §5.5 引入 6 默认 Provider stub 时直接复用 v1.5.0 `DefaultPromptBuilderProvider` 模板的 `@ConditionalOnMissingBean`,当时设计意图是"防止用户覆盖默认",但代价是阉割 §5.3.1.0 Router 的多 Provider 能力;v1.5.25 §5.4 双 `@ConditionalOnMissingBean` 模式进一步固化单 Provider 假设(plugin 之间也互斥);到 v1.5.27 §4.6 ToolExecutor + §5.5 默认 6 Provider stub + §5.3.1.0 7 Router 体系成熟,**单 Provider 假设与 Router 多 Provider 设计目标的张力被放大** —— 用户需要"同 Slot 多 Provider 共存 + 按 name 路由"的能力;**补丁** (1) **§5.5 改「多 Provider 模式」样板**:头部设计原则 blockquote 改写,说明 v1.5.28 起默认 Provider 用 plain `@Bean(name = "<slot>Provider_<name>")` 而**不再用 `@ConditionalOnMissingBean`**;**所有 6 个默认 Provider stub 改写** —— Slot 1 `DefaultPromptBuilderProvider` / Slot 2 `TruncatingCompactorProvider` / Slot 3 `AnthropicLlmProviderFactory` / Slot 4 `StrictPermissionPolicyProvider` / Slot 5 `DefaultToolExecutorProvider` / Slot 6 `FileSessionStoreProvider` / Slot 7 `ProjectClaudeMdSourceProvider` 全部 `@Bean(name = "...")` 显式 Bean 名,每段注释补「`name()` 必须唯一(§5.2 同名竞争)」说明;(2) **§5.5 头部新增「用户切换示例」blockquote** —— `application.yml` 写 `agent.<slot>.name: <provider-name>` 切换 Provider + 启动日志样例 `resolved N provider(s)` 列出全部 N;(3) **§5.5 9-Slot 总表加「Bean 名」列** —— 9 行「Bean 名(🆕 v1.5.28)」字段,如 `promptBuilderProvider_default` / `llmProviderProvider_anthropic` / `flowEngineProvider_linear` / `a2aTransportProvider_http-jsonrpc`,Story 实施者写 `@Bean(name = "...")` 直接抄;Slot 8 / Slot 9 标 🆕 v1.5.28 建议同步改名(§6.1 LinearTurnEngineProvider / §5.6.x HttpJsonRpcA2aTransportProvider);(4) **§5.5「替代实现追加约定」段改写** —— 加 `OpenAiLlmProviderProvider` 完整样板(Bean 名 `llmProviderProvider_openai` + name "openai")+ 用户配置示例 + 启动日志样例(4 个 LlmProvider 共存);(5) **§5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步改多 Provider 模式** —— `@Bean(name = "a2aTransportProvider_http-jsonrpc")`;(6) **§5.4 plugin AutoConfiguration 编写约定改写** —— 双 `@ConditionalOnMissingBean` 模式 → 唯一 Bean 名约定:🆕 v1.5.28 起 plugin `@Bean` 必须显式 `name = "<slot>Provider_<pluginName>"`,禁止复用默认 Bean 名;🗑️ v1.5.25 双 `@ConditionalOnMissingBean` 模式加载顺序矩阵已废弃(基于「全 ApplicationContext 最多 1 个 `XxxProvider` Bean」单 Provider 假设,多 Provider 模式下该假设不再成立),但 `BeanDefinitionOverrideException` 应急路径不变(检查 Bean 名是否唯一,不要去开 `spring.main.allow-bean-definition-overriding=true`);**效果** Story #001 / #002 / #003 / #014 / #015 实施者写 `@Bean` 时,统一规范为 `@Bean(name = "<slot>Provider_<name>")`,无需 `@ConditionalOnMissingBean`;同 Slot 多 Provider 共存(默认 + 替代)由 §5.2 SlotRouter 按 name 路由,`agent.<slot>.name` 改 yaml 即可切换 Provider,无需 exclude / rebuild classpath;§5.3.1.0 Router 多 Provider 能力终于被框架自身利用,**List<P> size=N 实际生效**;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.27 → v1.5.28`;CLAUDE.md 版本号同步 `1.3.20 → 1.3.21`;**纯文档改动**,代码逻辑零改动;5639 → 5708 行(+69);**修复者**:Claude Code(根据用户 2026-09-16 会话反馈,用户问「§5.5 改成「多 Provider 模式」样板」,确认 v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制单 Provider 模式,与 §5.3.1.0 Router 多 Provider 设计目标冲突;要求 §5.5 改多 Provider 模式) |
 | 1.5.27 | 2026-09-15 | **§4.6 ToolExecutor 接口定义补全(Slot 5 接口契约显式化)**:**问题** §4.6 标题写「Tool 与 ToolExecutor」但实际只定义了 `Tool` / `Skill` / `ToolExecutionContext` / `ToolSink` / `NetworkClient` / `ApprovalGate` / `CancellationToken` / `ToolCallConfig` 8 个接口 —— **缺 `ToolExecutor` 本体**;§4.6 注释虽提到「`ToolExecutor` 不关心 Scheme 来源,也不关心 execute 转发到本地 / MCP server / 反射调用,所有 Tool 一视同仁 —— 详见 §6.5」,§4.10.1 硬规则 2 反复强调「执行必须走 `ToolExecutor.dispatch()`」,§5.5 L2121 stub 也按 `ToolExecutorProvider.create()` 返回 `ToolExecutor` 来命名 —— 但 §4.6 全文没有任何 `ToolExecutor` 接口签名,Story 实施者打开 IDE 时只能从 §4.10.1 / §5.5 / §6.5 散落引用反推,缺 single-source-of-truth;**根因** §4.6 最初只列 Tool 自身契约 + 上下文接口,ToolExecutor 是后来(§4.10.1 / §5.5 / §6.5)逐步引入的"派发边界",但 §4.6 没回头补接口本体;**补丁** 在 §4.6 `Skill extends Tool` 之后 / `ToolExecutionContext` 之前插入 `ToolExecutor` 接口完整定义 —— 单方法 `dispatch(ToolCall call, ToolExecutionContext ctx) → ToolResult`;Javadoc 完整覆盖:(1) **调用契约** `executor.dispatch(call, ctx)` + ReAct Action 阶段每个 `LlmResponse.getToolCalls()` 元素**必须**走此方法(不得直调 `tool.execute()`);(2) **§4.10.1 硬规则 2** 强制要求 —— ToolExecutor 内部统一串入 5 步流水线 `PermissionPolicy.check() §4.7 → ToolRegistry.lookup(name) → TimeoutWrap → SandboxApply(fs / http / process) §4.7 → tool.execute() → Checkpoint`,任何一步绕过 = 沙箱 / 权限 / 取消 / 超时全失效,Spring AI `ChatClient.tools().call()` 自动执行**禁止**使用(否则绕过 ToolExecutor + tool 调两次);(3) **ToolExecutor 与 Tool 接口解耦** —— ToolExecutor 不 import Tool 内部细节,只看 `ToolCall(name + args JSON)` + `ToolExecutionContext`,Tool 实现可手写(§6.5 (1))/ MCP server 暴露(§6.5 (2))/ Spring AI `@Tool` 注解生成仅 schema(§6.5 (3))—— ToolExecutor 一视同仁;(4) **Provider 可插拔** —— 默认 `DefaultToolExecutorProvider`(stub §5.5 L2121)同步串行 dispatch;替代实现 `ParallelToolExecutorProvider`(并发)/ `ObservabilityToolExecutorProvider`(metric / trace),`name()` 走该实现标识("default" / "parallel" / "observability"),`priority()` ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**;(5) **`@throws` 完整标注** —— `PermissionDeniedException`(§4.7)/ `ToolNotFoundException` / `TimeoutException`(`callConfig.timeoutSeconds`)/ `CancellationException`(Ctrl+C / FlowEngine markDone / 超时联动)4 类异常;**效果** Story 实施者打开 §4.6 即可看到完整 Slot 5 接口契约,无需散落反推;§4.10.1 硬规则 2 引用 `ToolExecutor.dispatch()` 现在有 single-source-of-truth 锚点;**纯文档补全,代码逻辑零改动**;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.26 → v1.5.27`;CLAUDE.md 版本号同步 `1.3.19 → 1.3.20`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问「§4.6 Tool 与 ToolExecutor 这一节补充一下 ToolExecutor 的定义」,确认 §4.6 缺 `ToolExecutor` 接口本体,要求补) |
 | 1.5.26 | 2026-09-15 | **§5.3.1.0 补齐 `FlowEngineRouter` 第 7 个隐式 Router concrete stub + §5.3.1 标题计数 8 → 9 Router + §5.6.4 SPI 总表新增「Router stub 位置」列**:**问题** §5.3.1 标题写「8 个 Router — 6 隐式 + 2 显式」,但实际 `AgentFactory` L3676 直接 `@Autowired` 了 `FlowEngineRouter`,而 §5.3.1.0 只给了 6 个隐式 Router stub(PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore)**漏了** Slot 8 FlowEngineRouter —— 用户/实施者找「`FlowEngineRouter` 类源码」会以为它不存在,只能在 `AgentFactory` 字段引用里看到字段名但没有类定义;**根因** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,只补了 SlotResolver 内部 2 Router(MemorySource + A2aTransport);AgentFactory 的 `FlowEngineRouter` 是 v1.5.18 **之前**就已存在的字段(L3676),但当时没单独成 Router stub 写到 §5.3.1.0 —— **Slot 8 FlowEngine 完全漏在 §5.3.1 体系外**,实际 §5.3 SlotResolver 8 字段 + AgentFactory 1 字段 = **9 Router**;v1.5.23 §5.3.1.0 新增 6 隐式 Router stub 时也没补 `FlowEngineRouter`,到 v1.5.25 §5.4 plugin AutoConfiguration 编写约定才暴露出「`FlowEngineRouter` 没有 concrete 类定义」;**补丁** (1) §5.3.1 标题改「9 Router — 7 隐式 + 2 显式」;(2) §5.3.1.0 标题改「7 个隐式 Router concrete 类(SlotResolver 6 + AgentFactory 1)」,imports 块加 `FlowEngineProvider` + `FlowEngine`;(3) §5.3.1.0 末尾(`CompactorRouter` 之后)追加 `FlowEngineRouter` 第 7 个 stub —— `extends SlotRouter<FlowEngineProvider, FlowEngine>`,super 传 `"FlowEngine"` + Logger,Javadoc 说明**不在 SlotResolver 字段里,由 AgentFactory 直接 `@Autowired`** + 默认 `LinearTurnEngineProvider`(§6.1 L2530)+ 替代 `GoogleAdkFlowEngineProvider`(§4.11.2)/ `AlibabaGraphFlowEngineProvider`(§4.11.3);(4) §5.3.1.0 总表加 1 行(Slot 8 FlowEngineRouter,注入位置 `AgentFactory.flowRouter`,**不在 SlotResolver**),并补「注入位置」新列,Slot 编号对齐 §5.6.4 SPI 总表(1—9);(5) §5.3.1.0 边界与约束 / 与 `MemorySourceRouter` 关键差异 / 实施期顺序建议 全部 6 → 7(Story #001 加 `FlowEngineRouter`);(6) §5.6.4 SPI 总表加「Router stub 位置」列 9 行 —— 7 行指 §5.3.1.0 + 1 行指 §5.3.1.1 + 1 行指 §5.3.1.2;Slot 8 行强调 `FlowEngineRouter` 注入 `AgentFactory` 而**不在 SlotResolver**;**效果** Story #001 实施者打开 IDE 时,AgentFactory 启动校验所需 3 Router(`PermissionPolicyRouter` + `ToolExecutorRouter` + `FlowEngineRouter`)全部有完整 stub,§5.3.1.0 + §5.6.4 双向 cross-ref 一眼定位;§5.3.1 计数从 8 → 9,与实际代码一致;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.25 → v1.5.26`;CLAUDE.md 版本号同步 `1.3.18 → 1.3.19`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问「FlowEngineRouter 的实现示例缺失了,是不是要在 §5.3.1.0 这一节或者其他地方补一下」,确认 §5.3.1.0 只 6 隐式 Router 缺 `FlowEngineRouter` 第 7 个,AgentFactory L3676 有 `@Autowired FlowEngineRouter` 但 §5.3.1 体系外没给类定义,要求补 §5.3.1.0) |
 | 1.5.25 | 2026-09-15 | **§5.4 末新增「plugin AutoConfiguration 编写约定(双 `@ConditionalOnMissingBean` 模式,避免双胜出)」子段**:**问题** §5.4 原版只列 `META-INF/spring/...imports` 文件内容,没规定 plugin 自己的 `XxxProvider` Bean 怎么写;§5.5 默认 AutoConfiguration 一侧已标 `@ConditionalOnMissingBean` 防用户覆盖默认,但**plugin 一侧未约束** —— 如果 plugin A `RagAutoConfiguration` 没标 `@ConditionalOnMissingBean`,plugin B `McpPromptAutoConfiguration` 也没标,加载顺序不确定时 **BeanDefinitionOverrideException**(Spring Boot 2.1+ `spring.main.allow-bean-definition-overriding=false` 默认启动失败);**根因** Spring `@ConditionalOnMissingBean(X.class)` 检查的是**整个 `BeanFactory`** 而非"当前 `@Configuration` 类内其他 `@Bean` 方法",**跨 AutoConfiguration 类的 Bean 可见性**取决于 `@AutoConfigureOrder` / `@AutoConfigureBefore` / `@AutoConfigureAfter`,**不保证** plugin 一定在默认 AutoConfiguration 之前/之后加载;**补丁** (1) §5.4 末新增子段,标题明确「双 `@ConditionalOnMissingBean` 模式」;(2) 机制说明 + plugin 样例代码 `RagAutoConfiguration` 标 `@ConditionalOnMissingBean(PromptBuilderProvider.class)`(与 §5.5 默认对称);(3) **双 `@ConditionalOnMissingBean` 模式加载顺序矩阵** 4 行 4 列(plugin A 先 / plugin B 先 / 默认 / 漏标 四种情形)—— 一眼看清"漏标 = 启动失败";(4) 明确禁止 plugin 漏标 + 启动期 `BeanDefinitionOverrideException` 应急路径("第一时间检查 plugin 的 `@Bean` 方法是否漏标",不要去开 `spring.main.allow-bean-definition-overriding=true`);(5) 区分"plugin 注册 `XxxProvider` Bean(需双标)" vs "plugin 注册 `Tool` / `MemorySource` / `SkillSource` 等非 Slot 类型 Bean(按需创建,无需 `@ConditionalOnMissingBean`)" + 给出 `LocalToolsAutoConfiguration` 多 Tool 样例;(6) 传递依赖规则 + cross-ref §5.5 / §5.3 / §5.2;**效果** plugin 实施者打开 IDE 写 `XxxProvider` Bean 时,知道必须标 `@ConditionalOnMissingBean`(与默认对称),漏标会导致启动失败;Story #009 / #016 实施期及未来 plugin 贡献者直接按 §5.4 子段样板写 plugin 即可;**纯文档补全,代码逻辑零改动**;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.24 → v1.5.25`;CLAUDE.md 版本号同步 `1.3.17 → 1.3.18`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问"SpringBoot加载Bean的时候是先加载的SPI的再加载代码中写的Default的`@AutoConfiguration`,所以`@ConditionalOnMissingBean(PromptBuilderProvider.class)`就不会满足是吗",确认 §5.4 / §5.5 现有约定未约束 plugin 一侧的 `@ConditionalOnMissingBean`,可能导致 plugin 之间双胜出,要求"补到 §5.4") |
