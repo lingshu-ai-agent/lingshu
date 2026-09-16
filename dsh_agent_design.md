@@ -1,7 +1,7 @@
-# DSH Agent Engine — 设计文档 v1.5.28
+# DSH Agent Engine — 设计文档 v1.5.29
 
 > **代号**:DSH Agent(类 Apache DSH / Dubbo 的 SPI 风格 Java Agent 引擎)
-> **版本**:v1.5.28(§5.5 改「多 Provider 模式」样板 + §5.4 同步改「唯一 Bean 名约定」+ §5.6 Slot 9 HttpJsonRpcA2aTransportProvider stub 同步 — **问题** v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制"部署期二选一",同一 Slot 最多 1 个 `XxxProvider` Bean 注册到 Spring 容器 → 用户切换 Provider 必须改 classpath / exclude / 改 Bean 名;但 §5.3.1.0 `SlotRouter<P, T>` 父类**一直是多 Provider 友好** —— 构造器收 `List<P> providers`,启动期按 `name()` 收 `Map<String, P>`,`resolve(name, cfg)` 按 name 选 → List<P> **被设计为 size=N**,而 v1.5.27 `@ConditionalOnMissingBean` 把它阉割到 size=1,**多 Provider 能力框架自身不用**;**根因** v1.5.24 §5.5 引入 6 默认 Provider stub 时直接复用 v1.5.0 `DefaultPromptBuilderProvider` 模板的 `@ConditionalOnMissingBean`,当时设计意图是"防止用户覆盖默认",但代价是阉割 §5.3.1.0 Router 的多 Provider 能力;v1.5.25 §5.4 双 `@ConditionalOnMissingBean` 模式进一步固化单 Provider 假设(plugin 之间也互斥);到 v1.5.27 §4.6 ToolExecutor + §5.5 默认 6 Provider stub + §5.3.1.0 7 Router 体系成熟,**单 Provider 假设与 Router 多 Provider 设计目标的张力被放大**;用户需要"同 Slot 多 Provider 共存 + 按 name 路由"的能力;**补丁** (1) **§5.5 改「多 Provider 模式」样板**:头部设计原则 blockquote 改写,说明 v1.5.28 起默认 Provider 用 plain `@Bean(name = "<slot>Provider_<name>")` 而**不再用 `@ConditionalOnMissingBean`**;**所有 6 个默认 Provider stub 改写** —— Slot 1 `DefaultPromptBuilderProvider` / Slot 2 `TruncatingCompactorProvider` / Slot 3 `AnthropicLlmProviderFactory` / Slot 4 `StrictPermissionPolicyProvider` / Slot 5 `DefaultToolExecutorProvider` / Slot 6 `FileSessionStoreProvider` / Slot 7 `ProjectClaudeMdSourceProvider` 全部 `@Bean(name = "...")` 显式 Bean 名;每段注释补「`name()` 必须唯一(§5.2 同名竞争)」说明;(2) **§5.5 头部新增「用户切换示例」blockquote** —— `application.yml` 写 `agent.<slot>.name: <provider-name>` 切换 Provider + 启动日志样例 `resolved N provider(s)` 列出全部 N;(3) **§5.5 9-Slot 总表加「Bean 名」列** —— 9 行「Bean 名(🆕 v1.5.28)」字段,如 `promptBuilderProvider_default` / `llmProviderProvider_anthropic` / `flowEngineProvider_linear` / `a2aTransportProvider_http-jsonrpc`,Story 实施者写 `@Bean(name = "...")` 直接抄;Slot 8 / Slot 9 标 🆕 v1.5.28 建议同步改名(§6.1 LinearTurnEngineProvider / §5.6.x HttpJsonRpcA2aTransportProvider);(4) **§5.5「替代实现追加约定」段改写** —— 加 `OpenAiLlmProviderProvider` 完整样板(Bean 名 `llmProviderProvider_openai` + name "openai")+ 用户配置示例 + 启动日志样例(4 个 LlmProvider 共存);(5) **§5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步改多 Provider 模式** —— `@Bean(name = "a2aTransportProvider_http-jsonrpc")`;(6) **§5.4 plugin AutoConfiguration 编写约定改写** —— 双 `@ConditionalOnMissingBean` 模式 → 唯一 Bean 名约定:🆕 v1.5.28 起 plugin `@Bean` 必须显式 `name = "<slot>Provider_<pluginName>"`,禁止复用默认 Bean 名;🗑️ v1.5.25 双 `@ConditionalOnMissingBean` 模式加载顺序矩阵已废弃(基于「全 ApplicationContext 最多 1 个 `XxxProvider` Bean」单 Provider 假设,多 Provider 模式下该假设不再成立),但 BeanDefinitionOverrideException 应急路径不变;**效果** Story #001 / #002 / #003 / #014 / #015 实施者写 `@Bean` 时,统一规范为 `@Bean(name = "<slot>Provider_<name>")`,无需 `@ConditionalOnMissingBean`;同 Slot 多 Provider 共存(默认 + 替代)由 §5.2 SlotRouter 按 name 路由,`agent.<slot>.name` 改 yaml 即可切换 Provider,无需 exclude / rebuild classpath;§5.3.1.0 Router 多 Provider 能力终于被框架自身利用,**List<P> size=N 实际生效**;**纯文档改动**,代码逻辑零改动;5639→5708 行(+69);2026-09-16);v1.5.27(§4.6 ToolExecutor 接口定义补全 — 标题「Tool 与 ToolExecutor」但 §4.6 缺 `ToolExecutor` 本体,Story 实施者只能从 §4.10.1 / §5.5 / §6.5 散落引用反推;**补丁** 在 §4.6 `Skill extends Tool` 之后 / `ToolExecutionContext` 之前插入 `ToolExecutor` 接口完整定义 —— 单方法 `dispatch(ToolCall call, ToolExecutionContext ctx) → ToolResult`;Javadoc 覆盖 (1) 调用契约 `executor.dispatch(call, ctx)` + ReAct Action 阶段每个 `LlmResponse.getToolCalls()` 元素**必须**走此方法(不得直调 `tool.execute()`);(2) §4.10.1 硬规则 2 强制要求 —— ToolExecutor 内部统一串入 5 步流水线 `PermissionPolicy.check() §4.7 → ToolRegistry.lookup(name) → TimeoutWrap → SandboxApply(fs / http / process) §4.7 → tool.execute() → Checkpoint`,任何一步绕过 = 沙箱 / 权限 / 取消 / 超时全失效,Spring AI `ChatClient.tools().call()` 自动执行**禁止**使用;(3) ToolExecutor 与 Tool 接口解耦 —— ToolExecutor 不 import Tool 内部细节,只看 `ToolCall(name + args JSON)` + `ToolExecutionContext`,Tool 实现可手写(§6.5 (1))/ MCP server 暴露(§6.5 (2))/ Spring AI `@Tool` 注解生成仅 schema(§6.5 (3))—— ToolExecutor 一视同仁;(4) Provider 可插拔 —— 默认 `DefaultToolExecutorProvider`(stub §5.5 L2121)同步串行 dispatch;替代实现 `ParallelToolExecutorProvider`(并发)/ `ObservabilityToolExecutorProvider`(metric / trace),`name()` 走该实现标识("default" / "parallel" / "observability"),`priority()` ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**;(5) `@throws` 完整标注 —— `PermissionDeniedException`(§4.7)/ `ToolNotFoundException` / `TimeoutException`(`callConfig.timeoutSeconds`)/ `CancellationException`(Ctrl+C / FlowEngine markDone / 超时联动)4 类异常;**效果** Story 实施者打开 §4.6 即可看到完整 Slot 5 接口契约,无需散落反推;§4.10.1 硬规则 2 引用 `ToolExecutor.dispatch()` 现在有 single-source-of-truth 锚点;5590 → 5639 行(+49);**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.26(§5.3.1.0 补齐 `FlowEngineRouter` 第 7 个隐式 Router concrete stub + §5.3.1 标题计数 8 → 9 Router + §5.6.4 SPI 总表新增「Router stub 位置」列 — **问题** §5.3.1 标题写「8 个 Router — 6 隐式 + 2 显式」,但实际 `AgentFactory` L3676 直接 `@Autowired` 了 `FlowEngineRouter`,而 §5.3.1.0 只给了 6 个隐式 Router stub(PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore)**漏了** Slot 8 FlowEngineRouter —— 用户/实施者找「`FlowEngineRouter` 类源码」会以为它不存在,只能在 `AgentFactory` 字段引用里看到字段名但没有类定义;**根因** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,只补了 SlotResolver 内部 2 Router(MemorySource + A2aTransport);AgentFactory 的 `FlowEngineRouter` 是 v1.5.18 **之前**就已存在的字段(L3676),但当时没单独成 Router stub 写到 §5.3.1.0 —— **Slot 8 FlowEngine 完全漏在 §5.3.1 体系外**,实际 §5.3 SlotResolver 8 字段 + AgentFactory 1 字段 = **9 Router**;v1.5.23 §5.3.1.0 新增 6 隐式 Router stub 时也没补 `FlowEngineRouter`(只列名说「PromptBuilderRouter / LlmProviderRouter / ToolExecutorRouter / PermissionPolicyRouter / SessionStoreRouter / CompactorRouter」共 6),到 v1.5.25 §5.4 plugin AutoConfiguration 编写约定才暴露出「`FlowEngineRouter` 没有 concrete 类定义」;**补丁** (1) §5.3.1 标题改「9 Router — 7 隐式 + 2 显式」;(2) §5.3.1.0 标题改「7 个隐式 Router concrete 类(SlotResolver 6 + AgentFactory 1)」,imports 块加 `FlowEngineProvider` + `FlowEngine`;(3) §5.3.1.0 末尾(`CompactorRouter` 之后)追加 `FlowEngineRouter` 第 7 个 stub —— `extends SlotRouter<FlowEngineProvider, FlowEngine>`,super 传 `"FlowEngine"` + Logger,Javadoc 说明**不在 SlotResolver 字段里,由 AgentFactory 直接 `@Autowired`** + 默认 `LinearTurnEngineProvider`(§6.1 L2530)+ 替代 `GoogleAdkFlowEngineProvider`(§4.11.2)/ `AlibabaGraphFlowEngineProvider`(§4.11.3);(4) §5.3.1.0 总表加 1 行(Slot 8 FlowEngineRouter,注入位置 `AgentFactory.flowRouter`,**不在 SlotResolver**),并补「注入位置」新列,Slot 编号对齐 §5.6.4 SPI 总表(1—9);(5) §5.3.1.0 边界与约束 / 与 `MemorySourceRouter` 关键差异 / 实施期顺序建议 全部 6 → 7(Story #001 加 `FlowEngineRouter`);(6) §5.6.4 SPI 总表加「Router stub 位置」列 9 行 —— 7 行指 §5.3.1.0 + 1 行指 §5.3.1.1 + 1 行指 §5.3.1.2;Slot 8 行强调 `FlowEngineRouter` 注入 `AgentFactory` 而**不在 SlotResolver**;**效果** Story #001 实施者打开 IDE 时,AgentFactory 启动校验所需 3 Router(`PermissionPolicyRouter` + `ToolExecutorRouter` + `FlowEngineRouter`)全部有完整 stub,§5.3.1.0 + §5.6.4 双向 cross-ref 一眼定位;§5.3.1 计数从 8 → 9,与实际代码一致;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.25 §5.4 末尾新增「plugin AutoConfiguration 编写约定(双 `@ConditionalOnMissingBean` 模式,避免双胜出)」子段 — **问题** §5.4 原版只列 `META-INF/spring/...imports` 文件内容,没规定 plugin 自己的 `XxxProvider` Bean 怎么写;§5.5 默认 AutoConfiguration 一侧已标 `@ConditionalOnMissingBean` 防用户覆盖默认,但**plugin 一侧未约束** —— 如果 plugin A `RagAutoConfiguration` 没标 `@ConditionalOnMissingBean`,plugin B `McpPromptAutoConfiguration` 也没标,加载顺序不确定时 **BeanDefinitionOverrideException**(Spring Boot 2.1+ `spring.main.allow-bean-definition-overriding=false` 默认启动失败);**根因** Spring `@ConditionalOnMissingBean(X.class)` 检查的是**整个 `BeanFactory`** 而非"当前 `@Configuration` 类内其他 `@Bean` 方法",**跨 AutoConfiguration 类的 Bean 可见性**取决于 `@AutoConfigureOrder` / `@AutoConfigureBefore` / `@AutoConfigureAfter`,**不保证** plugin 一定在默认 AutoConfiguration 之前/之后加载;**补丁** (1) §5.4 末新增子段,标题明确「双 `@ConditionalOnMissingBean` 模式」;(2) 机制说明 + plugin 样例代码 `RagAutoConfiguration` 标 `@ConditionalOnMissingBean(PromptBuilderProvider.class)`(与 §5.5 默认对称);(3) **双 `@ConditionalOnMissingBean` 模式加载顺序矩阵** 4 行 4 列(plugin A 先 / plugin B 先 / 默认 / 漏标 四种情形)—— 一眼看清"漏标 = 启动失败";(4) 明确禁止 plugin 漏标 + 启动期 `BeanDefinitionOverrideException` 应急路径("第一时间检查 plugin 的 `@Bean` 方法是否漏标",不要去开 `spring.main.allow-bean-definition-overriding=true`);(5) 区分"plugin 注册 `XxxProvider` Bean(需双标)" vs "plugin 注册 `Tool` / `MemorySource` / `SkillSource` 等非 Slot 类型 Bean(按需创建,无需 `@ConditionalOnMissingBean`)" + 给出 `LocalToolsAutoConfiguration` 多 Tool 样例;(6) 传递依赖规则 + cross-ref §5.5 / §5.3 / §5.2;**效果** plugin 实施者打开 IDE 写 `XxxProvider` Bean 时,知道必须标 `@ConditionalOnMissingBean`(与默认对称),漏标会导致启动失败;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.24 §5.5 「默认实现的注册约定」 子节扩展 — 原版只给 `DefaultPromptBuilderProvider` 1 个 `@AutoConfiguration` 模板,**问题** §5.6.4 SPI 总表 9 Slot × 默认 Provider 中,`DefaultPromptBuilderProvider`(Slot 1 模板) / `LinearTurnEngineProvider`(Slot 8,§6.1 L2530) / `HttpJsonRpcA2aTransportProvider`(Slot 9,§5.6.x L2058)3 个有完整 stub,**剩 6 个默认 Provider**(`TruncatingCompactorProvider` Slot 2 / `AnthropicLlmProviderFactory` Slot 3 / `StrictPermissionPolicyProvider` Slot 4 / `DefaultToolExecutorProvider` Slot 5 / `FileSessionStoreProvider` Slot 6 / `ProjectClaudeMdSourceProvider` Slot 7)**只列名未给 AutoConfiguration stub** —— 用户看到 §5.5 误以为"§5.6.4 ✅ 已有"全表已落实,但打开 IDE 找 `XxxProviderAutoConfiguration` 源码时只 3/9 有,其余 6/9 需对应 Story #001 / #002 / #003 / #014 / #015 实施期自己新建,样板零散;**根因** §5.5 最初只用于说明"默认实现怎么注册"模式,模板只列 1 例;§5.6.4 总表是契约层(每个 Slot 一个默认 Provider),§5.5 是样板层(每个默认 Provider 一个 AutoConfiguration)—— 两层之前未对齐:§5.6.4 9 行「✅ 已有」只代表「Slot 接口 + 1 个默认 Provider 类名」就位,不代表「Provider AutoConfiguration 落地样板」就位;**补丁** §5.5 扩展为 6 个新 AutoConfiguration stub(Slot 2—7,每个 18—22 行,`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(<X>Provider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig c)` —— 与 Slot 1 模板同模式;`create()` body 抛 `UnsupportedOperationException("TODO: Story #NNN")`,留给对应 Story 实施期填);附 (1) **9 Slot × 默认 Provider ↔ `create()` 返回类型 ↔ Story ↔ stub 位置 总表** 9 行(L2118-2128),§5.6.4 与 §5.5 双向 cross-ref,Story 实施者一眼定位;(2) **10 个替代实现**(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)**追加约定** —— 由各自 Story 实施期补,模式与默认实现完全一致,`name()` / `priority()` 一般 ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**(命名空间严格隔离);(3) §0 状态块同步 + §13 加本条目;**效果** Story #001 / #002 / #003 / #014 / #015 实施者打开 IDE 时,6 个默认 Provider 全部有 AutoConfiguration 样板(模板 + 4 个 Stub + 1 个总表),不再需要"按 §5.1 Provider 列表自己写样板"或"找不到样板复制 DefaultPromptBuilderProvider 后改类名"——直接 §5.5 复制对应 Slot 段 + 替换 `name()` / `priority()` / `create()` 返回类型即可;纯文档补全,代码逻辑零改动;2026-09-15);v1.5.23 §5.3.1.0 新增「6 个隐式 Router concrete 类」子节;v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节;v1.5.20 §5.3.1 新增子节补齐 2 个 Router concrete 类 stub + 模板 + 边界表;v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
+> **版本**:v1.5.29(§6.5 (2.1) 新增 `McpServerConnection` 实现示例 —— 含心跳保活 + 指数退避重连 — **问题** §6.5 (2) `McpTransport` 假设 MCP server「连上就永远连着」,生产环境 MCP server 子进程可能被 OOM 杀、stdio 僵死、SSE 反向代理超时踢线 —— Agent 进程会因 MCP server 抖动连锁崩盘,且当前文档缺 single-source-of-truth 的心跳 / 重连机制样板,Story #009 实施者只能反推 §4.10.1 错误处理边界自己设计;**根因** §6.5 (2) 原版 `McpServerConnection.start(cfg)` 是一次性同步连接 stub,没引入状态机 / 心跳 / 重连概念;v1.5.x 早期把 MCP 当「远程 Tool 注册中心」轻量集成,没考虑 24×7 长生命周期运维需求;到 v1.5.28 多 Provider 模式 + 9 Slot 体系成熟,**MCP 的「长连接」属性被放大** —— 必须补完整的生命周期管理;**补丁** (1) **§6.5 (2.1) 新增子节**(L3542-3815,~270 行):(a) **`McpServerConnection` 接口** —— `extends AutoCloseable`,定义 `name()` / `state()` / `lastHeartbeatAt()` / `listTools()` / `callTool()` / `onStateChange()` / `start()` / `close()` 8 个方法,Javadoc 明确「非 CONNECTED 状态 callTool 直接返 error 不抛异常」「重连后 listTools 重新拉,不复用旧 cache」;(b) **`ConnectionState` enum** —— `IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED` 6 态,状态机图显式标注 `CONNECTED ⇄ DISCONNECTED → RECONNECTING → CONNECTED`;(c) **`McpServerConnectionFactory`** —— 按 `cfg.transport()` 分派 stdio / SSE / streamable HTTP 三种实现,switch case 默认抛 `IllegalArgumentException`(防御性);(d) **`StdioMcpServerConnection` 完整实现**(~180 行)—— `AtomicReference<ConnectionState>` + `AtomicInteger reconnectAttempts` + `CopyOnWriteArrayList<Consumer<...>>` + daemon `ScheduledExecutorService`;`start()` 走 5 步:拉子进程 → initialize 握手 → initialized 通知 → tools/list 拉取 → 切 CONNECTED + 启心跳;`probe()` 双探活(`process.isAlive()` + MCP `ping` 请求等回包,timeout=hbTimeoutMs);`scheduleReconnect()` 走 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 指数退避,失败**无限**重试;(e) **`SseMcpServerConnection` 差异说明段** —— 不复制 stdio 全部样板,只列 3 处差异(心跳 = `GET /health` 而非 process.isAlive;重连 = 重建 `HttpClient` 而非杀子进程;长连接 = `SseEventSource` 收 server push 触发 tools/listChanged 重拉);(f) **§6.5 (2) `McpTransport` 同步改写** —— `connect()` 不再直接调 `McpServerConnection.start(cfg)`,改 `McpServerConnectionFactory.create(cfg)` + `onStateChange(listener)` + 异步 `conn.start()`;新增 `onConnectionStateChange()` 私有方法处理 `CONNECTED → register / DISCONNECTED → unregister`;(g) **配置 `application.yml` 示例 + 启动日志样例** —— github server 被 OOM 杀后重连,日志展示 tools 从 7 → 8(MCP server 升级后新增 tool 自动可见);(2) **JDK 8 兼容** —— 用 `AtomicReference` / `AtomicInteger` / `CopyOnWriteArrayList` + `Collections.emptyList()`,**不用** `List.of` / `var` / sealed / records;lambda 内调 `start()` / `probe()` 用匿名 inner class 而非方法引用,与 §0 L39 「不用 `var` / `List.of`」硬约束对齐;(3) **关键不变项** —— `McpToolAdapter` / `ToolExecutor.dispatch()` / `PermissionPolicy.check()` 完全不变,MCP 断流在 `ToolResult` 层只表现为「error 替代 success」,**不会绕过沙箱 / 权限 / checkpoint 任何一步**,与 §4.10.1 硬规则 2 完全兼容;(4) **§0 L4 changelog block 预本条**;(5) **§13 加本条目**;(6) CLAUDE.md 版本号同步 `1.3.21 → 1.3.22`;**纯文档改动**,代码逻辑零改动;5709 → 5980 行(+271);**修复者**:Claude Code(根据用户 2026-09-16 会话反馈,用户问「McpServerConnection的实现示例是不是补充一下,并且在里面体现出对MCPClient的保活(心跳)和重连」,确认 §6.5 (2) 缺心跳 / 重连机制 + 完整实现示例,要求补);v1.5.28(§5.5 改「多 Provider 模式」样板 + §5.4 同步改「唯一 Bean 名约定」+ §5.6 Slot 9 HttpJsonRpcA2aTransportProvider stub 同步 — **问题** v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制"部署期二选一",同一 Slot 最多 1 个 `XxxProvider` Bean 注册到 Spring 容器 → 用户切换 Provider 必须改 classpath / exclude / 改 Bean 名;但 §5.3.1.0 `SlotRouter<P, T>` 父类**一直是多 Provider 友好** —— 构造器收 `List<P> providers`,启动期按 `name()` 收 `Map<String, P>`,`resolve(name, cfg)` 按 name 选 → List<P> **被设计为 size=N**,而 v1.5.27 `@ConditionalOnMissingBean` 把它阉割到 size=1,**多 Provider 能力框架自身不用**;**根因** v1.5.24 §5.5 引入 6 默认 Provider stub 时直接复用 v1.5.0 `DefaultPromptBuilderProvider` 模板的 `@ConditionalOnMissingBean`,当时设计意图是"防止用户覆盖默认",但代价是阉割 §5.3.1.0 Router 的多 Provider 能力;v1.5.25 §5.4 双 `@ConditionalOnMissingBean` 模式进一步固化单 Provider 假设(plugin 之间也互斥);到 v1.5.27 §4.6 ToolExecutor + §5.5 默认 6 Provider stub + §5.3.1.0 7 Router 体系成熟,**单 Provider 假设与 Router 多 Provider 设计目标的张力被放大**;用户需要"同 Slot 多 Provider 共存 + 按 name 路由"的能力;**补丁** (1) **§5.5 改「多 Provider 模式」样板**:头部设计原则 blockquote 改写,说明 v1.5.28 起默认 Provider 用 plain `@Bean(name = "<slot>Provider_<name>")` 而**不再用 `@ConditionalOnMissingBean`**;**所有 6 个默认 Provider stub 改写** —— Slot 1 `DefaultPromptBuilderProvider` / Slot 2 `TruncatingCompactorProvider` / Slot 3 `AnthropicLlmProviderFactory` / Slot 4 `StrictPermissionPolicyProvider` / Slot 5 `DefaultToolExecutorProvider` / Slot 6 `FileSessionStoreProvider` / Slot 7 `ProjectClaudeMdSourceProvider` 全部 `@Bean(name = "...")` 显式 Bean 名;每段注释补「`name()` 必须唯一(§5.2 同名竞争)」说明;(2) **§5.5 头部新增「用户切换示例」blockquote** —— `application.yml` 写 `agent.<slot>.name: <provider-name>` 切换 Provider + 启动日志样例 `resolved N provider(s)` 列出全部 N;(3) **§5.5 9-Slot 总表加「Bean 名」列** —— 9 行「Bean 名(🆕 v1.5.28)」字段,如 `promptBuilderProvider_default` / `llmProviderProvider_anthropic` / `flowEngineProvider_linear` / `a2aTransportProvider_http-jsonrpc`,Story 实施者写 `@Bean(name = "...")` 直接抄;Slot 8 / Slot 9 标 🆕 v1.5.28 建议同步改名(§6.1 LinearTurnEngineProvider / §5.6.x HttpJsonRpcA2aTransportProvider);(4) **§5.5「替代实现追加约定」段改写** —— 加 `OpenAiLlmProviderProvider` 完整样板(Bean 名 `llmProviderProvider_openai` + name "openai")+ 用户配置示例 + 启动日志样例(4 个 LlmProvider 共存);(5) **§5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步改多 Provider 模式** —— `@Bean(name = "a2aTransportProvider_http-jsonrpc")`;(6) **§5.4 plugin AutoConfiguration 编写约定改写** —— 双 `@ConditionalOnMissingBean` 模式 → 唯一 Bean 名约定:🆕 v1.5.28 起 plugin `@Bean` 必须显式 `name = "<slot>Provider_<pluginName>"`,禁止复用默认 Bean 名;🗑️ v1.5.25 双 `@ConditionalOnMissingBean` 模式加载顺序矩阵已废弃(基于「全 ApplicationContext 最多 1 个 `XxxProvider` Bean」单 Provider 假设,多 Provider 模式下该假设不再成立),但 BeanDefinitionOverrideException 应急路径不变;**效果** Story #001 / #002 / #003 / #014 / #015 实施者写 `@Bean` 时,统一规范为 `@Bean(name = "<slot>Provider_<name>")`,无需 `@ConditionalOnMissingBean`;同 Slot 多 Provider 共存(默认 + 替代)由 §5.2 SlotRouter 按 name 路由,`agent.<slot>.name` 改 yaml 即可切换 Provider,无需 exclude / rebuild classpath;§5.3.1.0 Router 多 Provider 能力终于被框架自身利用,**List<P> size=N 实际生效**;**纯文档改动**,代码逻辑零改动;5639→5708 行(+69);2026-09-16);v1.5.27(§4.6 ToolExecutor 接口定义补全 — 标题「Tool 与 ToolExecutor」但 §4.6 缺 `ToolExecutor` 本体,Story 实施者只能从 §4.10.1 / §5.5 / §6.5 散落引用反推;**补丁** 在 §4.6 `Skill extends Tool` 之后 / `ToolExecutionContext` 之前插入 `ToolExecutor` 接口完整定义 —— 单方法 `dispatch(ToolCall call, ToolExecutionContext ctx) → ToolResult`;Javadoc 覆盖 (1) 调用契约 `executor.dispatch(call, ctx)` + ReAct Action 阶段每个 `LlmResponse.getToolCalls()` 元素**必须**走此方法(不得直调 `tool.execute()`);(2) §4.10.1 硬规则 2 强制要求 —— ToolExecutor 内部统一串入 5 步流水线 `PermissionPolicy.check() §4.7 → ToolRegistry.lookup(name) → TimeoutWrap → SandboxApply(fs / http / process) §4.7 → tool.execute() → Checkpoint`,任何一步绕过 = 沙箱 / 权限 / 取消 / 超时全失效,Spring AI `ChatClient.tools().call()` 自动执行**禁止**使用;(3) ToolExecutor 与 Tool 接口解耦 —— ToolExecutor 不 import Tool 内部细节,只看 `ToolCall(name + args JSON)` + `ToolExecutionContext`,Tool 实现可手写(§6.5 (1))/ MCP server 暴露(§6.5 (2))/ Spring AI `@Tool` 注解生成仅 schema(§6.5 (3))—— ToolExecutor 一视同仁;(4) Provider 可插拔 —— 默认 `DefaultToolExecutorProvider`(stub §5.5 L2121)同步串行 dispatch;替代实现 `ParallelToolExecutorProvider`(并发)/ `ObservabilityToolExecutorProvider`(metric / trace),`name()` 走该实现标识("default" / "parallel" / "observability"),`priority()` ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**;(5) `@throws` 完整标注 —— `PermissionDeniedException`(§4.7)/ `ToolNotFoundException` / `TimeoutException`(`callConfig.timeoutSeconds`)/ `CancellationException`(Ctrl+C / FlowEngine markDone / 超时联动)4 类异常;**效果** Story 实施者打开 §4.6 即可看到完整 Slot 5 接口契约,无需散落反推;§4.10.1 硬规则 2 引用 `ToolExecutor.dispatch()` 现在有 single-source-of-truth 锚点;5590 → 5639 行(+49);**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.26(§5.3.1.0 补齐 `FlowEngineRouter` 第 7 个隐式 Router concrete stub + §5.3.1 标题计数 8 → 9 Router + §5.6.4 SPI 总表新增「Router stub 位置」列 — **问题** §5.3.1 标题写「8 个 Router — 6 隐式 + 2 显式」,但实际 `AgentFactory` L3676 直接 `@Autowired` 了 `FlowEngineRouter`,而 §5.3.1.0 只给了 6 个隐式 Router stub(PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore)**漏了** Slot 8 FlowEngineRouter —— 用户/实施者找「`FlowEngineRouter` 类源码」会以为它不存在,只能在 `AgentFactory` 字段引用里看到字段名但没有类定义;**根因** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,只补了 SlotResolver 内部 2 Router(MemorySource + A2aTransport);AgentFactory 的 `FlowEngineRouter` 是 v1.5.18 **之前**就已存在的字段(L3676),但当时没单独成 Router stub 写到 §5.3.1.0 —— **Slot 8 FlowEngine 完全漏在 §5.3.1 体系外**,实际 §5.3 SlotResolver 8 字段 + AgentFactory 1 字段 = **9 Router**;v1.5.23 §5.3.1.0 新增 6 隐式 Router stub 时也没补 `FlowEngineRouter`(只列名说「PromptBuilderRouter / LlmProviderRouter / ToolExecutorRouter / PermissionPolicyRouter / SessionStoreRouter / CompactorRouter」共 6),到 v1.5.25 §5.4 plugin AutoConfiguration 编写约定才暴露出「`FlowEngineRouter` 没有 concrete 类定义」;**补丁** (1) §5.3.1 标题改「9 Router — 7 隐式 + 2 显式」;(2) §5.3.1.0 标题改「7 个隐式 Router concrete 类(SlotResolver 6 + AgentFactory 1)」,imports 块加 `FlowEngineProvider` + `FlowEngine`;(3) §5.3.1.0 末尾(`CompactorRouter` 之后)追加 `FlowEngineRouter` 第 7 个 stub —— `extends SlotRouter<FlowEngineProvider, FlowEngine>`,super 传 `"FlowEngine"` + Logger,Javadoc 说明**不在 SlotResolver 字段里,由 AgentFactory 直接 `@Autowired`** + 默认 `LinearTurnEngineProvider`(§6.1 L2530)+ 替代 `GoogleAdkFlowEngineProvider`(§4.11.2)/ `AlibabaGraphFlowEngineProvider`(§4.11.3);(4) §5.3.1.0 总表加 1 行(Slot 8 FlowEngineRouter,注入位置 `AgentFactory.flowRouter`,**不在 SlotResolver**),并补「注入位置」新列,Slot 编号对齐 §5.6.4 SPI 总表(1—9);(5) §5.3.1.0 边界与约束 / 与 `MemorySourceRouter` 关键差异 / 实施期顺序建议 全部 6 → 7(Story #001 加 `FlowEngineRouter`);(6) §5.6.4 SPI 总表加「Router stub 位置」列 9 行 —— 7 行指 §5.3.1.0 + 1 行指 §5.3.1.1 + 1 行指 §5.3.1.2;Slot 8 行强调 `FlowEngineRouter` 注入 `AgentFactory` 而**不在 SlotResolver**;**效果** Story #001 实施者打开 IDE 时,AgentFactory 启动校验所需 3 Router(`PermissionPolicyRouter` + `ToolExecutorRouter` + `FlowEngineRouter`)全部有完整 stub,§5.3.1.0 + §5.6.4 双向 cross-ref 一眼定位;§5.3.1 计数从 8 → 9,与实际代码一致;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.25 §5.4 末尾新增「plugin AutoConfiguration 编写约定(双 `@ConditionalOnMissingBean` 模式,避免双胜出)」子段 — **问题** §5.4 原版只列 `META-INF/spring/...imports` 文件内容,没规定 plugin 自己的 `XxxProvider` Bean 怎么写;§5.5 默认 AutoConfiguration 一侧已标 `@ConditionalOnMissingBean` 防用户覆盖默认,但**plugin 一侧未约束** —— 如果 plugin A `RagAutoConfiguration` 没标 `@ConditionalOnMissingBean`,plugin B `McpPromptAutoConfiguration` 也没标,加载顺序不确定时 **BeanDefinitionOverrideException**(Spring Boot 2.1+ `spring.main.allow-bean-definition-overriding=false` 默认启动失败);**根因** Spring `@ConditionalOnMissingBean(X.class)` 检查的是**整个 `BeanFactory`** 而非"当前 `@Configuration` 类内其他 `@Bean` 方法",**跨 AutoConfiguration 类的 Bean 可见性**取决于 `@AutoConfigureOrder` / `@AutoConfigureBefore` / `@AutoConfigureAfter`,**不保证** plugin 一定在默认 AutoConfiguration 之前/之后加载;**补丁** (1) §5.4 末新增子段,标题明确「双 `@ConditionalOnMissingBean` 模式」;(2) 机制说明 + plugin 样例代码 `RagAutoConfiguration` 标 `@ConditionalOnMissingBean(PromptBuilderProvider.class)`(与 §5.5 默认对称);(3) **双 `@ConditionalOnMissingBean` 模式加载顺序矩阵** 4 行 4 列(plugin A 先 / plugin B 先 / 默认 / 漏标 四种情形)—— 一眼看清"漏标 = 启动失败";(4) 明确禁止 plugin 漏标 + 启动期 `BeanDefinitionOverrideException` 应急路径("第一时间检查 plugin 的 `@Bean` 方法是否漏标",不要去开 `spring.main.allow-bean-definition-overriding=true`);(5) 区分"plugin 注册 `XxxProvider` Bean(需双标)" vs "plugin 注册 `Tool` / `MemorySource` / `SkillSource` 等非 Slot 类型 Bean(按需创建,无需 `@ConditionalOnMissingBean`)" + 给出 `LocalToolsAutoConfiguration` 多 Tool 样例;(6) 传递依赖规则 + cross-ref §5.5 / §5.3 / §5.2;**效果** plugin 实施者打开 IDE 写 `XxxProvider` Bean 时,知道必须标 `@ConditionalOnMissingBean`(与默认对称),漏标会导致启动失败;**纯文档补全,代码逻辑零改动**;2026-09-15);v1.5.24 §5.5 「默认实现的注册约定」 子节扩展 — 原版只给 `DefaultPromptBuilderProvider` 1 个 `@AutoConfiguration` 模板,**问题** §5.6.4 SPI 总表 9 Slot × 默认 Provider 中,`DefaultPromptBuilderProvider`(Slot 1 模板) / `LinearTurnEngineProvider`(Slot 8,§6.1 L2530) / `HttpJsonRpcA2aTransportProvider`(Slot 9,§5.6.x L2058)3 个有完整 stub,**剩 6 个默认 Provider**(`TruncatingCompactorProvider` Slot 2 / `AnthropicLlmProviderFactory` Slot 3 / `StrictPermissionPolicyProvider` Slot 4 / `DefaultToolExecutorProvider` Slot 5 / `FileSessionStoreProvider` Slot 6 / `ProjectClaudeMdSourceProvider` Slot 7)**只列名未给 AutoConfiguration stub** —— 用户看到 §5.5 误以为"§5.6.4 ✅ 已有"全表已落实,但打开 IDE 找 `XxxProviderAutoConfiguration` 源码时只 3/9 有,其余 6/9 需对应 Story #001 / #002 / #003 / #014 / #015 实施期自己新建,样板零散;**根因** §5.5 最初只用于说明"默认实现怎么注册"模式,模板只列 1 例;§5.6.4 总表是契约层(每个 Slot 一个默认 Provider),§5.5 是样板层(每个默认 Provider 一个 AutoConfiguration)—— 两层之前未对齐:§5.6.4 9 行「✅ 已有」只代表「Slot 接口 + 1 个默认 Provider 类名」就位,不代表「Provider AutoConfiguration 落地样板」就位;**补丁** §5.5 扩展为 6 个新 AutoConfiguration stub(Slot 2—7,每个 18—22 行,`@AutoConfiguration` + `@Bean @ConditionalOnMissingBean(<X>Provider.class)` + 匿名 inner class 实现 `name()` / `priority()` / `create(AgentConfig c)` —— 与 Slot 1 模板同模式;`create()` body 抛 `UnsupportedOperationException("TODO: Story #NNN")`,留给对应 Story 实施期填);附 (1) **9 Slot × 默认 Provider ↔ `create()` 返回类型 ↔ Story ↔ stub 位置 总表** 9 行(L2118-2128),§5.6.4 与 §5.5 双向 cross-ref,Story 实施者一眼定位;(2) **10 个替代实现**(`OpenAi / Gemini / DeepSeek` 3 个 LlmProvider / `Memory / Redis / Jdbc` 3 个 SessionStore / `Identity / ProjectTree / Conversation` 3 个 MemorySource / `Summary` 1 个 Compactor)**追加约定** —— 由各自 Story 实施期补,模式与默认实现完全一致,`name()` / `priority()` 一般 ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**(命名空间严格隔离);(3) §0 状态块同步 + §13 加本条目;**效果** Story #001 / #002 / #003 / #014 / #015 实施者打开 IDE 时,6 个默认 Provider 全部有 AutoConfiguration 样板(模板 + 4 个 Stub + 1 个总表),不再需要"按 §5.1 Provider 列表自己写样板"或"找不到样板复制 DefaultPromptBuilderProvider 后改类名"——直接 §5.5 复制对应 Slot 段 + 替换 `name()` / `priority()` / `create()` 返回类型即可;纯文档补全,代码逻辑零改动;2026-09-15);v1.5.23 §5.3.1.0 新增「6 个隐式 Router concrete 类」子节;v1.5.22 §10.1 锁定合计数显式化 + CLAUDE.md §11.6 历史 drift 修正;v1.5.21 §5.7 新增「插件机制选型决策(SPI vs ClassLoader 隔离)」子节;v1.5.20 §5.3.1 新增子节补齐 2 个 Router concrete 类 stub + 模板 + 边界表;v1.5.19 §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc;v1.5.18 §5.3 `SlotResolver` 屏蔽 Router 数 6 → 8;v1.5.17 §5.1 typed-Provider 列表补 `A2aTransportProvider` 行;v1.5.16 §5.1 L1463 orphan fence opener 误吞修复;v1.5.15 §4.11 `FlowEngine` Java 代码块补 closing fence;v1.5.14 §4.5.1 [TOOL SCHEMAS] 字段措辞修订
 > **目标读者**:本项目核心开发、贡献者、未来回看决策的"半年后的自己"、SpecKit `/specify` `/plan` 输入源
 > **状态**:设计阶段冻结;**v1.5.21** §5.3.1 新增子节,补齐 v1.5.18 引入的 2 个 Router(`MemorySourceRouter` + `A2aTransportRouter`)concrete 类 stub + 通用模板 + 2 个边界行为表;落实 v1.5.18 changelog「Router 本体 concrete 定义留给 Story #001/#009 实施期补」的契约前置 —— 实施者只需按模板填构造器参数对 `<P, T>`,业务逻辑全由父类 `SlotRouter<P, T>` 提供;**v1.5.19** §6.1 `LinearTurnEngine` + `LinearTurnEngineProvider` 加类级 Javadoc,说明「SlotResolver 8 Router vs LinearTurnEngine 6 字段」是有意设计 —— `MemorySource` 走 `PromptBuilder.build()` 内部 `[PROJECT MEMORY]` 段消化;`A2aTransport` 留给 DagTurnEngine v1.5+ `A2aNode`,不在 LinearTurnEngine v0.5 必交付范围;纯文档补全,代码逻辑零改动;**v1.5.18** §5.3 `SlotResolver` 屏蔽的 Router 数 6 → 8 —— 补 `MemorySourceRouter`(Slot 7 多源列表解析,`List<MemorySource>`,按 `MemorySource::priority` 升序排序,null 表示该 source 此次无内容)+ `A2aTransportRouter`(Slot 9 单解析,`A2aTransport`,与 6 个 Slot 的 resolve 模式一致);comment `屏蔽 6 个 Router` 改 `屏蔽 8 个 Router`;ctor 参数从 6 个增到 8 个;新增 6 个 import:`MemorySource` / `A2aTransport` / `ArrayList` / `Collections` / `Comparator` / `List`;Router 本体 concrete 定义留给 Story #001/#009 实施期补(与现有 6 Router 引用未定义模式一致);**v1.5.17** §5.1 typed-Provider 列表补 `A2aTransportProvider` 行(与 §5.6.4 SPI 总表第 9 行对齐,§5.1 原本只列 8 个 Provider 缺第 9 行);v0.5 新增标识;**注**:L38 项目身份陈述与 §5.6.4 SPI 总表存在轻微差异(L38 列 Sandbox/SkillSource,§5.6.4 不列 —— Sandbox 走 `RuntimeSandbox` 独立接口、SkillSource 走独立 `SkillSourceProvider`),RFC 待决,本次不动 L38 / §5.6.4;**v1.5.16** §5.1 `SlotProvider` 段 L1463 处存在 orphan fence opener(无前置 ``` 对应,但紧接其后 L1471 的 ` ```java ` 因带 info string 不被识别为 closer,导致 L1463-L1482 共 20 行内容被吞进 plain-text 代码块,§5.1 第一个 Java 代码块未生效 + §5.1 标题与 prose 错位);**补丁** 删除 L1463 单行零字符内容(orphan opener),让 L1471 ` ```java ` 重新成为有效 opener,L1483 ` ``` ` 关 L1471,L1487-L1496 第二个 Java 块不受波及;**v1.5.15** §4.11 `FlowEngine` Java 代码块原版缺 closing fence,严格 CommonMark 渲染器(Pandoc / mdbook)下 §4.11.1 标题 + 14 行 prose 会被吞进 Java 块,§4.11.1 之后内容错位;**补丁** L815 `}` 后插入一行 ` ``` ` 关闭 fence(零代码改动,纯 Markdown 兼容);**v1.5.14** §4.5.1 [TOOL SCHEMAS] 措辞修订 — 明确分层(Agent Engine 抽象层 vs LLM HTTP wire format 层):`Prompt.tools` 是抽象层概念(我们的代码 / Prompt 模型 / cache 策略),到 LLM 实际收到的 JSON body(wire format 层)时,无论 v1.5.9 文本注入还是 v1.5.13 抽象字段,tool schema **都成 JSON string**,在 wire format 层两者等价;rationale 块引用加"先说分层"段(7 条理由全部归到抽象层收益:变更频率分类维度 / Prompt 模型三件套各司其职 / cache key 独立 / Provider 协议透明化 / 空 tools 留空 / Schema 来源严格 / 紧贴 USER MESSAGE 是概念顺序);ASCII 框图 [TOOL SCHEMAS] 块标题从"独立 API 字段(非 system 文本)"改"Prompt 抽象的独立字段(非 system 文本段)";伪代码 L490-497 注释从"走 SDK 原生 function_calling"改"Prompt 抽象的 .tools 字段 + LlmProvider 按 provider 协议序列化";**v1.5.13** §4.5.1 `DefaultPromptBuilder.build()` 伪代码 API 对齐 §4.2 Prompt 类定义 — 原版错误地用 `.system(String)` + `.userMessage(String)` builder 方法(实际 §4.2 Prompt 只有 `messages` / `tools` / `hints` 三字段),且漏 `.tools()` 关键字段;新版本构建 `List<Message>`(system + history + current user)+ `List<ToolSpec>`(从 `toolRegistry.list(cfg)` 映射,Schema 严格走 `Tool.inputSchema()`)+ `ModelHints` 三件套,删除原先 [TOOL SCHEMAS] 当成 system 文本追加的代码(原版设计缺陷:文本注入会让 LLM grep JSON 而不是用原生 function_calling,且与 system cache key 耦合);ASCII 框图 [TOOL SCHEMAS] 块标注"独立 API 字段(非 system 文本)→ Prompt.tools";rationale 块引用 v1.5.9 引入 + v1.5.13 修订说明(走 SDK 原生 function_calling / 与 messages 解耦 cache key 独立);**v1.5.12** §4 章节标题 + ASCII + Mermaid 三处删 stale Slot N 标签(18 处);**v1.5.11** 多处 Slot 计数 / 命名对齐 9 个 SPI;**v1.5.10** §0.1 目标对齐;**v1.5.9** §4.5.1 装配顺序补 [TOOL SCHEMAS] 段;**v1.5.8** Risk Register 微调;**v1.5.7** Spring AI 边界硬规则;v1.5.6 已具备 Personas + AC + NFR + Error Catalog + Glossary + Risk Register
 
@@ -3503,11 +3503,30 @@ public class McpTransport {
 
     public void connect(List<McpServerConfig> configs, ToolRegistry registry) {
         for (McpServerConfig cfg : configs) {
-            McpServerConnection conn = McpServerConnection.start(cfg);
+            // v1.5.29:用 factory 按 transport 类型分派(stdio / SSE / streamable HTTP);
+            // start 是异步非阻塞,首次 CONNECTED 由 listener 触发注册;重连后**重新**拉 tools/list。
+            McpServerConnection conn = McpServerConnectionFactory.create(cfg);
+            conn.onStateChange(state -> onConnectionStateChange(cfg, conn, state, registry));
             connections.add(conn);
+            conn.start();
+        }
+    }
+
+    /** 状态变化回调 —— CONNECTED 注册 tools,DISCONNECTED/FAILED 注销 tools。 */
+    private void onConnectionStateChange(McpServerConfig cfg, McpServerConnection conn,
+                                          ConnectionState state, ToolRegistry registry) {
+        if (state == ConnectionState.CONNECTED) {
+            // 重连成功后**重新**拉 tools/list,可能新增 / 删除 / 改 schema
             for (McpToolDescriptor t : conn.listTools()) {
                 registry.register(new McpToolAdapter(this, cfg.name, t));
             }
+            log.info("[MCP:{}] (re)connected, {} tools registered", cfg.name, conn.listTools().size());
+        } else if (state == ConnectionState.DISCONNECTED || state == ConnectionState.FAILED) {
+            // 断了先把 tools 撤掉 —— ToolExecutor.dispatch() 不会调到 stale tool
+            for (McpToolDescriptor t : conn.listTools()) {
+                registry.unregister(cfg.name + ":" + t.name());
+            }
+            log.warn("[MCP:{}] disconnected ({})", cfg.name, state);
         }
     }
 
@@ -3518,6 +3537,326 @@ public class McpTransport {
             .callTool(toolName, input);
     }
 }
+```
+
+#### (2.1) `McpServerConnection` 心跳保活与重连 —— v1.5.29 增补
+
+> (2) 节的 `McpServerConnection` 假设 MCP server「连上就永远连着」 —— 但生产环境 MCP server 子进程可能 OOM 被杀、stdio 僵死、SSE 反向代理超时踢线。**v1.5.29 把 `McpServerConnection` 从「一次性连接」升级为「长生命周期 + 心跳保活 + 指数退避重连」** —— Agent 进程不因 MCP server 抖动崩盘;重连成功后**重新拉 `tools/list`**(MCP server 升级新增 tool 自动可见,而不是用旧 cache)。
+>
+> **设计要点**:
+> - **状态机**:`IDLE → CONNECTING → CONNECTED ⇄ DISCONNECTED → RECONNECTING → CONNECTED...`,`FAILED` 是终态,只能 `close()` 出来
+> - **心跳保活**:后台 `ScheduledExecutorService` 每 30s 探活一次;**stdio** = `process.isAlive()` + 发 MCP `ping` 请求等回包;**SSE/HTTP** = `GET /health` 或 MCP `ping` over HTTP
+> - **指数退避**:`1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)`,失败**无限**重试 —— MCP server 可能在维护窗口内重启,Agent 不该因这几十秒放弃整个对话
+> - **状态变化广播**:listener 模式通知 `McpTransport`,CONNECTED 时 `registry.register(tool)`,DISCONNECTED 时 `registry.unregister(tool)` —— McpToolAdapter.execute() 拿到的是 `ToolResult.error`,LLM 端能看到「MCP server 暂时不可用」而不是 NPE
+> - **JDK 8 兼容**:用 `AtomicReference` / `AtomicInteger` / `CopyOnWriteArrayList` + `Collections.emptyList()`;不用 `List.of` / `var` / sealed / records
+
+```java
+/**
+ * 单个 MCP server 连接的生命周期 —— 实现心跳保活 + 指数退避重连。
+ * McpTransport 通过 listener 拿到状态变化,据此 register / unregister ToolAdapter。
+ */
+public interface McpServerConnection extends AutoCloseable {
+
+    String name();
+
+    ConnectionState state();
+
+    /** 最近一次心跳成功的时间;启动后未成功过则返回构造时刻。 */
+    Instant lastHeartbeatAt();
+
+    /** 当前缓存的 tools/list —— 仅在 CONNECTED 状态有有效值,重连后会重新拉。 */
+    List<McpToolDescriptor> listTools();
+
+    /** 转发 tools/call;非 CONNECTED 状态直接返回 McpCallResult.error,不抛异常。 */
+    McpCallResult callTool(String toolName, JsonNode input);
+
+    /** 状态变化订阅 —— 多个 listener 各自回调,单个 listener 抛异常不影响其他。 */
+    void onStateChange(Consumer<ConnectionState> listener);
+
+    /** 启动连接(异步非阻塞);失败会自动 scheduleReconnect()。 */
+    void start();
+
+    @Override void close();
+}
+
+public enum ConnectionState {
+    IDLE, CONNECTING, CONNECTED, DISCONNECTED, RECONNECTING, FAILED
+}
+
+/**
+ * 按 cfg.transport 类型分派具体实现 —— stdio / SSE / streamable HTTP。
+ * 加新传输只需加一个 `implements McpServerConnection` + 在此 switch 加一行。
+ */
+public final class McpServerConnectionFactory {
+    public static McpServerConnection create(McpServerConfig cfg) {
+        switch (cfg.transport()) {
+            case STDIO:
+                return new StdioMcpServerConnection(cfg);
+            case SSE:
+                return new SseMcpServerConnection(cfg);
+            case STREAMABLE_HTTP:
+                return new StreamableHttpMcpServerConnection(cfg);
+            default:
+                throw new IllegalArgumentException("Unknown MCP transport: " + cfg.transport());
+        }
+    }
+}
+
+/**
+ * stdio 实现 —— 拉起 MCP server 子进程,通过 stdin/stdout 走 JSON-RPC。
+ * 心跳 = process.isAlive() + MCP ping 请求;重连 = 销毁旧进程 + 重启 + 重拉 tools/list。
+ *
+ * 失败路径(子进程死 / ping 超时 / initialize 失败)统一走 scheduleReconnect()
+ * —— 不会让 Agent 进程因为 MCP server 抖动崩。
+ */
+public class StdioMcpServerConnection implements McpServerConnection {
+
+    private final McpServerConfig cfg;
+    private final ScheduledExecutorService hb;
+    private final List<Consumer<ConnectionState>> listeners = new CopyOnWriteArrayList<Consumer<ConnectionState>>();
+    private final AtomicReference<ConnectionState> state =
+        new AtomicReference<ConnectionState>(ConnectionState.IDLE);
+    private final AtomicReference<Instant> lastBeat = new AtomicReference<Instant>(Instant.now());
+    private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
+
+    private volatile Process process;
+    private volatile OutputStream stdin;
+    private volatile InputStream stdout;
+    private volatile List<McpToolDescriptor> cachedTools = Collections.emptyList();
+
+    // 可调参数 —— 默认保守值;生产可经由 cfg 或单独 Config 覆盖
+    private final long hbIntervalMs;    // 默认 30s —— 心跳间隔
+    private final long hbTimeoutMs;     // 默认 10s —— ping 等回包超时
+    private final long reconnectCapMs;  // 默认 60s —— 指数退避上限
+
+    public StdioMcpServerConnection(McpServerConfig cfg) {
+        this(cfg, 30_000L, 10_000L, 60_000L);
+    }
+
+    public StdioMcpServerConnection(McpServerConfig cfg,
+                                     long hbIntervalMs, long hbTimeoutMs, long reconnectCapMs) {
+        this.cfg = cfg;
+        this.hbIntervalMs = hbIntervalMs;
+        this.hbTimeoutMs = hbTimeoutMs;
+        this.reconnectCapMs = reconnectCapMs;
+        // daemon 线程 —— 不阻塞 JVM 退出
+        ThreadFactory tf = new ThreadFactory() {
+            @Override public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "mcp-hb-" + cfg.name);
+                t.setDaemon(true);
+                return t;
+            }
+        };
+        this.hb = Executors.newSingleThreadScheduledExecutor(tf);
+    }
+
+    @Override public String name()                       { return cfg.name; }
+    @Override public ConnectionState state()             { return state.get(); }
+    @Override public Instant lastHeartbeatAt()           { return lastBeat.get(); }
+    @Override public List<McpToolDescriptor> listTools() { return cachedTools; }
+
+    @Override
+    public void onStateChange(Consumer<ConnectionState> listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void start() {
+        // 抢占:只允许一个 start 在跑
+        ConnectionState prev = state.get();
+        if (prev != ConnectionState.IDLE
+            && prev != ConnectionState.DISCONNECTED
+            && prev != ConnectionState.RECONNECTING) {
+            return;
+        }
+        if (prev == ConnectionState.DISCONNECTED) {
+            state.set(ConnectionState.RECONNECTING);
+        } else {
+            state.set(ConnectionState.CONNECTING);
+        }
+        try {
+            // 1. 拉起子进程
+            ProcessBuilder pb = new ProcessBuilder(cfg.command, cfg.args)
+                .redirectErrorStream(true);
+            if (cfg.env != null) pb.environment().putAll(cfg.env);
+            this.process = pb.start();
+            this.stdin = process.getOutputStream();
+            this.stdout = process.getInputStream();
+
+            // 2. MCP initialize 握手(超时 hbTimeoutMs)
+            JsonNode initResp = sendAndAwait("initialize", buildInitializeParams(), hbTimeoutMs);
+            // 校验 initResp.protocolVersion —— 不匹配可 throw 触发重连
+
+            // 3. initialized 通知(server 收到后正式进入工作状态)
+            sendNotification("notifications/initialized",
+                Collections.<String, Object>emptyMap());
+
+            // 4. 拉 tools/list 缓存 —— 重连后会重新拉一次
+            JsonNode toolsResp = sendAndAwait("tools/list",
+                Collections.<String, Object>emptyMap(), hbTimeoutMs);
+            this.cachedTools = parseToolList(toolsResp);
+
+            // 5. 切 CONNECTED + 重置重连计数 + 启心跳
+            transition(ConnectionState.CONNECTED);
+            lastBeat.set(Instant.now());
+            reconnectAttempts.set(0);
+            hb.scheduleAtFixedRate(new Runnable() {
+                @Override public void run() { probe(); }
+            }, hbIntervalMs, hbIntervalMs, TimeUnit.MILLISECONDS);
+            log.info("[MCP:{}] connected, {} tools cached", cfg.name, cachedTools.size());
+        } catch (Exception e) {
+            log.warn("[MCP:{}] start failed: {}", cfg.name, e.toString());
+            scheduleReconnect();
+        }
+    }
+
+    /** 探活任务 —— 子进程死了 OR ping 超时 → DISCONNECTED → scheduleReconnect。 */
+    private void probe() {
+        if (process == null || !process.isAlive()) {
+            log.warn("[MCP:{}] process dead, scheduling reconnect", cfg.name);
+            transition(ConnectionState.DISCONNECTED);
+            scheduleReconnect();
+            return;
+        }
+        try {
+            sendAndAwait("ping", Collections.<String, Object>emptyMap(), hbTimeoutMs);
+            lastBeat.set(Instant.now());
+        } catch (Exception e) {
+            log.warn("[MCP:{}] heartbeat failed: {}, reconnecting", cfg.name, e.toString());
+            transition(ConnectionState.DISCONNECTED);
+            scheduleReconnect();
+        }
+    }
+
+    private void scheduleReconnect() {
+        // 抢占:从 DISCONNECTED → RECONNECTING;若已是 RECONNECTING 则不重复调度
+        if (!state.compareAndSet(ConnectionState.DISCONNECTED, ConnectionState.RECONNECTING)
+            && state.get() != ConnectionState.RECONNECTING) {
+            return;
+        }
+        int attempt = reconnectAttempts.incrementAndGet();
+        // attempt=1 → 1s;2 → 2s;3 → 4s;4 → 8s;5 → 16s;6 → 32s;7+ → 60s(cap)
+        long delayMs = Math.min(reconnectCapMs, (1L << Math.min(attempt - 1, 6)) * 1000L);
+        log.info("[MCP:{}] reconnect attempt #{}, delay {}ms", cfg.name, attempt, delayMs);
+        hb.schedule(new Runnable() {
+            @Override public void run() {
+                stopProcess();
+                start();
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void stopProcess() {
+        if (process != null && process.isAlive()) {
+            process.destroy();
+            try {
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        process = null;
+    }
+
+    private void transition(ConnectionState next) {
+        ConnectionState prev = state.getAndSet(next);
+        if (prev != next) {
+            for (Consumer<ConnectionState> l : listeners) {
+                try {
+                    l.accept(next);
+                } catch (Exception e) {
+                    log.warn("[MCP:{}] listener threw: {}", cfg.name, e.toString());
+                }
+            }
+        }
+    }
+
+    @Override
+    public McpCallResult callTool(String toolName, JsonNode input) {
+        // 非 CONNECTED 状态直接返 error —— ToolAdapter.execute() 会包成 ToolResult.error
+        if (state.get() != ConnectionState.CONNECTED) {
+            return McpCallResult.error(
+                "MCP server " + cfg.name + " not connected: " + state.get());
+        }
+        try {
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put("name", toolName);
+            params.put("arguments", input);
+            JsonNode resp = sendAndAwait("tools/call", params, 30_000L);
+            return parseCallResult(resp);
+        } catch (Exception e) {
+            return McpCallResult.error("MCP call failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void close() {
+        hb.shutdownNow();
+        stopProcess();
+        transition(ConnectionState.FAILED);
+    }
+
+    // --- 私有 JSON-RPC 帧辅助方法 ---
+    // sendAndAwait(method, params, timeoutMs):写一帧 {jsonrpc:"2.0", id:<auto>, method, params},
+    //   阻塞读 stdout 直到匹配 id 的 response 或 timeout。
+    // sendNotification(method, params):写一帧但不带 id,服务端不回包。
+    // buildInitializeParams():{protocolVersion:"2024-11-05", capabilities:{}, clientInfo:{name:"lingshu-agent", version:"1.0"}}
+    // parseToolList(resp):解析 resp.result.tools → List<McpToolDescriptor>(name / description / inputSchema)。
+    // parseCallResult(resp):解析 resp.result.{content, isError} → McpCallResult。
+}
+
+/**
+ * SSE 传输实现 —— 与 stdio 差异点:
+ *   1. 心跳:不靠 process.isAlive(),改用周期 GET {cfg.url()/health},超时或 5xx → DISCONNECTED → scheduleReconnect
+ *   2. 重连:不杀子进程,关 SSE InputStream 后重建 java.net.http.HttpClient + 重发 initialize
+ *   3. 长连接:SSE EventSource 持续收 server push(tools/listChanged 等),触发重拉 tools/list
+ * 其余状态机 / listener / cachedTools 复用 StdioMcpServerConnection 的模式。
+ */
+public class SseMcpServerConnection implements McpServerConnection {
+    // 关键字段:
+    //   HttpClient http;
+    //   HttpRequest endpointReq;     // GET {cfg.url()} Accept: text/event-stream
+    //   volatile boolean alive;
+    //   SseEventSource eventSource;  // 持续收 server push,tool list changed → listener 重拉 tools/list
+    // scheduleReconnect / transition / close 模式与 stdio 完全一致 —— 不重复样板
+}
+
+/**
+ * 配置 application.yml:
+ *   agent:
+ *     mcp:
+ *       servers:
+ *         - name: github
+ *           transport: stdio
+ *           command: npx
+ *           args: [-y, @modelcontextprotocol/server-github]
+ *           env: { GITHUB_TOKEN: ${env:GITHUB_TOKEN} }
+ *           heartbeat-interval-ms: 30000   # 可选,默认 30s
+ *           reconnect-cap-ms: 60000        # 可选,默认 60s
+ *         - name: remote-svc
+ *           transport: sse
+ *           url: https://mcp.example.com/sse
+ *
+ * 启动日志样例(github 连上 → 被 OOM 杀 → 1s 后重连 → server 已升级多了 1 个 tool):
+ *   [MCP:github] connected, 7 tools cached
+ *   [MCP:github] (re)connected, 7 tools registered
+ *   ...(用户调用 mcp_github_search_repos 正常返回)
+ *   [MCP:github] process dead, scheduling reconnect
+ *   [MCP:github] disconnected (DISCONNECTED)
+ *   [MCP:github] reconnect attempt #1, delay 1000ms
+ *   [MCP:github] connected, 8 tools cached      ← 注意从 7 变 8(MCP server 升级加了 tool)
+ *   [MCP:github] (re)connected, 8 tools registered
+ *
+ * 关键不变项:
+ *   - McpToolAdapter / ToolExecutor.dispatch() / PermissionPolicy.check() 完全不变 —— 重连 / 心跳是
+ *     McpServerConnection 内部事,Agent 框架其他部分 0 改动。
+ *   - 工具调用方感知不到 MCP server 断流 —— McpToolAdapter.execute() 拿到的永远是
+ *     McpCallResult(success / error 包装),非 CONNECTED 时返 error,ToolResult 转成 LLM 可见的 error message。
+ *   - 与 §4.10.1 硬规则 2 兼容 —— Tool 永远只走 ToolExecutor.dispatch(),MCP 断线只是「error 替代 success」,
+ *     不会绕过沙箱 / 权限 / checkpoint 任何一步。
+ */
 ```
 
 #### (3) SpringAI 注解 Tool —— Scheme 由注解生成,执行走我们自己
@@ -4994,6 +5333,7 @@ agent:
 | 1.5.6 | 2026-09-06 | **需求工程层补全(SpecKit + Claude Code 输入源就绪)**:**§0.3 Personas** 新增 3 类典型用户故事(Alice 插件开发者 / Bob 业务配置方 / Charlie 核心仓贡献者)+ KPI 验证路径;**§0.4 v1.0 Acceptance Criteria** 新增 10 条黑盒可断言标准(AC-01 零配置启动 / AC-02 SPI 全 Slot 可替换 / AC-03 Tool 并发加速 / AC-04 取消传播 / AC-05 多租户隔离 / AC-06 YAML 热更无中断 / AC-07 ReAct 上限 / AC-08 插件版本治理 / AC-09 业务配置三件套 / AC-10 A2A AgentCard 自动生成);**§10.1 父 POM** 补 12 项依赖版本表(Spring Boot 3.2.x / Lombok 1.18.30 / OTel 1.32.x / JUnit 5.10.x / AssertJ 3.24.x / Mockito 5.x / Awaitility 4.2.x 等)+ 测试模块依赖完整清单 + 版本升级政策;**§14.15 NFR 总账** 新增 8 个子节(性能预算 9 项 / 安全威胁模型 8 项 / SLO 8 项 / 可观测性四件套 / 兼容性矩阵 11 项 / 支持矩阵 6 项 LTS 政策 / 测试策略 7 层金字塔 / 文档完整度自检 14 项 GA 卡点);**§15 Error Catalog** 新增 8 域 24 条 ErrorCode 全表(Config / Slot / LLM / Tool / Sandbox / ReAct / Audit / 其他)+ `LINGS-<域><编号>` 编码约定;**§16 Glossary** 新增 22 个术语集中释义表(Slot / Provider / SlotRouter / FlowEngine / LinearTurnEngine / ReAct Loop / DelegateTool / SubAgentType / A2aTransport / AgentCard / SkillSource / Skill / Session / Turn / TurnContext / Identity / Instructions / CLAUDE.md / CircuitBreaker / TenantContext / CancellationToken / Zero-config / @Value);**§17 Risk Register** 新增 12 条风险登记(R-01—R-12,带概率×影响=分值排序 + Owner + 触发条件)+ review 节奏(月度 + RC + GA);**§13** 加 v1.5.6 条目;**§0** 标题块状态描述补"进入 SpecKit + Claude Code 实施准备期" |
 | 1.5.7 | 2026-09-08 | **Spring AI 边界硬规则 + 新依赖引入(本次单人 RFC 决议)**:**§4.10.1 新增** `Spring AI 使用边界(LlmProvider + default FlowEngine 硬规则)` 章节,3 条硬规则:(1) ReAct Loop 必须自实现,不得用 Spring AI `ChatClient.prompt().call()` 自动执行;(2) Spring AI 只用两件事 — LLM 协议转换 + `@Tool` Schema 生成,自动 tool 执行禁用(否则 tool 被调两次 + 绕过沙箱);(3) 多 Provider 并存时 `provider name → ChatModel` 必须显式映射表,不得靠 Spring 容器扫 Bean 类型;**§10.1 新增依赖** `org.springframework.ai:spring-ai-bom` 1.0.0-M6(BOM 引入,只引 LlmProvider 协议转换 + Tool Schema 实际用到的子模块,见 R-13 bundle 体积控制);**§17 新增 R-13 / R-14** — R-13 Spring AI bundle 体积膨胀 + transitive 污染(banned-dependencies enforcer 控);R-14 Spring AI 1.x 自身 JDK 17+ 要求 vs LingShu compile target=8 的兼容约束(JDK 8/11/17/21 matrix CI 验证);**§15** 引用 LINGS-L01(未知 Provider)对应硬规则 3;**§13** 加 v1.5.7 条目;**§0** 标题块版本号 + 状态描述同步 |
 | 1.5.8 | 2026-09-08 | **R-14 风险去重 + R-13 风险细化**:**§17** R-14 **删除**(Spring AI 1.x JDK 17+ 要求与 Spring Boot 3.x 完全同类,R-06 已覆盖;R-06 文字补"含 Spring AI 1.x"明确同步);**§17** R-13 重写为**具体场景**(Story #003/#009 实施者误用 `spring-ai-spring-boot-starter` 全家桶 → 拉入 openai-java-client + anthropic-java + jtokkit + Jackson/Netty 版本冲突 → binary 膨胀 40MB+,mitigation 加 `banned-dependencies` enforcer build 阶段 fail + Story 实施者必须 `mvn dependency:tree` 自查后提交);**§10.1** 依赖行 `R-13 / R-14 跟踪` → `R-13 跟踪`(同步去 R-14 引用);**§13** 加 v1.5.8 条目;**§0** 标题块版本号 + 状态描述同步 |
+| 1.5.29 | 2026-09-16 | **§6.5 (2.1) 新增 `McpServerConnection` 实现示例(心跳保活 + 指数退避重连) + §6.5 (2) `McpTransport` 同步改写**:**问题** §6.5 (2) `McpTransport` 假设 MCP server「连上就永远连着」,生产环境 MCP server 子进程可能被 OOM 杀、stdio 僵死、SSE 反向代理超时踢线 —— Agent 进程会因 MCP server 抖动连锁崩盘,且当前文档缺 single-source-of-truth 的心跳 / 重连机制样板,Story #009 实施者只能反推 §4.10.1 错误处理边界自己设计;**根因** §6.5 (2) 原版 `McpServerConnection.start(cfg)` 是一次性同步连接 stub,没引入状态机 / 心跳 / 重连概念;v1.5.x 早期把 MCP 当「远程 Tool 注册中心」轻量集成,没考虑 24×7 长生命周期运维需求;到 v1.5.28 多 Provider 模式 + 9 Slot 体系成熟,**MCP 的「长连接」属性被放大** —— 必须补完整的生命周期管理;**补丁** (1) **§6.5 (2.1) 新增子节**(~270 行):(a) **`McpServerConnection` 接口** `extends AutoCloseable`,8 个方法(name / state / lastHeartbeatAt / listTools / callTool / onStateChange / start / close),Javadoc 明确「非 CONNECTED 状态 callTool 直接返 error 不抛异常」「重连后 listTools 重新拉不复用旧 cache」;(b) **`ConnectionState` enum** —— `IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED` 6 态;(c) **`McpServerConnectionFactory`** —— 按 `cfg.transport()` 分派 stdio / SSE / streamable HTTP 三实现;(d) **`StdioMcpServerConnection` 完整实现**(~180 行)—— `AtomicReference<ConnectionState>` + `AtomicInteger reconnectAttempts` + `CopyOnWriteArrayList<Consumer<...>>` + daemon `ScheduledExecutorService`;`start()` 5 步(拉子进程 → initialize → initialized → tools/list → 切 CONNECTED + 启心跳);`probe()` 双探活(`process.isAlive()` + MCP `ping` 请求等回包,timeout=hbTimeoutMs);`scheduleReconnect()` 走 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 指数退避,失败**无限**重试;(e) **`SseMcpServerConnection` 差异说明段** —— 3 处差异(心跳 = `GET /health` 而非 process.isAlive;重连 = 重建 `HttpClient` 而非杀子进程;长连接 = `SseEventSource` 收 server push 触发 tools/listChanged 重拉);(f) **§6.5 (2) `McpTransport` 同步改写** —— `connect()` 不再直接调 `McpServerConnection.start(cfg)`,改 `McpServerConnectionFactory.create(cfg)` + `onStateChange(listener)` + 异步 `conn.start()`;新增 `onConnectionStateChange()` 私有方法处理 `CONNECTED → register / DISCONNECTED → unregister`;(g) **配置 `application.yml` 示例 + 启动日志样例** —— github server 被 OOM 杀后重连,日志展示 tools 从 7 → 8(MCP server 升级后新增 tool 自动可见);(2) **JDK 8 兼容** —— `AtomicReference` / `AtomicInteger` / `CopyOnWriteArrayList` + `Collections.emptyList()`,**不用** `List.of` / `var` / sealed / records,与 §0 L39 硬约束对齐;(3) **关键不变项** —— `McpToolAdapter` / `ToolExecutor.dispatch()` / `PermissionPolicy.check()` 完全不变,MCP 断流在 `ToolResult` 层只表现为「error 替代 success」,**不会绕过沙箱 / 权限 / checkpoint 任何一步**,与 §4.10.1 硬规则 2 完全兼容;(4) **§0 L4 changelog block 预本条** + **§0 L1 标题版本号同步** `v1.5.28 → v1.5.29`;(5) CLAUDE.md 版本号同步 `1.3.21 → 1.3.22`;**纯文档改动**,代码逻辑零改动;5709 → 5980 行(+271);**修复者**:Claude Code(根据用户 2026-09-16 会话反馈,用户问「McpServerConnection的实现示例是不是补充一下,并且在里面体现出对MCPClient的保活(心跳)和重连」,确认 §6.5 (2) 缺心跳 / 重连机制 + 完整实现示例,要求补) |
 | 1.5.28 | 2026-09-16 | **§5.5 改「多 Provider 模式」样板 + §5.4 同步改「唯一 Bean 名约定」 + §5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步**:**问题** v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制"部署期二选一",同一 Slot 全 ApplicationContext 最多 1 个 `XxxProvider` Bean 注册到 Spring 容器 —— 用户切换 Provider 必须改 classpath / exclude / 改 Bean 名;但 §5.3.1.0 `SlotRouter<P, T>` 父类**一直是多 Provider 友好** —— 构造器收 `List<P> providers`,启动期按 `name()` 收 `Map<String, P>`,`resolve(name, cfg)` 按 name 选 → List<P> **被设计为 size=N**,而 v1.5.27 `@ConditionalOnMissingBean` 把它阉割到 size=1,**多 Provider 能力框架自身不用**;**根因** v1.5.24 §5.5 引入 6 默认 Provider stub 时直接复用 v1.5.0 `DefaultPromptBuilderProvider` 模板的 `@ConditionalOnMissingBean`,当时设计意图是"防止用户覆盖默认",但代价是阉割 §5.3.1.0 Router 的多 Provider 能力;v1.5.25 §5.4 双 `@ConditionalOnMissingBean` 模式进一步固化单 Provider 假设(plugin 之间也互斥);到 v1.5.27 §4.6 ToolExecutor + §5.5 默认 6 Provider stub + §5.3.1.0 7 Router 体系成熟,**单 Provider 假设与 Router 多 Provider 设计目标的张力被放大** —— 用户需要"同 Slot 多 Provider 共存 + 按 name 路由"的能力;**补丁** (1) **§5.5 改「多 Provider 模式」样板**:头部设计原则 blockquote 改写,说明 v1.5.28 起默认 Provider 用 plain `@Bean(name = "<slot>Provider_<name>")` 而**不再用 `@ConditionalOnMissingBean`**;**所有 6 个默认 Provider stub 改写** —— Slot 1 `DefaultPromptBuilderProvider` / Slot 2 `TruncatingCompactorProvider` / Slot 3 `AnthropicLlmProviderFactory` / Slot 4 `StrictPermissionPolicyProvider` / Slot 5 `DefaultToolExecutorProvider` / Slot 6 `FileSessionStoreProvider` / Slot 7 `ProjectClaudeMdSourceProvider` 全部 `@Bean(name = "...")` 显式 Bean 名,每段注释补「`name()` 必须唯一(§5.2 同名竞争)」说明;(2) **§5.5 头部新增「用户切换示例」blockquote** —— `application.yml` 写 `agent.<slot>.name: <provider-name>` 切换 Provider + 启动日志样例 `resolved N provider(s)` 列出全部 N;(3) **§5.5 9-Slot 总表加「Bean 名」列** —— 9 行「Bean 名(🆕 v1.5.28)」字段,如 `promptBuilderProvider_default` / `llmProviderProvider_anthropic` / `flowEngineProvider_linear` / `a2aTransportProvider_http-jsonrpc`,Story 实施者写 `@Bean(name = "...")` 直接抄;Slot 8 / Slot 9 标 🆕 v1.5.28 建议同步改名(§6.1 LinearTurnEngineProvider / §5.6.x HttpJsonRpcA2aTransportProvider);(4) **§5.5「替代实现追加约定」段改写** —— 加 `OpenAiLlmProviderProvider` 完整样板(Bean 名 `llmProviderProvider_openai` + name "openai")+ 用户配置示例 + 启动日志样例(4 个 LlmProvider 共存);(5) **§5.6 Slot 9 `HttpJsonRpcA2aTransportProvider` stub 同步改多 Provider 模式** —— `@Bean(name = "a2aTransportProvider_http-jsonrpc")`;(6) **§5.4 plugin AutoConfiguration 编写约定改写** —— 双 `@ConditionalOnMissingBean` 模式 → 唯一 Bean 名约定:🆕 v1.5.28 起 plugin `@Bean` 必须显式 `name = "<slot>Provider_<pluginName>"`,禁止复用默认 Bean 名;🗑️ v1.5.25 双 `@ConditionalOnMissingBean` 模式加载顺序矩阵已废弃(基于「全 ApplicationContext 最多 1 个 `XxxProvider` Bean」单 Provider 假设,多 Provider 模式下该假设不再成立),但 `BeanDefinitionOverrideException` 应急路径不变(检查 Bean 名是否唯一,不要去开 `spring.main.allow-bean-definition-overriding=true`);**效果** Story #001 / #002 / #003 / #014 / #015 实施者写 `@Bean` 时,统一规范为 `@Bean(name = "<slot>Provider_<name>")`,无需 `@ConditionalOnMissingBean`;同 Slot 多 Provider 共存(默认 + 替代)由 §5.2 SlotRouter 按 name 路由,`agent.<slot>.name` 改 yaml 即可切换 Provider,无需 exclude / rebuild classpath;§5.3.1.0 Router 多 Provider 能力终于被框架自身利用,**List<P> size=N 实际生效**;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.27 → v1.5.28`;CLAUDE.md 版本号同步 `1.3.20 → 1.3.21`;**纯文档改动**,代码逻辑零改动;5639 → 5708 行(+69);**修复者**:Claude Code(根据用户 2026-09-16 会话反馈,用户问「§5.5 改成「多 Provider 模式」样板」,确认 v1.5.27 §5.5 用 `@ConditionalOnMissingBean` 强制单 Provider 模式,与 §5.3.1.0 Router 多 Provider 设计目标冲突;要求 §5.5 改多 Provider 模式) |
 | 1.5.27 | 2026-09-15 | **§4.6 ToolExecutor 接口定义补全(Slot 5 接口契约显式化)**:**问题** §4.6 标题写「Tool 与 ToolExecutor」但实际只定义了 `Tool` / `Skill` / `ToolExecutionContext` / `ToolSink` / `NetworkClient` / `ApprovalGate` / `CancellationToken` / `ToolCallConfig` 8 个接口 —— **缺 `ToolExecutor` 本体**;§4.6 注释虽提到「`ToolExecutor` 不关心 Scheme 来源,也不关心 execute 转发到本地 / MCP server / 反射调用,所有 Tool 一视同仁 —— 详见 §6.5」,§4.10.1 硬规则 2 反复强调「执行必须走 `ToolExecutor.dispatch()`」,§5.5 L2121 stub 也按 `ToolExecutorProvider.create()` 返回 `ToolExecutor` 来命名 —— 但 §4.6 全文没有任何 `ToolExecutor` 接口签名,Story 实施者打开 IDE 时只能从 §4.10.1 / §5.5 / §6.5 散落引用反推,缺 single-source-of-truth;**根因** §4.6 最初只列 Tool 自身契约 + 上下文接口,ToolExecutor 是后来(§4.10.1 / §5.5 / §6.5)逐步引入的"派发边界",但 §4.6 没回头补接口本体;**补丁** 在 §4.6 `Skill extends Tool` 之后 / `ToolExecutionContext` 之前插入 `ToolExecutor` 接口完整定义 —— 单方法 `dispatch(ToolCall call, ToolExecutionContext ctx) → ToolResult`;Javadoc 完整覆盖:(1) **调用契约** `executor.dispatch(call, ctx)` + ReAct Action 阶段每个 `LlmResponse.getToolCalls()` 元素**必须**走此方法(不得直调 `tool.execute()`);(2) **§4.10.1 硬规则 2** 强制要求 —— ToolExecutor 内部统一串入 5 步流水线 `PermissionPolicy.check() §4.7 → ToolRegistry.lookup(name) → TimeoutWrap → SandboxApply(fs / http / process) §4.7 → tool.execute() → Checkpoint`,任何一步绕过 = 沙箱 / 权限 / 取消 / 超时全失效,Spring AI `ChatClient.tools().call()` 自动执行**禁止**使用(否则绕过 ToolExecutor + tool 调两次);(3) **ToolExecutor 与 Tool 接口解耦** —— ToolExecutor 不 import Tool 内部细节,只看 `ToolCall(name + args JSON)` + `ToolExecutionContext`,Tool 实现可手写(§6.5 (1))/ MCP server 暴露(§6.5 (2))/ Spring AI `@Tool` 注解生成仅 schema(§6.5 (3))—— ToolExecutor 一视同仁;(4) **Provider 可插拔** —— 默认 `DefaultToolExecutorProvider`(stub §5.5 L2121)同步串行 dispatch;替代实现 `ParallelToolExecutorProvider`(并发)/ `ObservabilityToolExecutorProvider`(metric / trace),`name()` 走该实现标识("default" / "parallel" / "observability"),`priority()` ≥ 10 胜过默认 `priority=0`,**禁止与默认 `name()` 冲突**;(5) **`@throws` 完整标注** —— `PermissionDeniedException`(§4.7)/ `ToolNotFoundException` / `TimeoutException`(`callConfig.timeoutSeconds`)/ `CancellationException`(Ctrl+C / FlowEngine markDone / 超时联动)4 类异常;**效果** Story 实施者打开 §4.6 即可看到完整 Slot 5 接口契约,无需散落反推;§4.10.1 硬规则 2 引用 `ToolExecutor.dispatch()` 现在有 single-source-of-truth 锚点;**纯文档补全,代码逻辑零改动**;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.26 → v1.5.27`;CLAUDE.md 版本号同步 `1.3.19 → 1.3.20`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问「§4.6 Tool 与 ToolExecutor 这一节补充一下 ToolExecutor 的定义」,确认 §4.6 缺 `ToolExecutor` 接口本体,要求补) |
 | 1.5.26 | 2026-09-15 | **§5.3.1.0 补齐 `FlowEngineRouter` 第 7 个隐式 Router concrete stub + §5.3.1 标题计数 8 → 9 Router + §5.6.4 SPI 总表新增「Router stub 位置」列**:**问题** §5.3.1 标题写「8 个 Router — 6 隐式 + 2 显式」,但实际 `AgentFactory` L3676 直接 `@Autowired` 了 `FlowEngineRouter`,而 §5.3.1.0 只给了 6 个隐式 Router stub(PromptBuilder / LlmProvider / Compactor / PermissionPolicy / ToolExecutor / SessionStore)**漏了** Slot 8 FlowEngineRouter —— 用户/实施者找「`FlowEngineRouter` 类源码」会以为它不存在,只能在 `AgentFactory` 字段引用里看到字段名但没有类定义;**根因** v1.5.18 §5.3 SlotResolver 屏蔽 Router 数 6 → 8 时,只补了 SlotResolver 内部 2 Router(MemorySource + A2aTransport);AgentFactory 的 `FlowEngineRouter` 是 v1.5.18 **之前**就已存在的字段(L3676),但当时没单独成 Router stub 写到 §5.3.1.0 —— **Slot 8 FlowEngine 完全漏在 §5.3.1 体系外**,实际 §5.3 SlotResolver 8 字段 + AgentFactory 1 字段 = **9 Router**;v1.5.23 §5.3.1.0 新增 6 隐式 Router stub 时也没补 `FlowEngineRouter`,到 v1.5.25 §5.4 plugin AutoConfiguration 编写约定才暴露出「`FlowEngineRouter` 没有 concrete 类定义」;**补丁** (1) §5.3.1 标题改「9 Router — 7 隐式 + 2 显式」;(2) §5.3.1.0 标题改「7 个隐式 Router concrete 类(SlotResolver 6 + AgentFactory 1)」,imports 块加 `FlowEngineProvider` + `FlowEngine`;(3) §5.3.1.0 末尾(`CompactorRouter` 之后)追加 `FlowEngineRouter` 第 7 个 stub —— `extends SlotRouter<FlowEngineProvider, FlowEngine>`,super 传 `"FlowEngine"` + Logger,Javadoc 说明**不在 SlotResolver 字段里,由 AgentFactory 直接 `@Autowired`** + 默认 `LinearTurnEngineProvider`(§6.1 L2530)+ 替代 `GoogleAdkFlowEngineProvider`(§4.11.2)/ `AlibabaGraphFlowEngineProvider`(§4.11.3);(4) §5.3.1.0 总表加 1 行(Slot 8 FlowEngineRouter,注入位置 `AgentFactory.flowRouter`,**不在 SlotResolver**),并补「注入位置」新列,Slot 编号对齐 §5.6.4 SPI 总表(1—9);(5) §5.3.1.0 边界与约束 / 与 `MemorySourceRouter` 关键差异 / 实施期顺序建议 全部 6 → 7(Story #001 加 `FlowEngineRouter`);(6) §5.6.4 SPI 总表加「Router stub 位置」列 9 行 —— 7 行指 §5.3.1.0 + 1 行指 §5.3.1.1 + 1 行指 §5.3.1.2;Slot 8 行强调 `FlowEngineRouter` 注入 `AgentFactory` 而**不在 SlotResolver**;**效果** Story #001 实施者打开 IDE 时,AgentFactory 启动校验所需 3 Router(`PermissionPolicyRouter` + `ToolExecutorRouter` + `FlowEngineRouter`)全部有完整 stub,§5.3.1.0 + §5.6.4 双向 cross-ref 一眼定位;§5.3.1 计数从 8 → 9,与实际代码一致;**§13** 加本条目;**§0** 标题块版本号同步 `v1.5.25 → v1.5.26`;CLAUDE.md 版本号同步 `1.3.18 → 1.3.19`;**修复者**:Claude Code(根据用户 2026-09-15 会话反馈,用户问「FlowEngineRouter 的实现示例缺失了,是不是要在 §5.3.1.0 这一节或者其他地方补一下」,确认 §5.3.1.0 只 6 隐式 Router 缺 `FlowEngineRouter` 第 7 个,AgentFactory L3676 有 `@Autowired FlowEngineRouter` 但 §5.3.1 体系外没给类定义,要求补 §5.3.1.0) |
