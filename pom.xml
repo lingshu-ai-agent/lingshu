@@ -27,7 +27,7 @@
         <lingshu.version>${revision}</lingshu.version>
 
         <!-- §10.1 锁定 13 项(Story #001 引用) -->
-        <lombok.version>1.18.30</lombok.version>
+        <lombok.version>1.18.38</lombok.version>
         <reactive-streams.version>1.0.4</reactive-streams.version>
         <opentelemetry.version>1.32.0</opentelemetry.version>
         <junit.version>5.10.1</junit.version>
@@ -89,6 +89,13 @@
     </dependencyManagement>
 
     <build>
+        <plugins>
+            <!-- Activate flatten-maven-plugin in the reactor so ${revision} is resolved in installed poms. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
         <pluginManagement>
             <plugins>
                 <plugin>
@@ -137,6 +144,34 @@
                                     </requireJavaVersion>
                                 </rules>
                             </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!-- flatten-maven-plugin: resolve ${revision} placeholder so downstream modules
+                     can resolve lingshu-parent from the local repo -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>flatten-maven-plugin</artifactId>
+                    <version>1.6.0</version>
+                    <configuration>
+                        <updatePomFile>true</updatePomFile>
+                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>flatten</id>
+                            <phase>process-resources</phase>
+                            <goals>
+                                <goal>flatten</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>flatten.clean</id>
+                            <phase>clean</phase>
+                            <goals>
+                                <goal>clean</goal>
+                            </goals>
                         </execution>
                     </executions>
                 </plugin>

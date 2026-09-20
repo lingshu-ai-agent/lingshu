@@ -13,101 +13,106 @@ import java.util.function.Consumer;
 /**
  * Reactive Streams event surfaced from {@code FlowEngine.runTurn} to {@code Agent.run}.
  *
- * <p>Single abstract root + 11 concrete subclasses covers the ReAct loop surface. The two
- * non-trivial ones ({@link ApprovalRequired}, {@link MessageAppended}) use
+ * <p>Single abstract root + 12 nested static subclasses covers the ReAct loop surface.
+ * Use as {@code AgentEvent.TextDelta} / {@code AgentEvent.TurnCompleted} etc.
+ *
+ * <p>Two non-trivial ones ({@link ApprovalRequired}, {@link MessageAppended}) use
  * {@code @RequiredArgsConstructor} + {@code @Getter} because they hold either a callback
  * ({@link Consumer}) or a polymorphic {@link Message}, which {@code @Value} cannot encode cleanly.
  */
 public abstract class AgentEvent {
-    // marker root — all events extend this
-}
 
-@Getter
-@RequiredArgsConstructor
-class TextDelta extends AgentEvent {
-    /** Incremental text chunk from the model; consumer appends to its buffer. */
-    final String text;
-}
+    private AgentEvent() {
+        // sealed marker — only nested subclasses may extend
+    }
 
-@Getter
-@RequiredArgsConstructor
-class ToolStarted extends AgentEvent {
-    /** Mirrors {@code ToolCall.id}. */
-    final String toolCallId;
-    /** Mirrors {@code ToolCall.name}. */
-    final String name;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class TextDelta extends AgentEvent {
+        /** Incremental text chunk from the model; consumer appends to its buffer. */
+        private final String text;
+    }
 
-@Getter
-@RequiredArgsConstructor
-class ToolProgress extends AgentEvent {
-    final String toolCallId;
-    /** Partial output produced so far (used for streaming read / bash tail). */
-    final String partial;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class ToolStarted extends AgentEvent {
+        /** Mirrors {@code ToolCall.id}. */
+        private final String toolCallId;
+        /** Mirrors {@code ToolCall.name}. */
+        private final String name;
+    }
 
-@Getter
-@RequiredArgsConstructor
-class ToolCompleted extends AgentEvent {
-    final ToolResult result;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class ToolProgress extends AgentEvent {
+        private final String toolCallId;
+        /** Partial output produced so far (used for streaming read / bash tail). */
+        private final String partial;
+    }
 
-@Getter
-@RequiredArgsConstructor
-class TurnCompleted extends AgentEvent {
-    final StopReason reason;
-    final Usage usage;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class ToolCompleted extends AgentEvent {
+        private final ToolResult result;
+    }
 
-/**
- * Engine emitted a {@code Decision.AskUser}; the registered continuation is invoked with the
- * human's eventual answer. Held as a regular class (not {@code @Value}) because
- * {@link Consumer} is a callback, not an immutable field.
- */
-@RequiredArgsConstructor
-@Getter
-class ApprovalRequired extends AgentEvent {
-    final Decision.AskUser ask;
-    final Consumer<Decision> continuation;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class TurnCompleted extends AgentEvent {
+        private final StopReason reason;
+        private final Usage usage;
+    }
 
-/** Engine ran the compactor; subscribers may want to flush UI state. */
-class Compacted extends AgentEvent {
-    // intentionally empty — presence is the signal
-}
+    /**
+     * Engine emitted a {@code Decision.AskUser}; the registered continuation is invoked with the
+     * human's eventual answer. Held as a regular class (not {@code @Value}) because
+     * {@link Consumer} is a callback, not an immutable field.
+     */
+    @RequiredArgsConstructor
+    @Getter
+    public static class ApprovalRequired extends AgentEvent {
+        private final Decision.AskUser ask;
+        private final Consumer<Decision> continuation;
+    }
 
-@Getter
-@RequiredArgsConstructor
-class ErrorEvent extends AgentEvent {
-    final Throwable error;
-}
+    /** Engine ran the compactor; subscribers may want to flush UI state. */
+    public static class Compacted extends AgentEvent {
+        // intentionally empty — presence is the signal
+    }
 
-/** ── ReAct iteration markers (§6.1 LinearTurnEngine) ───────────────── */
+    @Getter
+    @RequiredArgsConstructor
+    public static class ErrorEvent extends AgentEvent {
+        private final Throwable error;
+    }
 
-@Getter
-@RequiredArgsConstructor
-class ReasoningStarted extends AgentEvent {
-    final int step;
-    final int maxSteps;
-}
+    /** ── ReAct iteration markers (§6.1 LinearTurnEngine) ───────────────── */
 
-@Getter
-@RequiredArgsConstructor
-class ObservationAppended extends AgentEvent {
-    final int step;
-    final int toolResultCount;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class ReasoningStarted extends AgentEvent {
+        private final int step;
+        private final int maxSteps;
+    }
 
-@Getter
-@RequiredArgsConstructor
-class MaxStepsExceeded extends AgentEvent {
-    final int maxSteps;
-    final Usage totalUsage;
-}
+    @Getter
+    @RequiredArgsConstructor
+    public static class ObservationAppended extends AgentEvent {
+        private final int step;
+        private final int toolResultCount;
+    }
 
-/** Engine appended a Message to session history (for UI observers that mirror history). */
-@Getter
-@RequiredArgsConstructor
-class MessageAppended extends AgentEvent {
-    final Message message;
+    @Getter
+    @RequiredArgsConstructor
+    public static class MaxStepsExceeded extends AgentEvent {
+        private final int maxSteps;
+        private final Usage totalUsage;
+    }
+
+    /** Engine appended a Message to session history (for UI observers that mirror history). */
+    @Getter
+    @RequiredArgsConstructor
+    public static class MessageAppended extends AgentEvent {
+        private final Message message;
+    }
 }

@@ -1,0 +1,25 @@
+# Story #001 demo-empty — empty application.yml
+# AC-01-1 verification: this file intentionally has no `agent.*` keys.
+# All 27 AgentConfig fields come from AgentConfigDefaults.defaults().
+#
+# To override, uncomment the snippet below and adapt:
+#
+# agent:
+#   llm:
+#     provider: anthropic
+#     model: claude-3-5-sonnet-latest
+#     max-tokens: 8192
+#     temperature: 1.0
+#   flow-engine: linear
+#   tool-executor: default
+#   sandbox:
+#     policy: default
+#     runtime: chroot
+spring:
+  main:
+    banner-mode: off
+    log-startup-info: false
+logging:
+  level:
+    root: INFO
+    ai.lingshu: INFO

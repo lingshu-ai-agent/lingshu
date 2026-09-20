@@ -30,5 +30,12 @@
         </dependency>
     </dependencies>
 
-    <!-- Spring Boot Maven plugin 在 Phase 4 (T22) 加,目前 demo-empty 无 main class,repackage 会 fail -->
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -11,7 +11,7 @@ import lombok.Value;
  */
 @Value
 public class ModelHints {
-    /** Model id string, e.g. {@code "claude-sonnet-4-5"}, {@code "gpt-4o"}, {@code "deepseek-chat"}. */
+    /** Model id string, e.g. {@code "claude-3-5-sonnet-latest"}, {@code "gpt-4o"}, {@code "deepseek-chat"}. */
     String model;
     /** Sampling temperature; {@code null} → provider default. */
     Double temperature;

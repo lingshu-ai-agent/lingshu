@@ -20,7 +20,7 @@ import java.util.Set;
  * <p>Hot path is {@link #resolve(String, AgentConfig)}; startup path is the constructor
  * (logs to the provided {@link Logger}).
  */
-public abstract class SlotRouters<P extends SlotProvider<T>, T> {
+public abstract class SlotRouter<P extends SlotProvider<T>, T> {
 
     private final Map<String, P> byName;
 
@@ -29,7 +29,7 @@ public abstract class SlotRouters<P extends SlotProvider<T>, T> {
      * @param typeName  short name for log lines (e.g. {@code "LlmProvider"})
      * @param log       the Logger to receive the startup summary
      */
-    protected SlotRouters(List<P> providers, String typeName, Logger log) {
+    protected SlotRouter(List<P> providers, String typeName, Logger log) {
         Map<String, P> winners = new LinkedHashMap<>();
         Map<String, List<P>> conflicts = new LinkedHashMap<>();
 

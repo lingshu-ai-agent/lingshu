@@ -64,7 +64,7 @@ public class AgentConfig {
     public static class Llm {
         /** Provider key — {@code "anthropic"}, {@code "openai"}, {@code "deepseek"}, etc. */
         String provider;
-        /** Model id — {@code "claude-sonnet-4-5"}, {@code "gpt-4o"}, {@code "deepseek-chat"}. */
+        /** Model id — {@code "claude-3-5-sonnet-latest"}, {@code "gpt-4o"}, {@code "deepseek-chat"}. */
         String model;
         Integer maxTokens;
         Double temperature;

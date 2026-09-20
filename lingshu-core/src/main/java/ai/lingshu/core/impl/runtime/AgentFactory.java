@@ -1,0 +1,119 @@
+package ai.lingshu.core.impl.runtime;
+
+import ai.lingshu.core.impl.router.Routers;
+import ai.lingshu.core.runtime.Agent;
+import ai.lingshu.core.runtime.AgentConfig;
+import ai.lingshu.core.runtime.FlowEngine;
+import ai.lingshu.core.runtime.Session;
+import ai.lingshu.core.slot.LlmProvider;
+import ai.lingshu.core.slot.PermissionPolicy;
+import ai.lingshu.core.slot.PromptBuilder;
+import ai.lingshu.core.slot.ToolExecutor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/**
+ * AgentFactory — the Spring-singleton entry point (dsh §7.1) that produces prototype-like
+ * {@link Agent} instances per turn.
+ *
+ * <p>Boot invariants enforced in {@link #create(AgentConfig)} (fail-fast on misconfig):
+ * <ol>
+ *   <li>{@code config != null}</li>
+ *   <li>{@code config.getReactMaxSteps() > 0}</li>
+ *   <li>{@code config.getLlmTimeoutSeconds() > 0}</li>
+ *   <li>{@code LlmProvider} resolves</li>
+ *   <li>{@code ToolExecutor} resolves</li>
+ *   <li>{@code PermissionPolicy} resolves</li>
+ *   <li>{@code PromptBuilder} resolves</li>
+ *   <li>{@code FlowEngine} resolves</li>
+ * </ol>
+ *
+ * <p>dsh §7.1.1: this factory is a stateless singleton; each call to {@code create(config)}
+ * yields a fresh Agent holding its own session + resolved Slot instances. Users who want
+ * multi-turn conversation hold the {@link Session} across turns (or call
+ * {@code Agent.continueWithUserMessage}).
+ */
+@Component
+public class AgentFactory {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AgentFactory.class);
+
+    private final Routers.LlmProviderRouter llmRouter;
+    private final Routers.ToolExecutorRouter toolRouter;
+    private final Routers.PermissionPolicyRouter policyRouter;
+    private final Routers.PromptBuilderRouter promptBuilderRouter;
+    private final Routers.FlowEngineRouter flowRouter;
+
+    public AgentFactory(Routers.LlmProviderRouter llmRouter,
+                        Routers.ToolExecutorRouter toolRouter,
+                        Routers.PermissionPolicyRouter policyRouter,
+                        Routers.PromptBuilderRouter promptBuilderRouter,
+                        Routers.FlowEngineRouter flowRouter) {
+        this.llmRouter = llmRouter;
+        this.toolRouter = toolRouter;
+        this.policyRouter = policyRouter;
+        this.promptBuilderRouter = promptBuilderRouter;
+        this.flowRouter = flowRouter;
+    }
+
+    /**
+     * Build an Agent for the given immutable config snapshot. Creates a fresh {@link Session}.
+     *
+     * @throws IllegalArgumentException if config is null, timeouts are non-positive, or
+     *         any of the named Slot providers is unknown
+     */
+    public Agent create(AgentConfig config) {
+        validate(config);
+
+        // Resolve Slots (each Router logs which Provider was chosen)
+        LlmProvider llmProvider = llmRouter.resolve(config.getLlm().getProvider(), config);
+        ToolExecutor toolExecutor = toolRouter.resolve(config.getToolExecutor(), config);
+        PermissionPolicy permissionPolicy = policyRouter.resolve(config.getSandbox().getPolicy(), config);
+        PromptBuilder promptBuilder = promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config);
+        FlowEngine engine = flowRouter.resolve(config.getFlowEngine(), config);
+
+        Session session = new DefaultSession();
+        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{}",
+            session.id(),
+            config.getFlowEngine(),
+            config.getLlm().getProvider(),
+            config.getLlm().getModel());
+
+        // Story #001: ToolExecutor / PermissionPolicy / PromptBuilder are resolved but
+        // not yet injected into the LinearTurnEngine — the engine wires only prompt+llm
+        // for the demo path. Story #004 / #008 inject them into a richer engine variant.
+        return new DefaultAgent(session, config, engine);
+    }
+
+    private static void validate(AgentConfig config) {
+        if (config == null) {
+            throw new IllegalArgumentException("AgentConfig must not be null");
+        }
+        if (config.getReactMaxSteps() <= 0) {
+            throw new IllegalArgumentException(
+                "config.reactMaxSteps must be > 0, got " + config.getReactMaxSteps());
+        }
+        if (config.getLlmTimeoutSeconds() <= 0) {
+            throw new IllegalArgumentException(
+                "config.llmTimeoutSeconds must be > 0, got " + config.getLlmTimeoutSeconds());
+        }
+        // The Router.resolve calls below also enforce non-null slot names; doing them
+        // explicitly here gives a clearer stack trace for AC-01-1 failures.
+        if (config.getFlowEngine() == null || config.getFlowEngine().isEmpty()) {
+            throw new IllegalArgumentException("config.flowEngine is required");
+        }
+        if (config.getLlm() == null || config.getLlm().getProvider() == null) {
+            throw new IllegalArgumentException("config.llm.provider is required");
+        }
+        if (config.getToolExecutor() == null || config.getToolExecutor().isEmpty()) {
+            throw new IllegalArgumentException("config.toolExecutor is required");
+        }
+        if (config.getSandbox() == null || config.getSandbox().getPolicy() == null) {
+            throw new IllegalArgumentException("config.sandbox.policy is required");
+        }
+        if (config.getPrompt() == null || config.getPrompt().getBuilder() == null) {
+            throw new IllegalArgumentException("config.prompt.builder is required");
+        }
+    }
+}

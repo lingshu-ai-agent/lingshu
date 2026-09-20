@@ -3,6 +3,7 @@ target/
 *.jar
 *.war
 *.ear
+.flattened-pom.xml
 
 # IDE
 .idea/
