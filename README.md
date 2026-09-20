@@ -214,14 +214,25 @@ lingshu/
 
 ## 🧪 跑通一个最小 Demo
 
+### Story #001 zero-config-bootstrap(空 yml 启动 + 首 token)
+
 ```bash
 git clone https://github.com/lingshu-ai-agent/lingshu.git
 cd lingshu
+export ANTHROPIC_AUTH_TOKEN=<your-key>
+export ANTHROPIC_BASE_URL=https://api.anthropic.com        # 或代理路径如 https://your-proxy/anthropic
+mvn -pl lingshu-examples/demo-empty -am spring-boot:run
+```
+
+`application.yml` 故意为空,所有 27 个 `AgentConfig` 字段由 `AgentConfigDefaults.defaults()` 提供。
+首次 LLM token 在 ~5s 内返回,stderr 无 ERROR(AC-01-1)。
+
+### Fibonacci 演示(规划中,Story #002+)
+
+```bash
 mvn -pl lingshu-examples/demo-fibonacci -am exec:java \
     -Dexec.mainClass=ai.lingshu.examples.fibonacci.DemoFibonacciApp
 ```
-
-看到 `Final: public static long fib(int n) {...}` 即成功。
 
 ---
 
