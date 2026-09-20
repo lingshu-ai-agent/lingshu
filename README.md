@@ -316,6 +316,33 @@ agent:
     timeout-seconds: 30     # 单个 Tool 超时(0 = 不超时)
 ```
 
+### Story #005 cancellation-token(协作式取消 + 三层贯通 + AC-04 200ms)
+
+dsh §14.12 N12: FlowEngine / ToolExecutor / LlmProvider 三层共用同一个 `CancellationToken`,Ctrl-C / JVM shutdown hook / turn 超时 / 编程式 `markDone` 4 种触发源都通过它发出信号。
+
+**关键不变量**:
+- `TurnContext.cancellation() == ToolExecutionContext.cancellation()`(共享引用,非 equals)
+- `DefaultTurnContext.createWithBroadcast` 自动把 turn 的 token 注册到 `AgentFactory.BROADCAST_REGISTRY`
+- `AgentFactory.@PostConstruct registerJvmShutdownHook` 在 JVM 关停时调 `broadcastCancel()`,所有 in-flight turns 在 AC-04 200ms 内退出
+- `LinearTurnEngine` 用 200ms 轮询预算(`waitForLlm` + `waitForTool`),即使 LLM / Tool 永远不返回也能在 200ms 内感知取消
+
+```bash
+mvn -pl lingshu-core test -Dtest='CancellationTokensTest,CancellationTokenSharingTest,LinearTurnEngineCancellationIT,AgentFactoryBroadcastCancelTest'
+```
+
+**测试覆盖**(23 case / 4 类):
+- `CancellationTokensTest`(8 case)— AtomicBoolean 幂等 fire / CopyOnWriteArrayList 安全迭代 / per-callback 异常隔离 / 并发注册 stress
+- `CancellationTokenSharingTest`(6 case)— `==` 身份共享 / 多 turn 隔离 / 4-arg 构造器 back-compat
+- `LinearTurnEngineCancellationIT`(3 case)— **AC-04 黑盒**(实测 cancel→exit **0ms**,预算 200ms)/ 预取消 / mid-tool-dispatch 取消
+- `AgentFactoryBroadcastCancelTest`(6 case)— broadcast 全发 / 幂等 / `activeTurnCount` 反射 / 未注册 turn 忽略
+
+**AC-04 黑盒输出**:
+```
+[AC-04] cancel→exit elapsedMs=0 (budget=200)
+```
+
+**LlmProvider 取消内部轮询**(US3)推迟到 Story #005b — 不阻塞 AC-04:200ms `waitForLlm` 预算 + 引擎侧轮询已覆盖 N12 三层贯通契约。
+
 ---
 
 ## 📚 文档
@@ -327,6 +354,7 @@ agent:
 - 🔌 [SPI 扩展指南](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/spi.md)
 - 🔄 [SPI 版本兼容与 SlotRouter(Story #003)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/spi-versioning.md)
 - ⚡ [并行 Tool 调度与并发配置(Story #004)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/parallel-tools.md)
+- ⏹️ [协作式取消与三层贯通(Story #005)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cancellation.md)
 - 🛡️ [Sandbox 与安全](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/sandbox.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
