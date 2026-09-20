@@ -1,9 +1,12 @@
 package ai.lingshu.core.runtime;
 
+import ai.lingshu.core.exception.LingsConfigException;
+import ai.lingshu.core.tenant.TenantConfig;
 import lombok.Value;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +60,8 @@ public class AgentConfig {
     Memory memory;
     /** Slot 9 — A2A transport name; resolved via A2aTransportRouter. */
     String a2aTransport;
+    /** 🆕 Story #006 — multi-tenant config; null when no tenants are configured (single-tenant mode). */
+    TenantsConfig tenants;
 
     // ── Nested config records ───────────────────────────────────────────
 
@@ -176,5 +181,78 @@ public class AgentConfig {
         boolean enabled;
         Path project;
         Path user;
+    }
+
+    /**
+     * 🆕 Story #006 — multi-tenant configuration block.
+     *
+     * <p>{@code null} (the default) means single-tenant mode — {@link AgentFactory}
+     * skips tenant validation, no {@link TenantConfigProvider} is consulted, and
+     * {@code TenantContext.current()} is allowed to be {@code null} throughout.
+     *
+     * <p>When {@code map} is non-empty, {@link #isEnabled()} returns {@code true}
+     * and the engine enforces the four-dimensional isolation (Configuration /
+     * Session / Sandbox / Cost) per dsh §14.9 N9.
+     *
+     * <p>Validation is performed eagerly in {@link #validate()} — fail-fast at
+     * {@link AgentFactory#create} time so a typo in {@code application.yml}
+     * surfaces as a {@link LingsConfigException} with the exact field paths
+     * rather than a confusing {@code NullPointerException} mid-turn.
+     */
+    @Value
+    public static class TenantsConfig {
+
+        /** True iff the map is non-empty (i.e. multi-tenant mode is active). */
+        boolean enabled;
+
+        /** tenantId → TenantConfig mapping; empty in single-tenant mode. */
+        Map<String, TenantConfig> map;
+
+        /**
+         * Validate every tenant config; aggregate all failures into a single
+         * {@link LingsConfigException} so the user sees every problem in one shot.
+         *
+         * @throws LingsConfigException with code {@code "C02"} when any field is
+         *         missing, the size limit is exceeded, or a key/value mismatch is detected
+         */
+        public void validate() {
+            List<String> errors = new ArrayList<>();
+            if (map.size() > 1000) {
+                errors.add("tenants.map.size() = " + map.size() + " exceeds limit 1000");
+            }
+            for (Map.Entry<String, TenantConfig> e : map.entrySet()) {
+                String tid = e.getKey();
+                TenantConfig tc = e.getValue();
+                if (tid == null || !tid.matches("[a-zA-Z0-9_-]{1,64}")) {
+                    errors.add("tenants." + tid + ": invalid tenantId format");
+                }
+                if (tc == null) {
+                    errors.add("tenants." + tid + ": config is null");
+                    continue;
+                }
+                if (!tid.equals(tc.getTenantId())) {
+                    errors.add("tenants." + tid + ": key/value tenantId mismatch (key='"
+                        + tid + "', value='" + tc.getTenantId() + "')");
+                }
+                if (tc.getMemory() == null || tc.getMemory().getDir() == null) {
+                    errors.add("tenants." + tid + ".memory.dir is required");
+                }
+                if (tc.getSandbox() == null || tc.getSandbox().getCommandWhitelist() == null) {
+                    errors.add("tenants." + tid + ".sandbox.commandWhitelist is required");
+                }
+                if (tc.getCost() == null || tc.getCost().getSessionBudgetMicros() <= 0) {
+                    errors.add("tenants." + tid + ".cost.sessionBudgetMicros must be > 0");
+                }
+            }
+            if (!errors.isEmpty()) {
+                throw new LingsConfigException("C02",
+                    "tenants config validation failed:\n  - " + String.join("\n  - ", errors));
+            }
+        }
+
+        /** Single-tenant mode default — empty map, {@link #isEnabled()} returns false. */
+        public static TenantsConfig defaults() {
+            return new TenantsConfig(false, Collections.emptyMap());
+        }
     }
 }

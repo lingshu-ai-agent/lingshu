@@ -97,7 +97,8 @@ class LinearTurnEngineProviderTest {
             AgentConfig.Identity.defaults(),
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
-            null);
+            null,               // a2aTransport
+            null);              // tenants (Story #006 — single-tenant mode)
     }
 
     @Test
@@ -171,7 +172,8 @@ class LinearTurnEngineProviderTest {
             AgentConfig.Identity.defaults(),
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
-            null);
+            null,               // a2aTransport
+            null);              // tenants (Story #006 — single-tenant mode)
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.create(bad))
             .isInstanceOf(IllegalArgumentException.class)

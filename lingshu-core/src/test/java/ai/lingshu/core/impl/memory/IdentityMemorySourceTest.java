@@ -87,7 +87,8 @@ class IdentityMemorySourceTest {
             base.getApprovalTimeoutSeconds(), base.getTurnTimeoutSeconds(),
             base.getLlmTimeoutSeconds(), base.getReactMaxSteps(),
             id, base.getInstructions(), base.getMemory(),
-            base.getA2aTransport());
+            base.getA2aTransport(),
+            base.getTenants());
     }
 
     /** Unused — ensures TurnContext import is recognized. */

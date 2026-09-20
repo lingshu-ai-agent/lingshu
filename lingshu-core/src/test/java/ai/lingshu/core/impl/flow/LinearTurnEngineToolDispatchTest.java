@@ -77,7 +77,8 @@ class LinearTurnEngineToolDispatchTest {
             AgentConfig.Identity.defaults(),
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
-            null                   // a2aTransport
+            null,                  // a2aTransport
+            null                   // tenants (Story #006 — single-tenant mode)
         );
     }
 

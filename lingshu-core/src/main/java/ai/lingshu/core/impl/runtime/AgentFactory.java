@@ -165,6 +165,9 @@ public class AgentFactory {
      */
     public Agent create(AgentConfig config) {
         validate(config);
+        // 🆕 Story #006 — fail-fast on malformed tenant config (FR-010 + LINGS-C02).
+        // No-op in single-tenant mode (config.getTenants() == null).
+        validateTenants(config);
 
         // Resolve Slots (each Router logs which Provider was chosen)
         LlmProvider llmProvider = llmRouter.resolve(config.getLlm().getProvider(), config);
@@ -217,6 +220,21 @@ public class AgentFactory {
         if (config.getPrompt() == null || config.getPrompt().getBuilder() == null) {
             throw new IllegalArgumentException("config.prompt.builder is required");
         }
+    }
+
+    /**
+     * 🆕 Story #006 (FR-010) — validate the {@code agent.tenants} block, if present.
+     *
+     * <p>Single-tenant mode (config.getTenants() == null) skips entirely — Story #001—#005
+     * behavior is unchanged. Multi-tenant mode raises {@link ai.lingshu.core.exception.LingsConfigException}
+     * ({@code LINGS-C02}) if the map exceeds 1000 entries, any tenant has missing
+     * required fields, or key/value tenantId mismatch is detected.
+     */
+    private static void validateTenants(AgentConfig config) {
+        if (config.getTenants() == null) {
+            return;
+        }
+        config.getTenants().validate();
     }
 
     /**

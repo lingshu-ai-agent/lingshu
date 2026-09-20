@@ -59,7 +59,8 @@ class DefaultPromptBuilderTest {
             null, null, null,
             8, 60, 300, 0, 60, 50,
             id, ins, mem,
-            "default");
+            "default",         // a2aTransport
+            null);             // tenants (Story #006 — single-tenant mode)
     }
 
     // ── [ROLE] segment ──────────────────────────────────────────────
