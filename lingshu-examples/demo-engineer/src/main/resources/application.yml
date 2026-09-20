@@ -1,0 +1,54 @@
+# Story #002 demo-engineer — business configuration trio + 5-segment assembly
+# AC-09 black-box verification: full identity + instructions + CLAUDE.md memory.
+#
+# This is the Bob (业务配置方) pattern: write YAML only, no Java code beyond the
+# stock DemoEngineerApplication, and the Agent should still get a 5-segment system
+# prompt with [ROLE] + [INSTRUCTIONS] + [PROJECT MEMORY] + history + user input.
+spring:
+  main:
+    banner-mode: off
+    log-startup-info: false
+  application:
+    name: lsh-engineer
+
+agent:
+  identity:
+    name: lingshu-engineer
+    role: Java 后端工程师
+    language: zh
+    traits:
+      - 严谨
+      - 简洁
+      - 举反例
+    tone: 直接不啰嗦
+  instructions:
+    file: ./prompts/system-engineer.md
+    template-engine: mustache
+    variables:
+      project_root: lingshu-examples/demo-engineer
+      current_date: "2026-09-20"
+  memory:
+    claude-md:
+      enabled: true
+      project: ./CLAUDE.md
+      user: ~/.lingshu/CLAUDE.md
+    extras:
+      - ./docs/architecture.md
+      - ./docs/conventions.md
+  prompt:
+    builder: default
+    memory-sources:
+      - identity
+      - project-claude-md
+      - user-claude-md
+      - project-tree
+  llm:
+    provider: anthropic
+    model: claude-3-5-sonnet-latest
+    max-tokens: 8192
+    temperature: 1.0
+
+logging:
+  level:
+    root: INFO
+    ai.lingshu: INFO

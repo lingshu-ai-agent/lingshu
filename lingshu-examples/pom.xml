@@ -19,6 +19,7 @@
 
     <modules>
         <module>demo-empty</module>
+        <module>demo-engineer</module>
     </modules>
 
     <dependencies>

@@ -6,25 +6,25 @@ import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.message.ToolSpec;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PromptBuilder;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Default 5-segment prompt builder (dsh §4.5.1) — Story #001 minimum viable.
+ * Default 5-segment prompt builder (dsh §4.5.1) — Story #001 + #002.
  *
  * <p>Assembles a single system message from (in order):
  * <ol>
  *   <li>{@code [ROLE]} — identity.name + role + traits + tone + language</li>
- *   <li>{@code [INSTRUCTIONS]} — file or inline (mustache rendering skipped in v1)</li>
- *   <li>{@code [PROJECT MEMORY]} — {@code ./CLAUDE.md} + {@code ~/.lingshu/CLAUDE.md} + extras</li>
+ *   <li>{@code [INSTRUCTIONS]} — file or inline (mustache {@code {{var}}} rendering
+ *       applied if {@code instructions.templateEngine == "mustache"})</li>
+ *   <li>{@code [PROJECT MEMORY]} — concatenated {@link MemorySource#load} results
+ *       from the resolved MemorySource list (Story #002); joined by
+ *       {@code \n\n── separator ──\n\n} between non-null blocks</li>
  *   <li>{@code [CONVERSATION HISTORY]} — session history (read-only view of prior messages)</li>
  *   <li>{@code [USER MESSAGE]} — the current turn's input</li>
  * </ol>
@@ -32,15 +32,30 @@ import java.util.List;
  * <p>Empty segments are skipped silently — the system message stays compact.
  * Tool schemas are returned in the {@link Prompt#tools} field (not stuffed into the
  * system text) per dsh §4.5.1 v1.5.13.
+ *
+ * <p>Story #002: the MemorySource list is provided at construction time (resolved
+ * once by {@code DefaultPromptBuilderProvider} via {@code MemorySourceRouter}).
+ * Each {@code build(ctx)} call iterates the same list and calls {@code load(ctx)}
+ * on each source — sources are expected to be re-entrant (read-only over ctx).
  */
 public class DefaultPromptBuilder implements PromptBuilder {
+
+    /** Separator inserted between non-null {@code [PROJECT MEMORY]} blocks. */
+    private static final String MEMORY_SEPARATOR = "\n\n── separator ──\n\n";
+
+    private final List<MemorySource> memorySources;
+
+    public DefaultPromptBuilder(List<MemorySource> memorySources) {
+        this.memorySources = memorySources != null
+            ? Collections.unmodifiableList(new ArrayList<>(memorySources))
+            : Collections.<MemorySource>emptyList();
+    }
 
     @Override
     public Prompt build(TurnContext ctx) {
         AgentConfig cfg = ctx.config();
         AgentConfig.Identity id = cfg.getIdentity() != null ? cfg.getIdentity() : AgentConfig.Identity.defaults();
         AgentConfig.Instructions ins = cfg.getInstructions() != null ? cfg.getInstructions() : AgentConfig.Instructions.empty();
-        AgentConfig.Memory mem = cfg.getMemory() != null ? cfg.getMemory() : AgentConfig.Memory.defaults();
 
         StringBuilder sys = new StringBuilder();
 
@@ -60,19 +75,25 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // ── [INSTRUCTIONS] ──────────────────────────────────────────
         String insText = readInstructions(ins);
         if (!isBlank(insText)) {
-            if (sys.length() > 0) sys.append("\n\n");
-            sys.append(insText);
+            insText = renderTemplate(insText, ins.getVariables(), ins.getTemplateEngine());
+            if (!isBlank(insText)) {
+                if (sys.length() > 0) sys.append("\n\n");
+                sys.append(insText);
+            }
         }
 
         // ── [PROJECT MEMORY] ────────────────────────────────────────
-        if (mem.getClaudeMd() != null && mem.getClaudeMd().isEnabled()) {
-            appendFileIfExists(sys, mem.getClaudeMd().getProject());
-            appendFileIfExists(sys, mem.getClaudeMd().getUser());
+        // Story #002: iterate resolved MemorySource list, join non-null with separator
+        StringBuilder memSb = new StringBuilder();
+        for (MemorySource ms : memorySources) {
+            String block = ms.load(ctx);
+            if (isBlank(block)) continue;
+            if (memSb.length() > 0) memSb.append(MEMORY_SEPARATOR);
+            memSb.append(block);
         }
-        if (mem.getExtras() != null) {
-            for (String extraPath : mem.getExtras()) {
-                appendFileIfExists(sys, Paths.get(extraPath));
-            }
+        if (memSb.length() > 0) {
+            if (sys.length() > 0) sys.append("\n\n");
+            sys.append(memSb.toString());
         }
 
         // ── Build messages list ─────────────────────────────────────
@@ -93,8 +114,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
         messages.add(new Message.User(ctx.userInput() == null ? "" : ctx.userInput()));
 
         // ── [TOOL SCHEMAS] — independent Prompt.tools field ─────────
-        // Story #001 demo path: no tools registered yet, so this stays empty.
-        // Story #002 / #004 wire actual tools into the registry.
+        // Story #001 / #002: no tools registered yet, so this stays empty.
+        // Story #004 wires actual tools into the registry.
         List<ToolSpec> toolSpecs = Collections.emptyList();
 
         // ── ModelHints ──────────────────────────────────────────────
@@ -118,27 +139,44 @@ public class DefaultPromptBuilder implements PromptBuilder {
         sb.append(line);
     }
 
-    private static void appendFileIfExists(StringBuilder sb, Path p) {
-        if (p == null) return;
-        try {
-            if (!Files.exists(p)) return;
-            String content = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
-            if (isBlank(content)) return;
-            if (sb.length() > 0) sb.append("\n\n");
-            sb.append(content);
-        } catch (IOException ex) {
-            // Silent skip — missing / unreadable memory files don't break the build.
-        }
-    }
-
     private static String readInstructions(AgentConfig.Instructions ins) {
-        if (ins.getFile() != null && Files.exists(ins.getFile())) {
+        if (ins.getFile() != null && java.nio.file.Files.exists(ins.getFile())) {
             try {
-                return new String(Files.readAllBytes(ins.getFile()), StandardCharsets.UTF_8);
-            } catch (IOException ex) {
+                return new String(java.nio.file.Files.readAllBytes(ins.getFile()),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            } catch (java.io.IOException ex) {
                 // fall through to inline
             }
         }
         return ins.getInline();
+    }
+
+    /**
+     * Render {@code {{var}}} placeholders from {@code variables} map.
+     *
+     * <p>Story #002 v1 implementation (research.md D-01): uses {@link String#replace}
+     * with literal {@code {{var}}} → {@code vars.get(var)}. Unknown placeholders are
+     * left as literal text (no exception) so the LLM sees debuggable input.
+     *
+     * @param input  the template text (may be null → returned as-is)
+     * @param vars   placeholder values (null or empty → no rendering)
+     * @param engine {@code "mustache"} to apply; anything else (including null,
+     *               {@code "none"}, {@code ""}) → passthrough
+     * @return rendered text, or the original {@code input} if rendering is disabled
+     */
+    static String renderTemplate(String input, Map<String, String> vars, String engine) {
+        if (input == null) return null;
+        if (vars == null || vars.isEmpty()) return input;
+        if (engine == null || !engine.equalsIgnoreCase("mustache")) return input;
+
+        // LinkedHashMap iteration order = declaration order — prevents later
+        // replacement from clobbering earlier placeholders if values contain {{...}}.
+        String result = input;
+        for (Map.Entry<String, String> e : vars.entrySet()) {
+            if (e.getKey() == null) continue;
+            String value = e.getValue() == null ? "" : e.getValue();
+            result = result.replace("{{" + e.getKey() + "}}", value);
+        }
+        return result;
     }
 }
