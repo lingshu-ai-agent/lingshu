@@ -1,6 +1,7 @@
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 /**
  * Static / dynamic memory source feeding {@code [PROJECT MEMORY]} (dsh §4.5).
@@ -14,6 +15,10 @@ import ai.lingshu.core.runtime.TurnContext;
  * the engine, not a static config-driven block (see dsh §4.5 tail paragraph).
  */
 public interface MemorySource {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /** Stable identifier used for configuration ({@code agent.prompt.memory-sources: [identity, project-tree]}). */
     String name();

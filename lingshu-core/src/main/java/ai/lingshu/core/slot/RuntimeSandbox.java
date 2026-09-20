@@ -1,5 +1,7 @@
 package ai.lingshu.core.slot;
 
+import ai.lingshu.core.spi.ContractVersionRef;
+
 import java.io.IOException;
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
@@ -16,6 +18,10 @@ import java.util.List;
  * {@code Path} filter to confine reads/writes to the configured working directory.
  */
 public interface RuntimeSandbox {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /** Bounded filesystem handle; out-of-bounds access throws {@code AccessDeniedException}. */
     FileSystem fs();

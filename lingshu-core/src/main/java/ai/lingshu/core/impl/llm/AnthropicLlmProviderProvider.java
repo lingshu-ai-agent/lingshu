@@ -33,6 +33,9 @@ public class AnthropicLlmProviderProvider implements Providers.LlmProviderProvid
 
     @Override public int priority() { return 0; }
 
+    /** 🆕 Story #003 — contract version must match {@link ai.lingshu.core.slot.LlmProvider#CONTRACT_VERSION}. */
+    @Override public String version() { return "1.0.0"; }
+
     @Override
     public ai.lingshu.core.slot.LlmProvider create(AgentConfig config) {
         String apiKey = resolveApiKey();

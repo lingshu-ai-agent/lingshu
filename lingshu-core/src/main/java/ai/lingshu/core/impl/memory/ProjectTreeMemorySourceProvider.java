@@ -13,6 +13,8 @@ public class ProjectTreeMemorySourceProvider implements Providers.MemorySourcePr
 
     @Override public String name() { return "project-tree"; }
     @Override public int priority() { return 40; }
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
 
     @Override
     public MemorySource create(AgentConfig config) {

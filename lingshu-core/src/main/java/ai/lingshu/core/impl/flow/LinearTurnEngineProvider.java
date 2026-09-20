@@ -24,6 +24,9 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
     @Override
     public int priority() { return 0; }
 
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
+
     private final Routers.PromptBuilderRouter promptBuilderRouter;
     private final Routers.LlmProviderRouter llmProviderRouter;
 

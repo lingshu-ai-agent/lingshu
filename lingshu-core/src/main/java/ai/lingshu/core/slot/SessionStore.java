@@ -1,6 +1,7 @@
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.Checkpoint;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 import java.util.Optional;
 
@@ -19,6 +20,10 @@ import java.util.Optional;
  * of backend is configuration, not code.
  */
 public interface SessionStore {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /** Persist the snapshot; replaces any prior checkpoint for the same session id. */
     void save(Checkpoint checkpoint);

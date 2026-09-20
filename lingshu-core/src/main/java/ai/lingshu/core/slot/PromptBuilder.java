@@ -2,6 +2,7 @@ package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 /**
  * Slot 7 — Assembles the {@link Prompt} (messages + tools + hints) the LLM will see (dsh §4.5).
@@ -24,6 +25,10 @@ import ai.lingshu.core.runtime.TurnContext;
  * required methods.
  */
 public interface PromptBuilder {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Build the prompt for the current turn.

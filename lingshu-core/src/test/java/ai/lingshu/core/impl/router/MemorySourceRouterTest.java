@@ -25,6 +25,7 @@ class MemorySourceRouterTest {
         return new Providers.MemorySourceProvider() {
             @Override public String name() { return name; }
             @Override public int priority() { return priority; }
+            @Override public String version() { return "1.0.0"; }
             @Override public MemorySource create(AgentConfig cfg) {
                 return new MemorySource() {
                     @Override public String name() { return name; }

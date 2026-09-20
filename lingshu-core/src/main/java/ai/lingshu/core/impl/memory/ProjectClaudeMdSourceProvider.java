@@ -14,6 +14,8 @@ public class ProjectClaudeMdSourceProvider implements Providers.MemorySourceProv
 
     @Override public String name() { return "project-claude-md"; }
     @Override public int priority() { return 10; }
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
 
     @Override
     public MemorySource create(AgentConfig config) {

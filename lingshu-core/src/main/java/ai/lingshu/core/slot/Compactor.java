@@ -2,6 +2,7 @@ package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 /**
  * Slot 6 — History compactor (dsh §4.9). Reduces conversation length when it grows past
@@ -21,6 +22,10 @@ import ai.lingshu.core.runtime.TurnContext;
  * compactor that calls the LLM to write the truncated messages into a single summary message.
  */
 public interface Compactor {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Decide whether to compact before the next LLM call.

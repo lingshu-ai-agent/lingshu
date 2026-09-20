@@ -32,6 +32,9 @@ public class DefaultPromptBuilderProvider implements Providers.PromptBuilderProv
 
     @Override public int priority() { return 0; }
 
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
+
     @Override
     public PromptBuilder create(AgentConfig config) {
         List<MemorySource> sources = memorySourceRouter.resolveAll(
