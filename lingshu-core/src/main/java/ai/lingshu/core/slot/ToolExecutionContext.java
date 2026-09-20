@@ -69,11 +69,38 @@ public interface ToolExecutionContext {
         Decision ask(Decision.AskUser ask);
     }
 
-    /** Cancellation source the tool polls; cancel callbacks registered via {@link #onCancel}. */
+    /**
+     * Cancellation source the tool polls; cancel callbacks registered via {@link #onCancel}.
+     *
+     * <p><b>Cooperative cancellation semantics (dsh §14.12):</b> {@link #fire()} sets the
+     * cancellation flag — implementations (FlowEngine, Tool, LlmProvider) must poll
+     * {@link #isCancelled()} or register callbacks to react. {@code fire()} is
+     * <b>NOT</b> equivalent to {@link Thread#interrupt()}; cooperative threads must check
+     * the token explicitly.
+     *
+     * <p><b>Idempotent:</b> multiple {@code fire()} invocations after the first are no-ops.
+     * Callbacks are fired exactly once (or zero times if the token is never fired).
+     *
+     * <p><b>🆕 Story #005</b> added the {@link #fire()} default method for back-compat —
+     * existing impls without explicit {@code fire()} get a no-op default.
+     */
     interface CancellationToken {
         boolean isCancelled();
 
         /** Register a callback; returned {@link Runnable} unregisters it. */
         Runnable onCancel(Runnable callback);
+
+        /**
+         * Trigger cancellation. Idempotent — second invocation is a no-op. Synchronously
+         * fires all registered callbacks in registration order; per-callback exceptions
+         * are swallowed (logged at WARN) and do not block sibling callbacks.
+         *
+         * <p>Default implementation is empty (back-compat for Story #004 era tokens).
+         * Story #005's {@code SimpleCancellationToken} overrides this with the actual
+         * flag-set + callback-iteration logic.
+         */
+        default void fire() {
+            /* no-op default for back-compat */
+        }
     }
 }

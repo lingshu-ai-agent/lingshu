@@ -77,15 +77,10 @@ public class DefaultToolExecutionContext implements ToolExecutionContext {
 
     @Override
     public CancellationToken cancellation() {
-        return new CancellationToken() {
-            @Override
-            public boolean isCancelled() { return turnCtx.done(); }
-            @Override
-            public Runnable onCancel(Runnable callback) {
-                // Story #005 will wire up real cancellation; Story #004 no-op
-                return new Runnable() { @Override public void run() { /* unregister */ } };
-            }
-        };
+        // 🆕 Story #005 — delegate to TurnContext's real token. Shared identity means
+        // Ctrl-C propagated to the turn reaches in-flight Tool polls directly (dsh §14.12
+        // Tool layer; US2 S1 — same reference via `==`).
+        return turnCtx.cancellation();
     }
 
     @Override

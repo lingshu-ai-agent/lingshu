@@ -134,8 +134,11 @@ public class DefaultAgent implements Agent {
         if (session instanceof DefaultSession) {
             ((DefaultSession) session).append(new Message.User(userInput));
         }
-        // Story #001 single-receiver; the demo path passes null and the engine is non-reactive.
-        return new DefaultTurnContext(session, config, null, userInput);
+        // 🆕 Story #005 (FR-011) — use createWithBroadcast so the turn's cancellation token
+        // auto-registers with AgentFactory's static broadcast registry. Ctrl-C reaches the
+        // JVM shutdown hook → AgentFactory.broadcastCancel() → all in-flight turns see
+        // isCancelled() == true within the AC-04 200ms budget.
+        return DefaultTurnContext.createWithBroadcast(session, config, null, userInput);
     }
 
     // ── BufferedPublisher — synchronous engine replay for lazy subscribers ──
