@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>ai.lingshu</groupId>
+    <artifactId>lingshu-parent</artifactId>
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+    <name>LingShu (灵枢) Agent Engine — Parent</name>
+    <description>JDK 8+ Java Agent engine, Spring Boot SPI, ReAct Loop, 9 pluggable Slots</description>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.5</version>
+        <relativePath/>
+    </parent>
+
+    <properties>
+        <revision>0.1.0-SNAPSHOT</revision>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <lingshu.version>${revision}</lingshu.version>
+
+        <!-- §10.1 锁定 13 项(Story #001 引用) -->
+        <lombok.version>1.18.30</lombok.version>
+        <reactive-streams.version>1.0.4</reactive-streams.version>
+        <opentelemetry.version>1.32.0</opentelemetry.version>
+        <junit.version>5.10.1</junit.version>
+        <assertj.version>3.24.2</assertj.version>
+        <mockito.version>5.8.0</mockito.version>
+        <awaitility.version>4.2.0</awaitility.version>
+
+        <!-- spring-ai-bom 1.0.0-M6(v1.5.7 引入) -->
+        <spring-ai.version>1.0.0-M6</spring-ai.version>
+
+        <!-- R-13 mitigation (d):binary size baseline < 35MB -->
+        <binary.size.baseline.mb>35</binary.size.baseline.mb>
+    </properties>
+
+    <modules>
+        <module>lingshu-core</module>
+        <module>lingshu-a2a-client</module>
+        <module>lingshu-a2a-server</module>
+        <module>lingshu-examples</module>
+        <module>lingshu-cli</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 锁定 §10.1 13 项依赖 -->
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.reactivestreams</groupId>
+                <artifactId>reactive-streams</artifactId>
+                <version>${reactive-streams.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-api</artifactId>
+                <version>${opentelemetry.version}</version>
+            </dependency>
+
+            <!-- spring-ai-bom:R-13 控制下只引 BOM + 实际用 provider starter -->
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- 子模块统一引用 -->
+            <dependency>
+                <groupId>ai.lingshu</groupId>
+                <artifactId>lingshu-core</artifactId>
+                <version>${lingshu.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <source>${maven.compiler.source}</source>
+                        <target>${maven.compiler.target}</target>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+
+                <!-- R-13 mitigation (d):banned-dependencies enforcer build 阶段 fail -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>3.4.1</version>
+                    <executions>
+                        <execution>
+                            <id>enforce-banned-dependencies</id>
+                            <goals>
+                                <goal>enforce</goal>
+                            </goals>
+                            <configuration>
+                                <skip>${enforcer.skip}</skip>
+                                <rules>
+                                    <bannedDependencies>
+                                        <excludes>
+                                            <!-- R-13 (b) banned 列表(dsh §17) -->
+                                            <exclude>org.springframework.ai:spring-ai-spring-boot-starter</exclude>
+                                            <exclude>org.springframework.ai:spring-ai-vector-store-*</exclude>
+                                            <exclude>org.springframework.ai:spring-ai-etl-*</exclude>
+                                            <exclude>org.springframework.ai:spring-ai-unstructured-*</exclude>
+                                            <exclude>com.knuddels:jtokkit</exclude>
+                                        </excludes>
+                                        <searchTransitive>true</searchTransitive>
+                                    </bannedDependencies>
+                                    <requireJavaVersion>
+                                        <version>[1.8,)</version>
+                                    </requireJavaVersion>
+                                </rules>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
