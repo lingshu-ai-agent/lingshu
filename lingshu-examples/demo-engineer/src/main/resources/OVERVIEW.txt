@@ -1,0 +1,7 @@
+这是一个非 .md 扩展名的文件,用于验证 ProjectTreeMemorySource 的扩展名过滤:
+
+- 路径:`./OVERVIEW.txt`(项目根)
+- 预期:被 ProjectTreeMemorySource **跳过**(只接受 `.md` / `.MD`)
+- 这是 T020 的反模式测试用例,确保扩展名过滤器真的生效
+
+如果这一段出现在 [PROJECT MEMORY] 段里,说明扩展名过滤有 bug。

@@ -227,12 +227,27 @@ mvn -pl lingshu-examples/demo-empty -am spring-boot:run
 `application.yml` 故意为空,所有 27 个 `AgentConfig` 字段由 `AgentConfigDefaults.defaults()` 提供。
 首次 LLM token 在 ~5s 内返回,stderr 无 ERROR(AC-01-1)。
 
-### Fibonacci 演示(规划中,Story #002+)
+### Story #002 identity-instructions-memory(业务三件套 + 5 段 Prompt 装配)
 
 ```bash
-mvn -pl lingshu-examples/demo-fibonacci -am exec:java \
-    -Dexec.mainClass=ai.lingshu.examples.fibonacci.DemoFibonacciApp
+cd lingshu
+export ANTHROPIC_AUTH_TOKEN=<your-key>
+export ANTHROPIC_BASE_URL=https://api.anthropic.com        # 或代理路径
+mvn -pl lingshu-examples/demo-engineer -am package -DskipTests
+java -jar lingshu-examples/demo-engineer/target/demo-engineer-0.1.0-SNAPSHOT.jar "你是做什么的"
 ```
+
+`demo-engineer` 演示 AC-09 黑盒契约:
+- 4 个 `MemorySourceProvider` 自动注册(`identity` / `project-claude-md` / `user-claude-md` / `project-tree`)
+- `DefaultPromptBuilder` 5 段装配:`[ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY] / [CONVERSATION HISTORY] / [USER MESSAGE]`
+- 缺失文件静默跳过,首 token ≤ 30s
+
+**黑盒测试(无需 API key)**:
+```bash
+mvn -pl lingshu-examples/demo-engineer -am test -Dtest=BlackBoxVerificationTest
+```
+
+### Fibonacci 演示(规划中,Story #003+)
 
 ---
 

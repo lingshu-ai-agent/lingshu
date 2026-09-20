@@ -1,7 +1,9 @@
 package ai.lingshu.core.impl.router;
 
+import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
 import ai.lingshu.core.slot.LlmProvider;
+import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutor;
@@ -10,6 +12,8 @@ import ai.lingshu.core.spi.SlotRouter;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -69,6 +73,45 @@ public final class Routers {
             extends SlotRouter<Providers.FlowEngineProvider, FlowEngine> {
         public FlowEngineRouter(List<Providers.FlowEngineProvider> providers) {
             super(providers, "FlowEngine", LoggerFactory.getLogger(FlowEngineRouter.class));
+        }
+    }
+
+    /**
+     * MemorySourceRouter — Story #002. Resolves one or more MemorySource instances
+     * by name. The standard {@link #resolve(String, AgentConfig)} handles a single
+     * source; {@link #resolveAll(List, AgentConfig)} handles the yml
+     * {@code agent.prompt.memory-sources} list, preserving input order (NOT priority
+     * sort order — priority is for same-name conflict resolution only).
+     *
+     * <p>Wired into {@code DefaultPromptBuilderProvider}, not into {@code AgentFactory}
+     * (see plan.md D-06: MemorySource is only consumed by PromptBuilder).
+     */
+    @Component
+    public static class MemorySourceRouter
+            extends SlotRouter<Providers.MemorySourceProvider, MemorySource> {
+        public MemorySourceRouter(List<Providers.MemorySourceProvider> providers) {
+            super(providers, "MemorySource", LoggerFactory.getLogger(MemorySourceRouter.class));
+        }
+
+        /**
+         * Resolve multiple sources by name, in the input order (NOT priority-sorted).
+         *
+         * @param names ordered list of MemorySource provider names (typically from
+         *               {@code cfg.prompt.memorySources}); null or empty → empty list
+         * @param cfg   the immutable AgentConfig
+         * @return ordered list of MemorySource instances matching {@code names}
+         * @throws IllegalArgumentException if any name in {@code names} is unknown —
+         *         surfaces as {@code LINGS-S01} in the boot logs
+         */
+        public List<MemorySource> resolveAll(List<String> names, AgentConfig cfg) {
+            if (names == null || names.isEmpty()) {
+                return Collections.emptyList();
+            }
+            List<MemorySource> result = new ArrayList<>(names.size());
+            for (String name : names) {
+                result.add(resolve(name, cfg));
+            }
+            return result;
         }
     }
 }
