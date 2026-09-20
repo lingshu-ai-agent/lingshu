@@ -102,6 +102,17 @@ public class LinearTurnEngine implements FlowEngine {
                     break;
                 }
 
+                // 🆕 Story #005 (FR-006) — cooperative cancellation check at loop head.
+                // Polls the shared CancellationToken; if fired (Ctrl-C / shutdown hook /
+                // programmatic), exit cleanly with stopReason=CANCELLED. The 200ms AC-04
+                // budget is met because each tool poll already exits within its own timeout.
+                if (ctx.cancellation().isCancelled()) {
+                    LOG.info("cancelled at step={} — emitting CANCELLED", step);
+                    ctx.markDone();
+                    sink.onNext(new AgentEvent.TurnCompleted(StopReason.CANCELLED, totalUsage));
+                    return;
+                }
+
                 sink.onNext(new AgentEvent.ReasoningStarted(step, maxSteps));
 
                 Prompt prompt = promptBuilder.build(ctx);
@@ -112,12 +123,19 @@ public class LinearTurnEngine implements FlowEngine {
                 CompletableFuture<LlmResponse> fut = llmProvider.stream(prompt, ctx, sink);
                 LlmResponse resp;
                 try {
-                    resp = fut.get();
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("LLM call interrupted", ie);
-                } catch (ExecutionException ee) {
-                    throw new RuntimeException("LLM call failed: " + ee.getCause(), ee.getCause());
+                    // 🆕 Story #005 (FR-007) — short-poll fallback to honour the AC-04 200ms
+                    // budget even if the LLM provider never completes. We re-check the
+                    // cancellation token between polls; on cancel we interrupt the LLM
+                    // future and emit CANCELLED.
+                    resp = waitForLlm(fut, ctx, sink, totalUsage);
+                    if (resp == null) {
+                        // Cancellation surfaced via waitForLlm — already emitted.
+                        return;
+                    }
+                } catch (RuntimeException cancelAlreadyHandled) {
+                    // waitForLlm wraps cancellation as a sentinel; bubble up to outer catch
+                    // which will emit ERROR + a CANCELLED follow-up would be wrong.
+                    throw cancelAlreadyHandled;
                 }
 
                 // Record the assistant turn in history.
@@ -153,6 +171,40 @@ public class LinearTurnEngine implements FlowEngine {
             sink.onNext(new AgentEvent.ErrorEvent(ex));
             sink.onNext(new AgentEvent.TurnCompleted(StopReason.ERROR, totalUsage));
         }
+    }
+
+    /**
+     * 🆕 Story #005 (FR-007) — poll the LLM future with a short 200ms window so that
+     * cooperative cancellation interrupts the turn within the AC-04 budget. Returns
+     * the {@link LlmResponse} on success, or {@code null} if cancellation surfaced
+     * (in which case the caller emits CANCELLED + returns).
+     *
+     * <p>Why 200ms? AC-04 mandates "200ms 内所有 in-flight turn 停止". Tool polls already
+     * exit within their own {@code callConfig.timeoutSeconds} window; the LLM stream is
+     * the unbounded tail. Polling at 200ms caps worst-case latency between Ctrl-C and
+     * turn exit.
+     */
+    private LlmResponse waitForLlm(CompletableFuture<LlmResponse> fut, TurnContext ctx,
+                                   Subscriber<? super AgentEvent> sink, Usage totalUsage) {
+        while (!ctx.cancellation().isCancelled()) {
+            try {
+                return fut.get(200, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                // Not an error — re-loop and re-check cancellation. This is the AC-04
+                // 200ms pacing point.
+                continue;
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("LLM call interrupted", ie);
+            } catch (ExecutionException ee) {
+                throw new RuntimeException("LLM call failed: " + ee.getCause(), ee.getCause());
+            }
+        }
+        // Cancellation detected — emit CANCELLED and signal caller to return.
+        LOG.info("LLM wait loop exited via cancellation");
+        ctx.markDone();
+        sink.onNext(new AgentEvent.TurnCompleted(StopReason.CANCELLED, totalUsage));
+        return null;
     }
 
     /**
@@ -204,36 +256,99 @@ public class LinearTurnEngine implements FlowEngine {
 
         ToolResult[] results = new ToolResult[calls.size()];
         for (int i = 0; i < calls.size(); i++) {
-            try {
-                results[i] = (timeoutSec > 0)
-                    ? futures[i].get(timeoutSec, TimeUnit.SECONDS)
-                    : futures[i].get();
-            } catch (TimeoutException e) {
+            // 🆕 Story #005 (FR-008) — poll cancellation before waiting on each future.
+            // Honours the shared token: if Ctrl-C fires mid-batch, cancel the in-flight
+            // future and substitute a CANCELLED ToolResult so the loop can exit cleanly.
+            if (ctx.cancellation().isCancelled()) {
                 futures[i].cancel(true);
                 results[i] = ToolResult.builder()
                     .status(ToolResult.Status.ERROR)
                     .toolUseId(calls.get(i).getId())
-                    .content("tool timeout after " + timeoutSec + "s")
+                    .content("cancelled before tool dispatch")
                     .isError(true)
                     .build();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                continue;
+            }
+            try {
+                // 🆕 Story #005 (FR-008) — polling wait: 200ms slices honour AC-04 budget
+                // even if the tool never returns. Without polling, the 5s default tool
+                // timeout would block the cancel-exit path beyond 200ms.
+                results[i] = waitForTool(futures[i], ctx, timeoutSec, calls.get(i).getId());
+            } catch (RuntimeException cancelHandled) {
+                // waitForTool returned a CANCELLED ToolResult or threw on interrupt
+                // — either way the result is already in the ToolResult.
                 results[i] = ToolResult.builder()
                     .status(ToolResult.Status.ERROR)
                     .toolUseId(calls.get(i).getId())
-                    .content("tool interrupted: " + e.getMessage())
-                    .isError(true)
-                    .build();
-            } catch (ExecutionException e) {
-                results[i] = ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(calls.get(i).getId())
-                    .content("tool error: " + e.getCause())
+                    .content("cancelled: " + cancelHandled.getMessage())
                     .isError(true)
                     .build();
             }
         }
         return results;
+    }
+
+    /**
+     * 🆕 Story #005 (FR-008) — poll the tool future with a 200ms slice, also honouring
+     * the cancellation token. Returns either the tool's {@link ToolResult} or a
+     * CANCELLED ToolResult (no exception escapes). Mirrors {@link #waitForLlm} but
+     * uses the tool's own {@code timeoutSec} budget as the upper bound on slice count.
+     */
+    private ToolResult waitForTool(CompletableFuture<ToolResult> fut, TurnContext ctx,
+                                   int timeoutSec, String toolUseId) {
+        long sliceMs = 200L;
+        long deadlineMs = (timeoutSec > 0) ? System.currentTimeMillis() + timeoutSec * 1000L : Long.MAX_VALUE;
+        while (!ctx.cancellation().isCancelled()) {
+            long remaining = deadlineMs - System.currentTimeMillis();
+            if (remaining <= 0) {
+                fut.cancel(true);
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(toolUseId)
+                    .content("tool timeout after " + timeoutSec + "s")
+                    .isError(true)
+                    .build();
+            }
+            long thisSlice = Math.min(sliceMs, remaining);
+            try {
+                return fut.get(thisSlice, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                continue;
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                fut.cancel(true);
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(toolUseId)
+                    .content("tool interrupted: " + ie.getMessage())
+                    .isError(true)
+                    .build();
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause();
+                if (cause instanceof java.util.concurrent.CancellationException) {
+                    return ToolResult.builder()
+                        .status(ToolResult.Status.ERROR)
+                        .toolUseId(toolUseId)
+                        .content("tool cancelled: " + cause.getMessage())
+                        .isError(true)
+                        .build();
+                }
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(toolUseId)
+                    .content("tool error: " + cause)
+                    .isError(true)
+                    .build();
+            }
+        }
+        // Cancellation detected — cancel the future and return a CANCELLED ToolResult
+        fut.cancel(true);
+        return ToolResult.builder()
+            .status(ToolResult.Status.ERROR)
+            .toolUseId(toolUseId)
+            .content("tool cancelled by turn shutdown")
+            .isError(true)
+            .build();
     }
 
     /**

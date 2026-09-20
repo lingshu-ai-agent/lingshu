@@ -10,14 +10,17 @@ import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutor;
+import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import ai.lingshu.core.spi.SlotRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * AgentFactory — the Spring-singleton entry point (dsh §7.1) that produces prototype-like
@@ -51,6 +54,26 @@ public class AgentFactory {
 
     private static final Logger LOG = LoggerFactory.getLogger(AgentFactory.class);
 
+    /**
+     * 🆕 Story #005 — Static broadcast registry shared across all AgentFactory instances.
+     *
+     * <p>Effectively singleton because Spring only instantiates one AgentFactory
+     * {@code @Component} per application context. Made static so that
+     * {@link DefaultTurnContext#createWithBroadcast} (called from
+     * {@code DefaultAgent.buildContext}) can register tokens without holding an
+     * AgentFactory reference.
+     *
+     * <p>CopyOnWriteArrayList — safe iteration while {@code broadcastCancel} runs
+     * concurrent with {@code registerCancellation} (NFR-008).
+     */
+    private static final CopyOnWriteArrayList<CancellationToken> BROADCAST_REGISTRY =
+        new CopyOnWriteArrayList<>();
+
+    /** 🆕 Story #005 — for test isolation: clear static registry. */
+    static void clearBroadcastRegistryForTest() {
+        BROADCAST_REGISTRY.clear();
+    }
+
     private final Routers.LlmProviderRouter llmRouter;
     private final Routers.ToolExecutorRouter toolRouter;
     private final Routers.PermissionPolicyRouter policyRouter;
@@ -71,6 +94,67 @@ public class AgentFactory {
         this.promptBuilderRouter = promptBuilderRouter;
         this.flowRouter = flowRouter;
         this.memorySourceRouter = memorySourceRouter;
+    }
+
+    /**
+     * 🆕 Story #005 (FR-009) — Register the broadcast-cancel shutdown hook after Spring
+     * finishes wiring this AgentFactory. The hook fires on Ctrl-C / SIGTERM and calls
+     * {@link #broadcastCancel()} so all in-flight turns receive cancellation within the
+     * AC-04 200ms budget.
+     *
+     * <p>JVM {@code Runtime.addShutdownHook} is idempotent on the same Thread instance
+     * — repeated registrations of the same hook thread are silently ignored.
+     */
+    @PostConstruct
+    public void registerJvmShutdownHook() {
+        Thread hook = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                broadcastCancel();
+            }
+        }, "lingshu-shutdown-cancel");
+        Runtime.getRuntime().addShutdownHook(hook);
+        LOG.info("registered JVM shutdown hook for cancellation broadcast");
+    }
+
+    /**
+     * 🆕 Story #005 (FR-009) — Register a cancellation token. The token receives
+     * {@link CancellationToken#fire()} when {@link #broadcastCancel()} runs.
+     *
+     * <p>Static facade — called from {@link DefaultTurnContext#createWithBroadcast}.
+     * Internally uses static registry shared across all AgentFactory instances
+     * (Spring guarantees singleton semantics in practice).
+     */
+    public static void registerCancellationStatic(CancellationToken token) {
+        if (token == null) {
+            throw new IllegalArgumentException("token must not be null");
+        }
+        BROADCAST_REGISTRY.add(token);
+    }
+
+    /**
+     * 🆕 Story #005 (FR-009 + NFR-006) — Trigger cancellation on all in-flight turns.
+     * Synchronously iterates the broadcast registry; per-token exceptions are caught
+     * and logged at WARN so one bad token does not block siblings.
+     *
+     * <p>Idempotent — calling twice is safe (each token's {@code fire()} is itself
+     * idempotent via AtomicBoolean CAS).
+     */
+    public void broadcastCancel() {
+        int n = BROADCAST_REGISTRY.size();
+        LOG.info("broadcast cancel: {} active turn(s)", n);
+        for (CancellationToken token : BROADCAST_REGISTRY) {
+            try {
+                token.fire();
+            } catch (Exception e) {
+                LOG.warn("cancel token.fire() failed", e);
+            }
+        }
+    }
+
+    /** 🆕 Story #005 — current broadcast registry size (for introspection + tests). */
+    public static int activeTurnCount() {
+        return BROADCAST_REGISTRY.size();
     }
 
     /**
@@ -99,6 +183,8 @@ public class AgentFactory {
         // Story #001: ToolExecutor / PermissionPolicy / PromptBuilder are resolved but
         // not yet injected into the LinearTurnEngine — the engine wires only prompt+llm
         // for the demo path. Story #004 / #008 inject them into a richer engine variant.
+        // 🆕 Story #005: DefaultAgent.buildContext now uses DefaultTurnContext.createWithBroadcast
+        // to auto-register cancellation tokens (FR-011).
         return new DefaultAgent(session, config, engine);
     }
 

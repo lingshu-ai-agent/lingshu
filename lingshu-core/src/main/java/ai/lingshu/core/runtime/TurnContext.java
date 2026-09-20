@@ -3,6 +3,7 @@ package ai.lingshu.core.runtime;
 import ai.lingshu.core.event.AgentEvent;
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.message.Usage;
+import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import org.reactivestreams.Subscriber;
 
 /**
@@ -49,4 +50,18 @@ public interface TurnContext {
      * its summary so the model sees it as the most recent context).
      */
     void appendSystem(String content, String source);
+
+    /**
+     * 🆕 Story #005 — Per-turn cancellation token.
+     *
+     * <p>Shared identity with {@code ToolExecutionContext.cancellation()} — both
+     * layers see the same token reference (dsh §14.12 N12 three-layer wiring).
+     * Fires on Ctrl-C (JVM shutdown hook → {@code AgentFactory.broadcastCancel()}),
+     * turn timeout cascade, or programmatic {@code markDone} override.
+     *
+     * <p>Cooperative cancellation: FlowEngine / Tool / LlmProvider must poll
+     * {@code isCancelled()} or register callbacks via {@code onCancel(Runnable)}
+     * to react. This is <b>not</b> {@code Thread.interrupt()}.
+     */
+    CancellationToken cancellation();
 }
