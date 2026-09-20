@@ -343,6 +343,67 @@ mvn -pl lingshu-core test -Dtest='CancellationTokensTest,CancellationTokenSharin
 
 **LlmProvider 取消内部轮询**(US3)推迟到 Story #005b — 不阻塞 AC-04:200ms `waitForLlm` 预算 + 引擎侧轮询已覆盖 N12 三层贯通契约。
 
+### Story #006 multi-tenant(`TenantContext` ThreadLocal + 配置/Session/Sandbox/Cost 四维隔离 AC-05)
+
+dsh §14.9 N9:多租户隔离是 B2B SaaS 化刚需 —— 一个 JVM 实例同时服务多个客户,每客户有独立 memory dir / sandbox whitelist / cost budget / session namespace,互不可见。
+
+**核心交付**:
+- `TenantContext` ThreadLocal **嵌套栈** + `snapshot/runWithSnapshot` 显式跨线程传递(主动放弃 `InheritableThreadLocal`,避免线程池复用场景下"上一个任务的 tenant 泄漏到下一个任务")
+- `AgentConfig.tenants` 新字段(28th)+ `TenantsConfig.validate()` 启动期 fail-fast(错误码 `LINGS-C02`)
+- `TenantConfigProvider` SPI + `YamlTenantConfigProvider` 默认实现(`@Component("tenantConfigProvider_yaml")`,§5.28 多 Provider 模式)
+- `TenantAwareCostTracker` per-tenant `LongAdder` 桶 + 超预算 `CostBudgetExceededException`
+- `DefaultRuntimeSandbox` `process.run` 走 tenant 白名单(全局兜底,单租户 mode 不变)
+- `DefaultInMemorySessionStore` session key 加 `tenantId` 前缀(`alice:sess-123` vs `bob:sess-123`)
+- `LinearTurnEngine.runTurn` 入口 FR-011 守卫(tenants 已配但无 `TenantContext` → `IllegalStateException` + `LINGS-C02` 提示)
+
+```bash
+mvn -pl lingshu-core test -Dtest='TenantContextTest,TenantConfigProviderTest,TenantConfigValidationTest,MemoryPathIsolationTest,CostBudgetIsolationTest,SandboxWhitelistIsolationTest,SessionKeyIsolationTest,TenantIsolationIT'
+```
+
+**测试覆盖**(43 case / 8 文件):
+- `TenantContextTest`(9 case)— 嵌套栈 / try-finally / snapshot+runWithSnapshot / 跨线程显式传递
+- `TenantConfigProviderTest`(5 case)— 多 Provider 优先级 / 空 yml 单租户 fallback
+- `TenantConfigValidationTest`(10 case)— 4 项校验(tenantId 格式 / key=value 一致 / dir 必填 / cost>0)+ 14 个 Edge Case
+- `MemoryPathIsolationTest`(2 case)— per-tenant `AgentConfig.Memory.claudeMd.project`
+- `CostBudgetIsolationTest`(5 case)— alice/bob 独立计数 + 超预算 fail-fast
+- `SandboxWhitelistIsolationTest`(6 case)— alice 拒 git / bob 允许 / 单租户 fallback
+- `SessionKeyIsolationTest`(5 case)— 同 sessionId 不同物理 bucket
+- `TenantIsolationIT`(1 case E2E)— **AC-05 黑盒**(83ms):4 维隔离跨 alice/bob 一次性验证
+
+**YAML 多租户配置**:
+```yaml
+agent:
+  tenants:
+    enabled: true
+    map:
+      alice:
+        memory:    { dir: /var/lib/alice }
+        sandbox:   { command-whitelist: [ls, cat] }
+        cost:      { session-budget-micros: 10000000 }
+      bob:
+        memory:    { dir: /var/lib/bob }
+        sandbox:   { command-whitelist: [ls, cat, git] }
+        cost:      { session-budget-micros: 100000000 }
+```
+
+**TenantContext 用法**:
+```java
+TenantContext.runAs("alice", () -> {
+    // 业务代码 —— TenantContext.current() == "alice"
+    Agent agent = factory.create(cfg);
+    return agent.runBlocking("...");
+});
+// 退出 lambda 后自动 clear(R-02 缓解)
+
+// 跨线程显式传递
+String snap = TenantContext.snapshot();
+executor.submit(() -> {
+    TenantContext.runWithSnapshot(snap, () -> doWork());
+});
+```
+
+**R-13 dependency:tree 自查**:`diff /tmp/deps-005-baseline.txt /tmp/deps-006-after.txt` → 仅 `[INFO] Total time` 时间戳差异,**0 新依赖**。
+
 ---
 
 ## 📚 文档
@@ -356,6 +417,7 @@ mvn -pl lingshu-core test -Dtest='CancellationTokensTest,CancellationTokenSharin
 - ⚡ [并行 Tool 调度与并发配置(Story #004)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/parallel-tools.md)
 - ⏹️ [协作式取消与三层贯通(Story #005)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cancellation.md)
 - 🛡️ [Sandbox 与安全](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/sandbox.md)
+- 👥 [多租户隔离与 TenantContext(Story #006)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/multi-tenant.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)
