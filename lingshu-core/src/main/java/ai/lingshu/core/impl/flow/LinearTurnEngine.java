@@ -11,6 +11,7 @@ import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.message.Usage;
 import ai.lingshu.core.runtime.FlowEngine;
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.tenant.TenantContext;
 import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
@@ -94,6 +95,20 @@ public class LinearTurnEngine implements FlowEngine {
 
         LlmResponse last = null;
         Usage totalUsage = Usage.zero();
+
+        // 🆕 Story #006 (FR-011) — runtime guard: if yml declares tenants, every turn
+        // MUST run inside TenantContext.runAs(...). Without this guard, a caller that
+        // forgets to set the tenant would silently mix configurations across tenants
+        // — the most insidious form of the bug AC-005 exists to prevent.
+        // Single-tenant mode (config.getTenants() == null or !isEnabled()) is exempt.
+        if (ctx.config().getTenants() != null
+                && ctx.config().getTenants().isEnabled()
+                && TenantContext.current() == null) {
+            throw new IllegalStateException(
+                "LINGS-C02 CONFIG_VALIDATION_FAILED: tenants configured but turn started "
+                    + "without TenantContext.runAs — wrap call site in "
+                    + "TenantContext.runAs(\"<tenantId>\", () -> ...)");
+        }
 
         try {
             for (int step = 1; step <= maxSteps; step++) {

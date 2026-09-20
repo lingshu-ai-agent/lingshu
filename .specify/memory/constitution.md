@@ -188,7 +188,7 @@
 | ID | 风险 | 概率×影响 | 缓解措施 | Owner | 触发 |
 |---|---|---|---|---|---|
 | **R-01** | ReAct 循环在大模型下死循环 | 2×3=6 | `reactMaxSteps` 硬上限(默认 50)+ 触发 R01 + R02 同(tool, args)循环检测 | Charlie | v1.0 GA |
-| **R-02** | 多租户 ThreadLocal 泄漏 | 2×3=6 | TenantContext `try-finally` + ThreadPoolExecutor 拒绝 + InheritableThreadLocal + clean | Charlie | v1.0 GA |
+| **R-02** | 多租户 ThreadLocal 泄漏 | 2×3=6 | **已落地 (Story #006)**:TenantContext `try-finally` 兜底 + `Deque` 嵌套栈(替代单值 ThreadLocal)+ `snapshot` + `runWithSnapshot` 显式跨线程传递(主动放弃 `InheritableThreadLocal`,避免线程池复用场景下上一个任务的 tenant 泄漏到下一个任务)+ `tenantId` 正则 `[a-zA-Z0-9_-]{1,64}` 启动期 fail-fast | Charlie | v1.0 GA |
 | **R-04** | A2A 协议 v0.5 快速演进破坏兼容 | 3×2=6 | `version()` 字段 + Slot 接口兼容性校验 + AgentCard schema 版本 | Alice | v0.5-α |
 | **R-06** | **JDK 8 vs Spring Boot 3.2.x + Spring AI 1.x 矛盾(均需 JDK 17+ runtime)** | **3×3=9** | (a) target=8 兼容 JDK 8 JRE;(b) 文档明示 LingShu 完整体验需 JDK 17+;(c) v1.1 决定是否提供 JDK 8 独立运行时 | Alice | v1.0 GA 前 |
 | **R-09** | 第三方 Provider transitive 依赖污染 | 2×3=6 | (a) plugin SPI jar `<scope>provided</scope>`;(b) `dependency:tree` CI;(c) `banned-dependencies` enforcer | Alice | v1.0 GA |
