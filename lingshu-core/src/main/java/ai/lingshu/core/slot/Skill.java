@@ -1,5 +1,7 @@
 package ai.lingshu.core.slot;
 
+import ai.lingshu.core.spi.ContractVersionRef;
+
 /**
  * Slot 4 marker — Skill is a Tool variant with extra discovery semantics, not a separate type.
  *
@@ -20,4 +22,8 @@ package ai.lingshu.core.slot;
  * interface without breaking implementers that only need {@link Tool} semantics.
  */
 public interface Skill extends Tool {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 }

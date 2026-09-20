@@ -1,6 +1,7 @@
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.ToolResult;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 /**
  * Slot 9 — Agent-to-Agent transport (dsh §5.6). Bridges to a remote agent process via
@@ -21,6 +22,10 @@ import ai.lingshu.core.message.ToolResult;
  * </ul>
  */
 public interface A2aTransport {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Look up the {@code AgentCard} for a remote agent by name. Returned as a generic

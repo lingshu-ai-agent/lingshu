@@ -2,6 +2,7 @@ package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
+import ai.lingshu.core.spi.ContractVersionRef;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
@@ -22,6 +23,10 @@ import com.fasterxml.jackson.databind.JsonNode;
  * Direct invocation is reserved for tests only.
  */
 public interface Tool {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /** Unique tool name; the LLM sees this in {@code ToolSpec.name}. */
     String name();

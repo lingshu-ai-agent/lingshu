@@ -4,6 +4,7 @@ import ai.lingshu.core.event.AgentEvent;
 import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.spi.ContractVersionRef;
 import org.reactivestreams.Subscriber;
 
 import java.util.concurrent.CompletableFuture;
@@ -26,6 +27,11 @@ import java.util.concurrent.CompletableFuture;
  * 硬规则 2), or talk to a provider SDK directly. The interface is provider-agnostic.
  */
 public interface LlmProvider {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). Provider.version() must be
+     *  compatible per {@link ai.lingshu.core.spi.Version#isCompatible(String, String)}. */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Begin streaming. Must NOT block; return immediately with an in-flight future.

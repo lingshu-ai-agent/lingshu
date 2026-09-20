@@ -1,6 +1,7 @@
 package ai.lingshu.core.runtime;
 
 import ai.lingshu.core.event.AgentEvent;
+import ai.lingshu.core.spi.ContractVersionRef;
 import org.reactivestreams.Subscriber;
 
 /**
@@ -23,6 +24,10 @@ import org.reactivestreams.Subscriber;
  * </ul>
  */
 public interface FlowEngine {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Execute one turn. The call returns when the engine emits {@code TurnCompleted} or

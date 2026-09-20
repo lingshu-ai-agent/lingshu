@@ -2,6 +2,7 @@ package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 /**
  * Slot 2 outer half — the single entry point that FlowEngine MUST use for every
@@ -27,6 +28,10 @@ import ai.lingshu.core.message.ToolResult;
  * without imposing a common interface.
  */
 public interface ToolExecutor {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Dispatch a single tool call.

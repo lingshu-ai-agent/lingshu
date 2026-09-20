@@ -2,6 +2,7 @@ package ai.lingshu.core.slot;
 
 import ai.lingshu.core.decision.Decision;
 import ai.lingshu.core.message.ToolCall;
+import ai.lingshu.core.spi.ContractVersionRef;
 
 /**
  * Slot 3 model layer — decides whether a tool call may proceed. Called once per
@@ -19,6 +20,10 @@ import ai.lingshu.core.message.ToolCall;
  * deterministic for a given (call, ctx) tuple if audit reproducibility matters.
  */
 public interface PermissionPolicy {
+
+    /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
+    @ContractVersionRef
+    String CONTRACT_VERSION = "1.0.0";
 
     /**
      * Check whether {@code call} may proceed given {@code ctx}.

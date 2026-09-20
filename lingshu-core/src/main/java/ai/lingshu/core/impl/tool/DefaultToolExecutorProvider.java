@@ -20,6 +20,9 @@ public class DefaultToolExecutorProvider implements Providers.ToolExecutorProvid
 
     @Override public int priority() { return 0; }
 
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
+
     private final Routers.PermissionPolicyRouter permissionPolicyRouter;
 
     public DefaultToolExecutorProvider(Routers.PermissionPolicyRouter permissionPolicyRouter) {

@@ -6,12 +6,18 @@ import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
 import ai.lingshu.core.runtime.Session;
 import ai.lingshu.core.slot.LlmProvider;
+import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutor;
+import ai.lingshu.core.spi.SlotRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * AgentFactory — the Spring-singleton entry point (dsh §7.1) that produces prototype-like
@@ -33,6 +39,12 @@ import org.springframework.stereotype.Component;
  * yields a fresh Agent holding its own session + resolved Slot instances. Users who want
  * multi-turn conversation hold the {@link Session} across turns (or call
  * {@code Agent.continueWithUserMessage}).
+ *
+ * <p>🆕 Story #003 — also exposes a {@link #description()} self-describe method that
+ * lists every registered Slot Provider (name, version, priority) plus JVM info.
+ * Per dsh §5.3.1.0 the factory holds 6 Routers; {@code MemorySourceRouter} is included
+ * here (in addition to its consumer wiring in {@code DefaultPromptBuilderProvider}) so
+ * US3 / {@code /slots}-style introspection can list all 9 Slots from one entry point.
  */
 @Component
 public class AgentFactory {
@@ -44,17 +56,21 @@ public class AgentFactory {
     private final Routers.PermissionPolicyRouter policyRouter;
     private final Routers.PromptBuilderRouter promptBuilderRouter;
     private final Routers.FlowEngineRouter flowRouter;
+    private final Routers.MemorySourceRouter memorySourceRouter;
 
+    @Autowired
     public AgentFactory(Routers.LlmProviderRouter llmRouter,
                         Routers.ToolExecutorRouter toolRouter,
                         Routers.PermissionPolicyRouter policyRouter,
                         Routers.PromptBuilderRouter promptBuilderRouter,
-                        Routers.FlowEngineRouter flowRouter) {
+                        Routers.FlowEngineRouter flowRouter,
+                        Routers.MemorySourceRouter memorySourceRouter) {
         this.llmRouter = llmRouter;
         this.toolRouter = toolRouter;
         this.policyRouter = policyRouter;
         this.promptBuilderRouter = promptBuilderRouter;
         this.flowRouter = flowRouter;
+        this.memorySourceRouter = memorySourceRouter;
     }
 
     /**
@@ -115,5 +131,44 @@ public class AgentFactory {
         if (config.getPrompt() == null || config.getPrompt().getBuilder() == null) {
             throw new IllegalArgumentException("config.prompt.builder is required");
         }
+    }
+
+    /**
+     * 🆕 Story #003 — return a self-describe snapshot of all 6 Routers + JVM info
+     * (US3 Scenario 1 / quickstart.md Validation 3).
+     *
+     * <p>Format (newline-separated):
+     * <pre>{@code
+     * AgentFactory v0.1.0-SNAPSHOT for JVM <java.version>
+     * LlmProvider: <name> v<version> (priority=<n>)
+     * ...
+     * MemorySource: <name> v<version> (priority=<n>)
+     * Turn=0 Session=<sessionId>
+     * }</pre>
+     *
+     * <p>MemorySource is listed N times (once per registered Provider) so users
+     * can see priority order at a glance.
+     *
+     * @return newline-separated self-describe string, never null
+     */
+    public String description() {
+        List<String> lines = new ArrayList<>();
+        lines.add("AgentFactory v0.1.0-SNAPSHOT for JVM " + System.getProperty("java.version", "?"));
+        lines.addAll(llmRouter.describe().stream()
+            .map(s -> "LlmProvider: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        lines.addAll(toolRouter.describe().stream()
+            .map(s -> "ToolExecutor: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        lines.addAll(policyRouter.describe().stream()
+            .map(s -> "PermissionPolicy: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        lines.addAll(promptBuilderRouter.describe().stream()
+            .map(s -> "PromptBuilder: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        lines.addAll(flowRouter.describe().stream()
+            .map(s -> "FlowEngine: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        lines.addAll(memorySourceRouter.describe().stream()
+            .map(s -> "MemorySource: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        // Append a placeholder session line so the contract output is complete
+        // even when description() is called outside an Agent turn.
+        lines.add("Turn=0 Session=" + new DefaultSession().id());
+        return String.join("\n", lines);
     }
 }

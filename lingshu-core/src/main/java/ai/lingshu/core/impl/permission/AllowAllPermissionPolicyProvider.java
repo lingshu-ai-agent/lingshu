@@ -16,6 +16,9 @@ public class AllowAllPermissionPolicyProvider implements Providers.PermissionPol
 
     @Override public int priority() { return 0; }
 
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
+
     @Override
     public PermissionPolicy create(AgentConfig config) {
         return new AllowAllPermissionPolicy();

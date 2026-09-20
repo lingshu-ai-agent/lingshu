@@ -13,6 +13,8 @@ public class IdentityMemorySourceProvider implements Providers.MemorySourceProvi
 
     @Override public String name() { return "identity"; }
     @Override public int priority() { return 30; }
+    /** 🆕 Story #003 — contract version. */
+    @Override public String version() { return "1.0.0"; }
 
     @Override
     public MemorySource create(AgentConfig config) {

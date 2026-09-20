@@ -38,6 +38,7 @@ public final class Routers {
         public LlmProviderRouter(List<Providers.LlmProviderProvider> providers) {
             super(providers, "LlmProvider", LoggerFactory.getLogger(LlmProviderRouter.class));
         }
+        @Override protected Class<LlmProvider> getSlotInterface() { return LlmProvider.class; }
     }
 
     @Component
@@ -46,6 +47,7 @@ public final class Routers {
         public ToolExecutorRouter(List<Providers.ToolExecutorProvider> providers) {
             super(providers, "ToolExecutor", LoggerFactory.getLogger(ToolExecutorRouter.class));
         }
+        @Override protected Class<ToolExecutor> getSlotInterface() { return ToolExecutor.class; }
     }
 
     @Component
@@ -54,6 +56,7 @@ public final class Routers {
         public PermissionPolicyRouter(List<Providers.PermissionPolicyProvider> providers) {
             super(providers, "PermissionPolicy", LoggerFactory.getLogger(PermissionPolicyRouter.class));
         }
+        @Override protected Class<PermissionPolicy> getSlotInterface() { return PermissionPolicy.class; }
     }
 
     @Component
@@ -62,6 +65,7 @@ public final class Routers {
         public PromptBuilderRouter(List<Providers.PromptBuilderProvider> providers) {
             super(providers, "PromptBuilder", LoggerFactory.getLogger(PromptBuilderRouter.class));
         }
+        @Override protected Class<PromptBuilder> getSlotInterface() { return PromptBuilder.class; }
     }
 
     /**
@@ -74,6 +78,7 @@ public final class Routers {
         public FlowEngineRouter(List<Providers.FlowEngineProvider> providers) {
             super(providers, "FlowEngine", LoggerFactory.getLogger(FlowEngineRouter.class));
         }
+        @Override protected Class<FlowEngine> getSlotInterface() { return FlowEngine.class; }
     }
 
     /**
@@ -92,6 +97,7 @@ public final class Routers {
         public MemorySourceRouter(List<Providers.MemorySourceProvider> providers) {
             super(providers, "MemorySource", LoggerFactory.getLogger(MemorySourceRouter.class));
         }
+        @Override protected Class<MemorySource> getSlotInterface() { return MemorySource.class; }
 
         /**
          * Resolve multiple sources by name, in the input order (NOT priority-sorted).
