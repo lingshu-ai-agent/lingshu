@@ -54,6 +54,11 @@ import java.util.concurrent.TimeoutException;
  *       so {@code dispatchParallel} only sees {@link ToolResult} values — no need for try-catch
  *       around {@code toolExecutor.dispatch}</li>
  * </ul>
+ *
+ * <p>Story #008 (FR-001): ReAct loop 上限守卫 — for-loop 因 {@code step == maxSteps} 自然结束
+ * 且最后一次响应仍含 tool calls 时,发射 {@link AgentEvent.MaxStepsExceeded} 结构化事件,
+ * 紧接着 {@link AgentEvent.TurnCompleted} 正常 {@code END_TURN} 终止。其他 4 条终止路径
+ * (break 无 tool calls / ctx.done() / cancellation / exception)均**不**发 {@code MaxStepsExceeded}。
  */
 public class LinearTurnEngine implements FlowEngine {
 
@@ -95,6 +100,10 @@ public class LinearTurnEngine implements FlowEngine {
 
         LlmResponse last = null;
         Usage totalUsage = Usage.zero();
+        // 🆕 Story #008 (FR-001/FR-003) — ReAct loop 上限守卫:仅当 for-loop 因 step == maxSteps
+        // 自然 bound 结束(无 break / cancellation / done / exception 触发)时,标记守卫触发。
+        // L177 之后根据 maxStepsHit + last.getToolCalls() 联合判定发 MaxStepsExceeded。
+        boolean maxStepsHit = false;
 
         // 🆕 Story #006 (FR-011) — runtime guard: if yml declares tenants, every turn
         // MUST run inside TenantContext.runAs(...). Without this guard, a caller that
@@ -172,6 +181,22 @@ public class LinearTurnEngine implements FlowEngine {
                     ctx.appendToolResult(results[i]);
                 }
                 sink.onNext(new AgentEvent.ObservationAppended(step, results.length));
+                // 🆕 Story #008 (FR-001/FR-003) — 仅当 step == maxSteps 且 for-loop 没因 break 退出时,
+                // 守卫触发。注意:此分支在 L162-165 break 之后,所以 step == maxSteps 但 break 提前退出
+                // 的情形 maxStepsHit 永远是 false(EC-7)。
+                if (step == maxSteps) {
+                    maxStepsHit = true;
+                }
+            }
+
+            // 🆕 Story #008 (FR-001/FR-003) — max-steps 守卫发射:仅当 (a) for-loop 自然 bound 结束
+            // (无 break / cancel / done / exception)+ (b) 最后一次 LLM 响应仍含 tool calls 时发射。
+            // StopReason 仍为 END_TURN(FR-004),totalUsage 同一对象引用(FR-002 + NFR-002)。
+            if (maxStepsHit
+                && last != null
+                && last.getToolCalls() != null
+                && !last.getToolCalls().isEmpty()) {
+                sink.onNext(new AgentEvent.MaxStepsExceeded(maxSteps, totalUsage));
             }
 
             StopReason reason = (last != null && last.getStopReason() != null)
