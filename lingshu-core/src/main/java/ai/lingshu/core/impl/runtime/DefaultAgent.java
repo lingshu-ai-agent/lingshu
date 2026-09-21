@@ -4,6 +4,7 @@ import ai.lingshu.core.event.AgentEvent;
 import ai.lingshu.core.message.Message;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.Usage;
+import ai.lingshu.core.reload.AgentConfigRegistry;
 import ai.lingshu.core.runtime.Agent;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
@@ -37,6 +38,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>dsh §7.1: each Agent is created fresh per turn by {@code AgentFactory.create(cfg)}.
  * The {@link Session} it holds may be reused across multiple turns of one conversation,
  * but a new {@code Agent} instance is built for each turn.
+ *
+ * <p>🆕 Story #007 (AC-06 / spec §FR-006) — if constructed with a non-null
+ * {@link AgentConfigRegistry}, the Agent reads {@code registry.current()} once at the
+ * entry of every {@code run} / {@code runBlocking} call and freezes that snapshot into
+ * the {@link TurnContext} for the duration of the turn. This delivers AC-06
+ * "T1 freezes old config, T2 sees new config after a successful YAML reload" semantics:
+ * a turn that is already executing is unaffected by a concurrent reload (its @Value
+ * snapshot is final + Java reference freeze), while the next call to
+ * {@code run(...)} on the same Agent observes the published new config.
  */
 public class DefaultAgent implements Agent {
 
@@ -45,11 +55,24 @@ public class DefaultAgent implements Agent {
     private final Session session;
     private final AgentConfig config;
     private final FlowEngine engine;
+    /** 🆕 Story #007 — optional hot-reload source. {@code null} = static (legacy) mode. */
+    private final AgentConfigRegistry registry;
 
+    /** Legacy 3-arg constructor — static mode, no hot-reload. */
     public DefaultAgent(Session session, AgentConfig config, FlowEngine engine) {
+        this(session, config, engine, null);
+    }
+
+    /**
+     * 🆕 Story #007 — registry-aware constructor. When {@code registry != null}, every
+     * turn freezes {@code registry.current()} at {@code run} entry (AC-06 freeze semantics).
+     */
+    public DefaultAgent(Session session, AgentConfig config, FlowEngine engine,
+                        AgentConfigRegistry registry) {
         this.session = session;
         this.config = config;
         this.engine = engine;
+        this.registry = registry;
     }
 
     @Override public Session session() { return session; }
@@ -134,11 +157,14 @@ public class DefaultAgent implements Agent {
         if (session instanceof DefaultSession) {
             ((DefaultSession) session).append(new Message.User(userInput));
         }
+        // 🆕 Story #007 (AC-06) — if a registry is wired, freeze the current config at
+        // turn entry. Otherwise fall back to the Agent's held config (legacy 3-arg ctor).
+        AgentConfig frozen = (registry != null) ? registry.current() : config;
         // 🆕 Story #005 (FR-011) — use createWithBroadcast so the turn's cancellation token
         // auto-registers with AgentFactory's static broadcast registry. Ctrl-C reaches the
         // JVM shutdown hook → AgentFactory.broadcastCancel() → all in-flight turns see
         // isCancelled() == true within the AC-04 200ms budget.
-        return DefaultTurnContext.createWithBroadcast(session, config, null, userInput);
+        return DefaultTurnContext.createWithBroadcast(session, frozen, null, userInput);
     }
 
     // ── BufferedPublisher — synchronous engine replay for lazy subscribers ──
