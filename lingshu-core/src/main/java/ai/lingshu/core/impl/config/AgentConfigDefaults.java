@@ -65,7 +65,8 @@ public final class AgentConfigDefaults {
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
             DEFAULT_NAME,    // a2aTransport
-            null);           // tenants (Story #006 — null = single-tenant mode)
+            null,            // tenants (Story #006 — null = single-tenant mode)
+            AgentConfig.A2a.defaults());  // a2a (Story #009)
     }
 
     /** Static fallback map (used by tests / debug endpoints). */

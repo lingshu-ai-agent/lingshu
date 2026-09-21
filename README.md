@@ -158,8 +158,9 @@ agent:
             └────────────────────────────────────────────────────┘
 
             ┌────────────────────────────────────────────────────┐
-            │     A2aTransport (SPI, Story #009 roadmap)          │
+            │     A2aTransport (SPI, Story #009 ✅ AC-10)         │
             │     Agent-to-Agent RPC + AgentCard discovery        │
+            │     GET /.well-known/agent.json (A2A v1.0)         │
             └────────────────────────────────────────────────────┘
 ```
 

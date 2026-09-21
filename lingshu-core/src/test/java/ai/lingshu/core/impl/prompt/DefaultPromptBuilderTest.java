@@ -60,7 +60,8 @@ class DefaultPromptBuilderTest {
             8, 60, 300, 0, 60, 50,
             id, ins, mem,
             "default",         // a2aTransport
-            null);             // tenants (Story #006 — single-tenant mode)
+            null,                  // tenants (Story #006 — single-tenant mode)
+            AgentConfig.A2a.defaults());  // a2a (Story #009)
     }
 
     // ── [ROLE] segment ──────────────────────────────────────────────

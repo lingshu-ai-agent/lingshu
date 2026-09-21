@@ -195,7 +195,7 @@
 | **R-09** | 第三方 Provider transitive 依赖污染 | 2×3=6 | (a) plugin SPI jar `<scope>provided</scope>`;(b) `dependency:tree` CI;(c) `banned-dependencies` enforcer | Alice | v1.0 GA |
 | **R-10** | Maven Central 发布权限 / GPG 签名错误 | 1×3=3 | `lingshu-release` GitHub Action + 2FA + 发布 checklist | Charlie | v1.0.0 GA 前 |
 | **R-11** | lingshu-docs 站点 404 / CDN 假缓存 | 2×1=2 | `curl -sLI` 验整链路 + Pages 状态监控 | Charlie | 已发生(2026-09-06) |
-| **R-13** | **Spring AI starter 误用(transitive 污染 + binary 膨胀)** | **2×3=6** | (a) **只**引 `spring-ai-core` + 实际用 provider starter,不用 `spring-ai-spring-boot-starter` 全家桶;(b) `banned-dependencies` enforcer build 阶段 fail;(c) binary size baseline < 35MB,CI delta > 10% fail;(d) Story #001 / #003 / #009 实施者**必须**先 `mvn dependency:tree` 自查 + 贴关键子树到 PR body | Charlie | v1.0 GA |
+| **R-13** | **Spring AI starter 误用(transitive 污染 + binary 膨胀)** | **2×3=6** | (a) **只**引 `spring-ai-core` + 实际用 provider starter,不用 `spring-ai-spring-boot-starter` 全家桶;(b) `banned-dependencies` enforcer build 阶段 fail;(c) binary size baseline < 35MB,CI delta > 10% fail;(d) Story #001 / #003 / #009 实施者**必须**先 `mvn dependency:tree` 自查 + 贴关键子树到 PR body | Charlie | **已缓解 ✅(Story #009)** |
 
 **等级**:≥ 6 必缓解 / 4-5 有缓解 / ≤ 3 接受风险 + 监控。
 

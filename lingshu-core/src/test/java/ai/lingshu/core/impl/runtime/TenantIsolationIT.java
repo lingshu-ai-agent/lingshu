@@ -105,7 +105,8 @@ class TenantIsolationIT {
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
             null,                                                   // a2aTransport
-            new AgentConfig.TenantsConfig(true, tenantMap));         // tenants enabled
+            new AgentConfig.TenantsConfig(true, tenantMap),          // tenants enabled
+            AgentConfig.A2a.defaults());                            // a2a (Story #009)
 
         // 2) Wire up the four components — no Spring context.
         TenantConfigProvider provider = new YamlTenantConfigProvider(rootCfg);

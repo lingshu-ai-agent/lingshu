@@ -38,7 +38,8 @@ class TenantConfigProviderTest {
             null,                                       // a2aTransport
             new AgentConfig.TenantsConfig(
                 tenantsMap != null && !tenantsMap.isEmpty(),
-                tenantsMap == null ? Collections.<String, TenantConfig>emptyMap() : tenantsMap));
+                tenantsMap == null ? Collections.<String, TenantConfig>emptyMap() : tenantsMap),
+            AgentConfig.A2a.defaults()); // a2a (Story #009)
     }
 
     private static TenantConfig aliceTenant() {

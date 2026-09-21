@@ -62,7 +62,8 @@ class LinearTurnEngineParallelDispatchTest {
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
             null,               // a2aTransport
-            null);              // tenants (Story #006 — single-tenant mode)
+            null,                  // tenants (Story #006 — single-tenant mode)
+            AgentConfig.A2a.defaults());  // a2a (Story #009)
     }
 
     private static ToolCall call(String id, String toolName) {
