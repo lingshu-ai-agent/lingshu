@@ -50,7 +50,7 @@
 - 🪶 **Lombok 友好** — `@Value` 不可变风格,拒绝过度抽象
 - 🔁 **YAML 热更无中断** — `AgentConfigRegistry` `AtomicReference` 单写多读 + `Files.getLastModifiedTime` 5s poll + `DefaultAgent.run()` 入口一次性 freeze,旧 turn 冻结 cfg 引用语义自然隔离(Story #007)
 - 🛑 **ReAct 上限守卫** — `LinearTurnEngine.runTurn` `maxStepsHit` 守卫标志 + `AgentEvent.MaxStepsExceeded(maxSteps, totalUsage)` 结构化事件,防止 LLM 死循环 token 失控(Story #008)
-- 🌐 **A2A-ready (roadmap)** — Agent-to-Agent 协议对齐 v0.5,跟 [OryxOS](https://github.com/oryx-labs/oryxos) 的"三件套"对齐
+- 🌐 **A2A AgentCard 已上线** — `GET /.well-known/agent.json` 服务端暴露,A2A v1.0 §2.1 协议对齐,字段直接来源于 `cfg.getIdentity()`,无需额外 yml(Story #009 AC-10);`HttpJsonRpcA2aTransport` / `RemoteAgentTool` / `AgentCardCache` 留 **#009a / #009b**
 
 ---
 
@@ -123,7 +123,7 @@ agent:
 
 ---
 
-## 🏛️ 架构:8 个 SPI 槽位
+## 🏛️ 架构:9 个 SPI 槽位
 
 ```
                             ┌──────────────────────────────────┐
@@ -512,11 +512,49 @@ dsh §0.4 AC-07:**ReAct 上限** —— yml `agent.react.max-steps: 3` + LLM moc
 mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
 ```
 
-**累计测试**:**187 case**(Story #007 176 + Story #008 +11)全绿,0 regression。
+**累计测试**:**204 case**(Story #008 187 + Story #009 +17)全绿,0 regression。
 
-**R-13 dependency:tree 自查**:`diff /tmp/deps-007-baseline.txt /tmp/deps-008-after.txt` → 仅 `[INFO] Total time` 时间戳差异,**0 新依赖**。
+**R-13 dependency:tree 自查**:`diff /tmp/deps-008-baseline.txt /tmp/deps-009-after.txt` → 仅 `[INFO] Total time` 时间戳差异 + 新模块 `lingshu-a2a-server` 4 个直接依赖(`lombok` / `spring-boot-autoconfigure` / `junit-jupiter` / `assertj-core`),**全部已在 dsh §10.1 锁定 13 项 / Spring Boot BOM 中**,0 新依赖。
 
-**0 新增 ErrorCode**(沿用 Story #001 `LINGS-C02` 校验,本 Story **不**新增任何 `LINGS-*` 错误码;`MaxStepsExceeded` 是结构化事件不是异常)。
+**2 新增 ErrorCode**:
+- `LINGS-T02`(T 域 / Tool-A2A 配置)— `AgentConfig.identity.name` 空 / 空白 / `AgentConfig == null` 触发,`LocalAgentCardGenerator.generate()` 启动期校验
+- `LINGS-S06`(S 域 / Slot-SPI)— 端口占用 / 越界 / `HttpServer.create()` 失败触发,`A2aServer.start()` 启动期 fail-fast
+
+---
+
+### Story #009 a2a-agent-card(`LocalAgentCardGenerator` + JDK `HttpServer` + `GET /.well-known/agent.json` AC-10)
+
+dsh §0.4 AC-10:**A2A AgentCard 自动生成** —— 服务端暴露 `GET /.well-known/agent.json`(A2A v1.0 §2.1 固定路径),返回 `AgentCard` 包含 `name` / `description` / `version` 字段,且**直接**来源于 `cfg.getIdentity()` / `cfg.getIdentity().getRole()` / 内置常量,无需额外 yml 配置。dsh §5.6.8 `LocalAgentCardGenerator` 黑盒验证。
+
+**Narrow scope(AC-10 only)**:`LocalAgentCardGenerator`(cfg → AgentCard transformer)+ 嵌入式 HTTP server(JDK 内置 `com.sun.net.httpserver.HttpServer`,0 新 Maven 依赖)+ 最小 `AgentCard` 数据类型(Lombok `@Value` + Jackson)。**Out-of-Scope**:`HttpJsonRpcA2aTransport` / `RemoteAgentTool` / `AgentCardCache` / `RemoteAgentSchemaBuilder` → 留 **#009a / #009b**(dsh §5.6.3.2 锚定);`#009c` **不存在**,见 PR #16 review note。
+
+- 新模块 `lingshu-a2a-server`(独立打包,零 Maven 依赖增量):`AgentCard.java` + `LocalAgentCardGenerator.java` + `A2aServer.java` + `A2aServerAutoConfiguration.java` + `LingsA2aServerException.java` + `META-INF/spring/...AutoConfiguration.imports`
+- `A2aServer` Spring `@Bean(initMethod="start", destroyMethod="stop")` 生命周期(避开 `@PostConstruct` / `@PreDestroy` javax.annotation 依赖,符合 R-13)
+- `AgentConfig.A2a` 嵌套类(host + port + `defaults()`)穿透到 `AgentConfigDefaults` + `AgentFactory` + 15 个测试 fixture
+- 3 handler 内嵌类:`AgentCardHandler`(GET agent.json / 200 / Cache-Control max-age=60)/ `RpcPlaceholderHandler`(POST /rpc / 501 Not Implemented,占位留给 #009a)/ `NotFoundHandler`(catch-all 404)
+
+**测试覆盖**(17 case / 3 文件):
+- `LocalAgentCardGeneratorTest`(6 case L1)— `generate_withIdentityName_returnsAgentCardWithName` / `generate_defaultIdentity_returnsLingShuAgent` / `generate_identityWithRole_setsDescription` / `generate_blankIdentityName_throwsLingsT02`(EC-1) / `generate_whitespaceOnlyIdentityName_throwsLingsT02` / `generate_toJson_returnsValidJson`
+- `AgentCardJsonTest`(3 case L1)— `serialize_withNullDescription_emitsField` / `serialize_returnsValidJsonStructure` / `serialize_emptySkills_emitsEmptyArray`
+- `A2aServerLifecycleTest`(8 case L1+L2)— `start_withDefaultPort8080_listensOn8080` / `start_withCustomPort_listensOnCustomPort` / `start_withPortZero_returnsOsAssignedPort` / `stop_releasesPortForRebind` / `start_withPortAlreadyInUse_throwsLingsS06`(EC-4) / `start_withBlankIdentityName_throwsLingsT02`(EC-5) / `start_withInvalidPortNegative_throwsLingsS06` / `getAgentJson_returnsValidCard`
+
+```bash
+mvn -pl lingshu-a2a-server -am test -Dtest='LocalAgentCardGeneratorTest,AgentCardJsonTest,A2aServerLifecycleTest'
+```
+
+**AC-10 黑盒主路径输出**(实跑 `A2aServerLifecycleTest.getAgentJson_returnsValidCard`):
+
+```
+[AC-10] GET http://127.0.0.1:<port>/.well-known/agent.json
+[AC-10] HTTP 200
+[AC-10] Content-Type: application/json
+[AC-10] Cache-Control: max-age=60
+[AC-10] {"name":"test-card","description":"test role","version":"0.1.0",...}
+```
+
+**全模块回归**:`mvn -pl lingshu-core,lingshu-a2a-server -am test` → `lingshu-core` 187 case(0 regression)+ `lingshu-a2a-server` 17 case,**204/204 全绿**。
+
+**Story 边界外延说明**:本 Story 实际改动 11 个源文件 + 3 个测试文件 + 15 个 core 测试 fixture + 2 个文档文件 = **31 files**,**超出 SOP §3.1 Story 边界 ≤5 上限 6 倍**。根因:`AgentConfig.A2a` 嵌套类新增导致全仓 15 个 fixture 必须追加最后一个构造参数(R-13 mitigation (d) 镜像:所有调用点都要同步),且 `AgentConfig` 27 字段默认值穿透路径(`AgentConfigDefaults` → `AgentFactory.loadYamlAndValidate()`)需要同步。已**显式接受超限**,见 PR #16 Out-of-Scope 节 — 下次 Story 实施者参考此 Story 时,优先评估「新增 AgentConfig 字段」是否会触发同样模式的 fixture 同步成本。
 
 ---
 
@@ -533,6 +571,7 @@ mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
 - 🛡️ [Sandbox 与安全](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/sandbox.md)
 - 👥 [多租户隔离与 TenantContext(Story #006)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/multi-tenant.md)
 - 🔁 [YAML 热更与 in-flight freeze(Story #007)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/yaml-hot-reload.md)
+- 🌐 [A2A AgentCard 与 `.well-known/agent.json`(Story #009)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/a2a-agent-card.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)
