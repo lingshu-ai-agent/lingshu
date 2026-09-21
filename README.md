@@ -424,11 +424,12 @@ dsh §14.8 N8:**YAML 热更无中断** —— Agent 跑 turn T1 时外部修改 
 - Listener 抛 RuntimeException → ERROR log + publish **不**回滚,后续 reader 仍看到新 cfg
 - Listener 内禁止调 `registry.publish`(重入死循环,契约显式说明)
 
-**测试覆盖**(14 case / 4 文件):
-- `AgentConfigRegistryTest`(7 case)— publish 立即 swap / 100 线程并发 `current()` 全看到新 cfg / listener 异常隔离 / listener 重入禁止 / addListener / removeListener
+**测试覆盖**(22 case / 5 文件):
+- `AgentConfigRegistryTest`(9 case)— publish 立即 swap / 100 线程并发 `current()` 全看到新 cfg / listener 异常隔离 / listener 重入禁止 / addListener / removeListener / publish null NPE
+- `MinimalYamlParserTest`(4 case)— block-style list / flow-style list / 注释与空行 / orphan item 抛错(内联 YAML parser L0 smoke)
 - `YamlWatcherTest`(5 case)— mtime 变更触发 reload / invalid YAML 保留旧 cfg / validate 失败保留旧 cfg / `lastSeen` 不更新 / 自动重试
-- `InFlightFreezeTest`(1 case)— **AC-06 核心**(T1 freeze + T2 立即生效)
-- `YamlHotReloadIT`(1 case E2E)— **AC-06 黑盒主路径**(T1 跑 ls + 中途 touch yml 加 git + T2 跑 git status)
+- `InFlightFreezeTest`(2 case)— **AC-06 核心**(T1 freeze + T2 立即生效 + in-flight turn 不被并发 publish 改写)
+- `YamlHotReloadIT`(2 case E2E)— **AC-06 黑盒主路径**(T1 跑 ls + 中途 touch yml 加 git + T2 跑 git status + invalid YAML rollback)
 
 ```bash
 mvn -pl lingshu-core test -Dtest='AgentConfigRegistryTest,YamlWatcherTest,InFlightFreezeTest,YamlHotReloadIT'
