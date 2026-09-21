@@ -62,6 +62,8 @@ public class AgentConfig {
     String a2aTransport;
     /** 🆕 Story #006 — multi-tenant config; null when no tenants are configured (single-tenant mode). */
     TenantsConfig tenants;
+    /** 🆕 Story #009 — embedded A2A HTTP server config (AgentCard endpoint + RPC placeholder). */
+    A2a a2a;
 
     // ── Nested config records ───────────────────────────────────────────
 
@@ -253,6 +255,39 @@ public class AgentConfig {
         /** Single-tenant mode default — empty map, {@link #isEnabled()} returns false. */
         public static TenantsConfig defaults() {
             return new TenantsConfig(false, Collections.emptyMap());
+        }
+    }
+
+    // ── 🆕 Story #009 — embedded A2A HTTP server config ─────────────────
+
+    /**
+     * Embedded A2A server config (Story #009, dsh §5.6.8 LocalAgentCardGenerator).
+     *
+     * <p>Drives {@code A2aServer} (JDK built-in {@code com.sun.net.httpserver.HttpServer})
+     * — listend on {@link #host}{@code :}{@link #port}, serves
+     * {@code GET /.well-known/agent.json} (A2A v1.0 spec §2.1 fixed path) plus
+     * {@code POST /rpc} 501 placeholder + catch-all 404.
+     *
+     * <p>Validated eagerly at {@code A2aServer} startup — fail-fast so a typo in
+     * {@code application.yml} surfaces as a {@code LINGS-S06}
+     * ({@code A2A_SERVER_START_FAILED}) or {@code LINGS-T02}
+     * ({@code A2A_CARD_INVALID_CONFIG}) error rather than a confusing
+     * {@code BindException} mid-turn.
+     */
+    @Value
+    public static class A2a {
+
+        /** Bind address; {@code "0.0.0.0"} = all interfaces, {@code "127.0.0.1"} = loopback only. */
+        String host;
+        /** TCP port; {@code 0} = OS-assigned; default {@code 8080}; valid range {@code 0..65535}. */
+        Integer port;
+
+        /**
+         * Zero-config default (dsh §5.6.8 default) — bind on all interfaces port 8080.
+         * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
+         */
+        public static A2a defaults() {
+            return new A2a("0.0.0.0", 8080);
         }
     }
 }

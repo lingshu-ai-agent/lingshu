@@ -150,6 +150,7 @@ class ProjectTreeMemorySourceTest {
             base.getLlmTimeoutSeconds(), base.getReactMaxSteps(),
             base.getIdentity(), base.getInstructions(), base.getMemory(),
             base.getA2aTransport(),
-            base.getTenants());
+            base.getTenants(),
+            base.getA2a());  // a2a (Story #009)
     }
 }

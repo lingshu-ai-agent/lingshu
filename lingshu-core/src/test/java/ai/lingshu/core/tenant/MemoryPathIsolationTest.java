@@ -50,7 +50,8 @@ class MemoryPathIsolationTest {
                 new AgentConfig.ClaudeMd(true, memoryDir.resolve("CLAUDE.md"), null),
                 Collections.<String>emptyList()),
             null,                                       // a2aTransport
-            null);                                      // tenants
+            null,                                       // tenants
+            AgentConfig.A2a.defaults());                // a2a (Story #009)
     }
 
     @Test

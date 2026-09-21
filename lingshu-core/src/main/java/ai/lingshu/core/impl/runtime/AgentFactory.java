@@ -543,8 +543,9 @@ public class AgentFactory {
             AgentConfig.Identity.defaults(),
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
-            null,   // a2aTransport
-            null);  // tenants
+            null,                       // a2aTransport (Story #009 — leave to A2aServerAutoConfig)
+            null,                       // tenants (Story #006 — null = single-tenant mode)
+            AgentConfig.A2a.defaults());  // a2a (Story #009)
     }
 
     @SuppressWarnings("unchecked")

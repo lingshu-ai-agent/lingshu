@@ -89,7 +89,8 @@ class SandboxWhitelistIsolationTest {
             AgentConfig.Instructions.empty(),
             AgentConfig.Memory.defaults(),
             null,                                       // a2aTransport
-            null);                                      // tenants (single-tenant mode)
+            null,                                       // tenants (single-tenant mode)
+            AgentConfig.A2a.defaults());                // a2a (Story #009)
     }
 
     @Test
