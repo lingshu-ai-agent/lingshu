@@ -49,6 +49,7 @@
 - 🔄 **FlowEngine 可替换** — `LinearTurnEngine` 默认,`GoogleAdkFlowEngine` / `AlibabaGraphFlowEngine` / 自研 DAG 可平替
 - 🪶 **Lombok 友好** — `@Value` 不可变风格,拒绝过度抽象
 - 🔁 **YAML 热更无中断** — `AgentConfigRegistry` `AtomicReference` 单写多读 + `Files.getLastModifiedTime` 5s poll + `DefaultAgent.run()` 入口一次性 freeze,旧 turn 冻结 cfg 引用语义自然隔离(Story #007)
+- 🛑 **ReAct 上限守卫** — `LinearTurnEngine.runTurn` `maxStepsHit` 守卫标志 + `AgentEvent.MaxStepsExceeded(maxSteps, totalUsage)` 结构化事件,防止 LLM 死循环 token 失控(Story #008)
 - 🌐 **A2A-ready (roadmap)** — Agent-to-Agent 协议对齐 v0.5,跟 [OryxOS](https://github.com/oryx-labs/oryxos) 的"三件套"对齐
 
 ---
@@ -461,6 +462,60 @@ vi application.yml    # 追加 git 到 whitelist
 **R-13 dependency:tree 自查**:`diff /tmp/deps-006-baseline.txt /tmp/deps-007-after.txt` → **0 new dependencies**(`AtomicReference` / `ScheduledExecutorService` / `Files` / SnakeYAML 已在 baseline)。
 
 **0 新增 ErrorCode**(沿用 Story #001 `LINGS-C02` 验证错误码;R-03 缓解在 `validateOrThrow` 已有路径)。
+
+### Story #008 react-max-steps(`LinearTurnEngine` `maxStepsHit` 守卫 + `MaxStepsExceeded` 事件发射 AC-07)
+
+dsh §0.4 AC-07:**ReAct 上限** —— yml `agent.react.max-steps: 3` + LLM mock 每次只返 tool call(不返 final answer)→ 第 3 步之后发 `MaxStepsExceeded(3, totalUsage=...)` 事件,然后 turn 正常 `done()`,**不**无限循环。防止 LLM 死循环 token 失控 + 7×24 长生命周期运维刚需。
+
+**核心交付**:
+- `LinearTurnEngine.runTurn` 新增 `boolean maxStepsHit = false` 守卫标志(try 之前声明)
+- for-loop 内 L174 `ObservationAppended` 之后新增 `if (step == maxSteps) maxStepsHit = true;`(仅当 step == maxSteps 且无 break 退出时触发)
+- for-loop 之后 / `TurnCompleted` 之前新增守卫 + last 联合判定:`if (maxStepsHit && last.getToolCalls() 非空) sink.onNext(MaxStepsExceeded(maxSteps, totalUsage))`
+- `TurnCompleted.reason` 仍为 `last.getStopReason()`(**不**引入新 `StopReason.MAX_STEPS` enum 值 — 保持 Story #005 cancellation 状态机 + Story #010 OTel metric 标签向后兼容)
+- `MaxStepsExceeded.totalUsage` 与 `TurnCompleted.usage` **同一对象引用**(`Usage` `@Value` 不可变,NFR-002 0 内存分配)
+
+**关键不变量**:
+- 仅当 for-loop 因 `step == maxSteps` 自然 bound 结束(**无** `break`(ctx.done() / no-tool-call)/ `return`(cancellation / waitForLlm cancelled)/ `catch`(RuntimeException))**且**最后一次 LLM 响应仍含 tool calls 时,发射 `MaxStepsExceeded`
+- 事件顺序固定:`MaxStepsExceeded` → `TurnCompleted`(FR-005 强约束,`assertSame(usage)` 验证)
+- `AgentEvent.MaxStepsExceeded(maxSteps, totalUsage)` 类定义、字段、Lombok `@Getter` **不**改(`AgentEvent.java` L107-110)
+- `StopReason` enum **不**改(`StopReason.java` L8-21,6 值 END_TURN / TOOL_USE / MAX_TOKENS / COMPACTED / CANCELLED / ERROR,无 `MAX_STEPS`)
+- `AgentConfig.reactMaxSteps` 默认 50,`0` = 不限被 `AgentFactory.create()` 启动期校验 `LINGS-C02` 拒绝(`L233-235` 复用,**0 新增** ErrorCode)
+- Story #007 兼容:在飞 turn 冻结 `reactMaxSteps` 引用,中途 `registry.publish(newCfg)` 不影响(EC-9 自然兼容)
+
+**5 终止路径分支全覆盖**:
+
+| 路径 | 触发条件 | 发 `MaxStepsExceeded`? | `TurnCompleted.reason` |
+|---|---|---|---|
+| **A**(自然 bound + last 含 tool calls)| for-loop step == maxSteps 无 break | ✅ **是** | `TOOL_USE`(LLM 最后响应是 TOOL_USE)|
+| **A'**(自然 bound + last 无 tool calls)| break at L162-165 在 step == maxSteps | ❌ 否 | `END_TURN` |
+| **B**(break 无 tool calls)| step < maxSteps + break | ❌ 否 | `END_TURN` |
+| **C**(break ctx.done)| step < maxSteps + break | ❌ 否 | `END_TURN` |
+| **D**(cancellation return)| `cancellation().isCancelled()` | ❌ 否 | `CANCELLED` |
+| **E**(exception catch)| RuntimeException in try | ❌ 否 | `ERROR` |
+
+**测试覆盖**(11 case / 1 文件):
+- `MaxStepsGuardTest`(11 case):
+  - `US1-AS1`:`maxSteps3_llmAlwaysToolCall_emitsMaxStepsExceeded_after3rdStep` —— 主路径 11 事件含 `MaxStepsExceeded(3)`
+  - `US1-AS2`:`maxSteps5_llmEndTurnAfter3Steps_noMaxStepsExceeded` —— 自然 END_TURN 路径不发
+  - `US1-AS3`:`maxSteps1_llmToolCall_emitsMaxStepsExceeded_after1stStep` —— 极小值边界
+  - `US1-AS4`:`maxSteps0_factoryValidateThrows_LingsC02_neverEnterEngine` —— 反射测 `AgentFactory.validate()` 抛 `IllegalArgumentException`
+  - `US2-AS1`:`maxSteps2_llmThrowsFirstStep_errorPathNoMaxStepsExceeded` —— 异常路径不发
+  - `US2-AS2`:`maxSteps3_toolExceptionMidPath_stepCountContinues_maxStepsHitFinally` —— tool 异常翻译为 `ToolResult.error` 不影响 step 计数
+  - `US3-AS1`:`maxStepsExceeded_eventFields_intAndUsage` —— 反射验证字段类型
+  - `US3-AS2`:`stopReason_enumHasNoMaxStepsValue` —— 反射验证 enum 无 `MAX_STEPS`(SemVer 守护)
+  - `US3-AS3`:`maxSteps3_eventOrder_maxStepsBeforeTurnCompleted_usageRefSame` —— 顺序 + 引用语义 `assertSame`
+  - `EC-5`:`maxSteps10_cancellationMidPath_noMaxStepsExceeded` —— 取消优先
+  - `EC-7`:`maxSteps3_llmEndTurnAtLastStep_naturalEndTurn_noMaxStepsExceeded` —— break 优先于守卫
+
+```bash
+mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
+```
+
+**累计测试**:**187 case**(Story #007 176 + Story #008 +11)全绿,0 regression。
+
+**R-13 dependency:tree 自查**:`diff /tmp/deps-007-baseline.txt /tmp/deps-008-after.txt` → 仅 `[INFO] Total time` 时间戳差异,**0 新依赖**。
+
+**0 新增 ErrorCode**(沿用 Story #001 `LINGS-C02` 校验,本 Story **不**新增任何 `LINGS-*` 错误码;`MaxStepsExceeded` 是结构化事件不是异常)。
 
 ---
 
