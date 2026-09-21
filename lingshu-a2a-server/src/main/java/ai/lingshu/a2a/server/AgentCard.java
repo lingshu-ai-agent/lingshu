@@ -46,7 +46,7 @@ public class AgentCard {
     String description;
     /** Server-side version; hardcoded {@code "0.1.0"} for this Story. */
     String version;
-    /** Skills offered; empty for this Story (Story #009c will scan {@code ToolRegistry}). */
+    /** Skills offered; empty for this Story (Story #009b will scan {@code ToolRegistry}). */
     List<AgentSkill> skills;
     /** Capability flags; {@link AgentCapabilities#empty()} for this Story. */
     AgentCapabilities capabilities;
@@ -85,7 +85,7 @@ public class AgentCard {
     // ── Nested types (dsh §5.6.3.0) ───────────────────────────────────────
 
     /**
-     * Single advertised skill — A2A v1.0 §2.1 {@code skills[]} entry. Story #009c will
+     * Single advertised skill — A2A v1.0 §2.1 {@code skills[]} entry. Story #009b will
      * populate this list from the local {@code ToolRegistry}.
      */
     @Value
