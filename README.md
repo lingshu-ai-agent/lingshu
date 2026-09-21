@@ -48,6 +48,7 @@
 - 🛡️ **双层沙箱** — `PermissionPolicy`(模型层)+ `RuntimeSandbox`(系统层,chroot/seccomp/sysbox)
 - 🔄 **FlowEngine 可替换** — `LinearTurnEngine` 默认,`GoogleAdkFlowEngine` / `AlibabaGraphFlowEngine` / 自研 DAG 可平替
 - 🪶 **Lombok 友好** — `@Value` 不可变风格,拒绝过度抽象
+- 🔁 **YAML 热更无中断** — `AgentConfigRegistry` `AtomicReference` 单写多读 + `Files.getLastModifiedTime` 5s poll + `DefaultAgent.run()` 入口一次性 freeze,旧 turn 冻结 cfg 引用语义自然隔离(Story #007)
 - 🌐 **A2A-ready (roadmap)** — Agent-to-Agent 协议对齐 v0.5,跟 [OryxOS](https://github.com/oryx-labs/oryxos) 的"三件套"对齐
 
 ---
@@ -404,6 +405,62 @@ executor.submit(() -> {
 
 **R-13 dependency:tree 自查**:`diff /tmp/deps-005-baseline.txt /tmp/deps-006-after.txt` → 仅 `[INFO] Total time` 时间戳差异,**0 新依赖**。
 
+### Story #007 yaml-hot-reload(`AgentConfigRegistry` AtomicReference + 5s mtime poll + DefaultAgent freeze AC-06)
+
+dsh §14.8 N8:**YAML 热更无中断** —— Agent 跑 turn T1 时外部修改 `application.yml`(扩 sandbox whitelist / 换 model / 调 `react.max-steps`),T1 全程冻结旧 cfg 引用语义自然隔离;T2 启动立即看到新 cfg。零停机 + 零重启 + 零数据竞争 —— 7×24 长生命周期运维刚需。
+
+**核心交付**:
+- `AgentConfigRegistry` `AtomicReference<AgentConfig>` **单写多读 lock-free**(NFR-005:单 publish ≤ 1ms)
+- `ConfigChangeListener` SPI + listener 异常不阻断 publish 主流程(异常隔离 + ERROR 日志 + 后续 reader 仍看到新 cfg)
+- `YamlWatcher` daemon `ScheduledExecutorService` 5s `Files.getLastModifiedTime` poll(cross-platform stable,**不用** `WatchService` 的 macOS polling fallback 不兼容)
+- `AgentFactory.create(cfg, registry)` 新签名 + 旧 `create(cfg)` `@Deprecated`(向后兼容 Story #001—#006)
+- `DefaultAgent.run()` 入口一次性 `registry.current()` freeze(Java 引用语义 + `@Value` immutable 字段自然冻结,无锁 / 无 snapshot copy)
+- `validateOrThrow` 拒绝破坏性 cfg + rollback 保留旧 cfg + `lastSeen` **不**更新 → 下次 5s 自动重试
+
+**关键不变量**:
+- 旧 turn T1 全程持有 cfg1 引用(`assertSame` 验证),即使中途 `registry.publish(cfg2)` 也无影响
+- 新 turn T2 入口 `registry.current()` 立即看到 cfg2,无需重启 / cancel / 等待
+- 校验失败 / YAML parse 失败 / IOException **不**更新 `lastSeen`,下一次 poll 自动重试(R-03 缓解)
+- Listener 抛 RuntimeException → ERROR log + publish **不**回滚,后续 reader 仍看到新 cfg
+- Listener 内禁止调 `registry.publish`(重入死循环,契约显式说明)
+
+**测试覆盖**(14 case / 4 文件):
+- `AgentConfigRegistryTest`(7 case)— publish 立即 swap / 100 线程并发 `current()` 全看到新 cfg / listener 异常隔离 / listener 重入禁止 / addListener / removeListener
+- `YamlWatcherTest`(5 case)— mtime 变更触发 reload / invalid YAML 保留旧 cfg / validate 失败保留旧 cfg / `lastSeen` 不更新 / 自动重试
+- `InFlightFreezeTest`(1 case)— **AC-06 核心**(T1 freeze + T2 立即生效)
+- `YamlHotReloadIT`(1 case E2E)— **AC-06 黑盒主路径**(T1 跑 ls + 中途 touch yml 加 git + T2 跑 git status)
+
+```bash
+mvn -pl lingshu-core test -Dtest='AgentConfigRegistryTest,YamlWatcherTest,InFlightFreezeTest,YamlHotReloadIT'
+```
+
+**ConfigChangeListener 用法**:
+```java
+@Component
+public class MyAuditListener implements ConfigChangeListener {
+    @Override
+    public void onConfigChange(AgentConfig prev, AgentConfig next) {
+        // prev → next 的 diff 审计 / metric 计数 / cache invalidate
+        // 不要在 listener 内调 registry.publish(重入死循环,契约禁止)
+    }
+}
+```
+
+**YAML 热更示例**:
+```bash
+# T1 在跑,sandbox whitelist = [ls, cat]
+# 外部运维修改 yml:
+vi application.yml    # 追加 git 到 whitelist
+:wq
+# 5s 内 YamlWatcher poll 检测 mtime 变化 → reload + validate + publish(cfg2)
+# T1 全程冻结 cfg1 引用(sandbox 仍只允许 ls / cat,不被中断)
+# T2 启动立即看到 cfg2(sandbox 允许 ls / cat / git)
+```
+
+**R-13 dependency:tree 自查**:`diff /tmp/deps-006-baseline.txt /tmp/deps-007-after.txt` → **0 new dependencies**(`AtomicReference` / `ScheduledExecutorService` / `Files` / SnakeYAML 已在 baseline)。
+
+**0 新增 ErrorCode**(沿用 Story #001 `LINGS-C02` 验证错误码;R-03 缓解在 `validateOrThrow` 已有路径)。
+
 ---
 
 ## 📚 文档
@@ -418,6 +475,7 @@ executor.submit(() -> {
 - ⏹️ [协作式取消与三层贯通(Story #005)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cancellation.md)
 - 🛡️ [Sandbox 与安全](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/sandbox.md)
 - 👥 [多租户隔离与 TenantContext(Story #006)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/multi-tenant.md)
+- 🔁 [YAML 热更与 in-flight freeze(Story #007)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/yaml-hot-reload.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)
