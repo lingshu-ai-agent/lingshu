@@ -2,6 +2,7 @@ package ai.lingshu.a2a.client;
 
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
+import ai.lingshu.core.runtime.AgentRef;
 import ai.lingshu.core.slot.A2aTransport;
 import ai.lingshu.core.slot.ToolCallConfig;
 import ai.lingshu.core.slot.ToolExecutionContext;
@@ -16,6 +17,7 @@ import java.nio.file.FileSystem;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +36,10 @@ class RemoteAgentToolTest {
     /**
      * Minimal hand-rolled A2aTransport stub. Records submit calls and returns
      * a configured {@link ToolResult} or throws a configured exception.
+     *
+     * <p>Story #009d — also serves {@link #fetchCard(String)} from a small
+     * configurable map so description() skills-enumeration tests can assert
+     * the composed string without spinning up a real HTTP server.</p>
      */
     static final class FakeA2aTransport implements A2aTransport {
         private ToolResult nextResult = ToolResult.builder()
@@ -44,15 +50,27 @@ class RemoteAgentToolTest {
         private RuntimeException nextException;
         private final List<String[]> submitCalls = new ArrayList<String[]>();
         private final AtomicInteger submitCount = new AtomicInteger(0);
+        /** agentName → AgentCard map (Map form). */
+        private final Map<String, Map<String, Object>> cardsByName = new java.util.HashMap<>();
+        /** Optional exception for {@link #fetchCard(String)} (Story #009d). */
+        private RuntimeException fetchException;
 
         void setNextResult(ToolResult r) { this.nextResult = r; this.nextException = null; }
         void setNextException(RuntimeException e) { this.nextException = e; }
+
+        void putCard(String agentName, Map<String, Object> card) {
+            cardsByName.put(agentName, card);
+        }
+        void setFetchException(RuntimeException e) { this.fetchException = e; }
 
         int getSubmitCount() { return submitCount.get(); }
         List<String[]> getSubmitCalls() { return Collections.unmodifiableList(submitCalls); }
 
         @Override
-        public Map<String, Object> fetchCard(String agentName) { return Collections.emptyMap(); }
+        public Map<String, Object> fetchCard(String agentName) {
+            if (fetchException != null) throw fetchException;
+            return cardsByName.get(agentName);
+        }
 
         @Override
         public ToolResult submit(String agentName, String skill, String inputJson) {
@@ -168,5 +186,119 @@ class RemoteAgentToolTest {
         assertThat(desc).isNotBlank();
         assertThat(desc).contains("remote");
         assertThat(desc).contains("agent");
+    }
+
+    // ─── Story #009d — Test 5: schemaBuilder wired but no agents → hint ──
+
+    @Test
+    @DisplayName("TC-RAT-5: description_schemaBuilderWired_butNoAgents_returnsHint")
+    void testDescriptionSchemaBuilderWiredButNoAgents() {
+        RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
+        RemoteAgentTool wiredTool = new RemoteAgentTool(transport, json, sb);
+        String desc = wiredTool.description();
+
+        // Branch 2 (plan.md §5.1): schemaBuilder != null, remoteAgents empty
+        // → BASE_DESCRIPTION + SCHEMA_BUILDER_HINT_NO_AGENTS
+        assertThat(desc).startsWith("Invoke a skill on a remote A2A agent.");
+        assertThat(desc).contains("RemoteAgentSchemaBuilder wired");
+        assertThat(desc).contains("configure agent.a2a.remoteAgents");
+    }
+
+    // ─── Story #009d — Test 6: full skill enumeration with truncation ────
+
+    @Test
+    @DisplayName("TC-RAT-6: description_fullEnumeration_composesSkillsList")
+    void testDescriptionFullEnumeration() {
+        // Wire FakeA2aTransport with 2 cards so description() can fetch them
+        Map<String, Object> aliceCard = new java.util.HashMap<>();
+        aliceCard.put("name", "alice");
+        aliceCard.put("description", "Alice agent");
+        aliceCard.put("skills", Arrays.asList(
+            skillMap("echo", "Echo back input"),
+            skillMap("greet", "Greet user")
+        ));
+        transport.putCard("alice", aliceCard);
+
+        Map<String, Object> bobCard = new java.util.HashMap<>();
+        bobCard.put("name", "bob");
+        bobCard.put("description", "Bob agent");
+        bobCard.put("skills", Arrays.asList(
+            skillMap("search", "Search docs")
+        ));
+        transport.putCard("bob", bobCard);
+
+        RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
+        List<AgentRef> refs = Arrays.asList(
+            new AgentRef("alice", "http://alice:8080", 10),
+            new AgentRef("bob", "http://bob:8080", 5));
+        RemoteAgentTool fullTool = new RemoteAgentTool(
+            transport, json, sb, refs, 10);
+
+        String desc = fullTool.description();
+        assertThat(desc).startsWith("Invoke a skill on a remote A2A agent.");
+        assertThat(desc).contains("Available skills (3 total):");
+        assertThat(desc).contains("- call_alice_echo: Echo back input (via alice: Alice agent)");
+        assertThat(desc).contains("- call_alice_greet: Greet user (via alice: Alice agent)");
+        assertThat(desc).contains("- call_bob_search: Search docs (via bob: Bob agent)");
+    }
+
+    // ─── Story #009d — Test 7: skill enumeration truncates with "... and N more" ──
+
+    @Test
+    @DisplayName("TC-RAT-7: description_skillEnumeration_truncatesWithMore")
+    void testDescriptionSkillEnumerationTruncates() {
+        // 12 single-letter skills on alice, limit = 5 → shows 5 then "... and 7 more".
+        // Single-letter ids keep the dictionary sort predictable
+        // (skill_a..skill_l rather than skill_10..skill_11..skill_2).
+        List<Map<String, Object>> manySkills = new ArrayList<>();
+        for (char c = 'a'; c <= 'l'; c++) {
+            manySkills.add(skillMap("skill_" + c, "Skill " + c));
+        }
+        Map<String, Object> aliceCard = new java.util.HashMap<>();
+        aliceCard.put("name", "alice");
+        aliceCard.put("description", "Alice");
+        aliceCard.put("skills", manySkills);
+        transport.putCard("alice", aliceCard);
+
+        RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
+        RemoteAgentTool fullTool = new RemoteAgentTool(
+            transport, json, sb,
+            Collections.singletonList(new AgentRef("alice", null, 0)),
+            5);
+
+        String desc = fullTool.description();
+        assertThat(desc).contains("Available skills (12 total, showing 5):");
+        assertThat(desc).contains("- call_alice_skill_a:");
+        assertThat(desc).contains("- call_alice_skill_e:");
+        assertThat(desc).doesNotContain("call_alice_skill_f:");
+        assertThat(desc).contains("... and 7 more");
+    }
+
+    // ─── Story #009d — Test 8: fetchCard throws → falls back to hint ─────
+
+    @Test
+    @DisplayName("TC-RAT-8: description_fetchCardThrows_fallsBackGracefully")
+    void testDescriptionFetchCardThrows() {
+        transport.setFetchException(new RuntimeException("network down"));
+
+        RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
+        RemoteAgentTool fullTool = new RemoteAgentTool(
+            transport, json, sb,
+            Collections.singletonList(new AgentRef("alice", null, 0)),
+            10);
+
+        String desc = fullTool.description();
+        // Branch 2 fallback: cards empty after fetch failure → hint
+        assertThat(desc).contains("RemoteAgentSchemaBuilder wired");
+        assertThat(desc).contains("configure agent.a2a.remoteAgents");
+    }
+
+    // ─── helpers ─────────────────────────────────────────────────────────
+
+    private static Map<String, Object> skillMap(String id, String description) {
+        Map<String, Object> s = new java.util.HashMap<>();
+        s.put("id", id);
+        s.put("description", description);
+        return s;
     }
 }

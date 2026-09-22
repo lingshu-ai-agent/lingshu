@@ -48,7 +48,8 @@ class HttpJsonRpcA2aTransportProviderTest {
             cfg(),
             new AgentConfig.A2a(
                 "0.0.0.0", 8080, "localhost:50051", Duration.ofMinutes(5),
-                "http://example.com:9090", Duration.ofSeconds(60))
+                "http://example.com:9090", Duration.ofSeconds(60),
+                Collections.emptyList(), 10)
         );
         HttpJsonRpcA2aTransportProvider provider = new HttpJsonRpcA2aTransportProvider();
         HttpJsonRpcA2aTransport ht = (HttpJsonRpcA2aTransport) provider.create(custom);
