@@ -13,12 +13,71 @@
 
     <artifactId>lingshu-cli</artifactId>
     <name>LingShu CLI</name>
-    <description>CLI entrypoint (mvn exec:java) — placeholder, full impl in Story #001 follow-up</description>
+    <description>CLI entrypoint — Story #017 implements 5 subcommands (run / resume / serve / doctor / config)</description>
 
     <dependencies>
         <dependency>
             <groupId>ai.lingshu</groupId>
             <artifactId>lingshu-core</artifactId>
         </dependency>
+        <!-- Story #017: serve subcommand reuses A2aServer (Story #009) -->
+        <dependency>
+            <groupId>ai.lingshu</groupId>
+            <artifactId>lingshu-a2a-server</artifactId>
+        </dependency>
+
+        <!-- Lombok is used by @Value (Args) + @Getter (LingsCliException). Declared as
+             regular dep so the lombok package resolves on compile classpath (annotation
+             processor path alone is insufficient — see lingshu-core/pom.xml L19 + a2a-server
+             L24 for the canonical pattern). -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <!-- Story #017: Spring Boot bootstrap (CLI is @SpringBootApplication + ApplicationRunner)
+             - AgentFactory is @Component + @Autowired 6 Routers; can't `new` standalone
+             - SpringApplicationBuilder.web(NONE) suppresses Tomcat (serve goes through A2aServer, not Spring MVC)
+             - 0 new Maven coordinates: spring-boot-starter is BOM-managed by spring-boot-dependencies
+             (already in dsh §10.1 lock #2) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- 测试依赖(L1 + L2 + L5)— 复用父 POM 锁定的版本 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

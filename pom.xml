@@ -85,6 +85,11 @@
                 <artifactId>lingshu-core</artifactId>
                 <version>${lingshu.version}</version>
             </dependency>
+            <dependency>
+                <groupId>ai.lingshu</groupId>
+                <artifactId>lingshu-a2a-server</artifactId>
+                <version>${lingshu.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
