@@ -117,4 +117,57 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
         }
         return null;
     }
+
+    // ─── Story #009d — TC-AC-HTTP-4: RemoteAgentSchemaBuilder @Bean + remoteAgentTool 5-arg ctor
+
+    @Test
+    @DisplayName("TC-AC-HTTP-4: remoteAgentSchemaBuilderBean_isExposed_withCorrectName")
+    void remoteAgentSchemaBuilderBean_isExposed_withCorrectName() throws Exception {
+        Class<?> clazz = HttpJsonRpcA2aTransportAutoConfiguration.class;
+
+        boolean foundSchemaBuilderBean = false;
+        boolean foundToolBean = false;
+        int toolBeanArgs = 0;
+        for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
+            if (!m.isAnnotationPresent(org.springframework.context.annotation.Bean.class)) continue;
+            org.springframework.context.annotation.Bean bean =
+                m.getAnnotation(org.springframework.context.annotation.Bean.class);
+            Class<?> rt = m.getReturnType();
+            m.setAccessible(true);
+            if (rt.equals(RemoteAgentSchemaBuilder.class)) {
+                foundSchemaBuilderBean = true;
+                // verify @Bean name is 'remoteAgentSchemaBuilder' (Story #009d)
+                assertThat(bean.name())
+                    .as("@Bean name for RemoteAgentSchemaBuilder must be 'remoteAgentSchemaBuilder'")
+                    .containsExactly("remoteAgentSchemaBuilder");
+                // verify the ctor takes ObjectMapper only (single-arg)
+                assertThat(m.getParameterCount())
+                    .as("remoteAgentSchemaBuilder(@Bean) ctor must take 1 arg (ObjectMapper)")
+                    .isEqualTo(1);
+                assertThat(m.getParameterTypes()[0])
+                    .isEqualTo(com.fasterxml.jackson.databind.ObjectMapper.class);
+                // verify invoking the bean returns a real RemoteAgentSchemaBuilder
+                Object instance = m.invoke(clazz.getDeclaredConstructor().newInstance(),
+                    new com.fasterxml.jackson.databind.ObjectMapper());
+                assertThat(instance).isInstanceOf(RemoteAgentSchemaBuilder.class);
+            }
+            if (RemoteAgentTool.class.isAssignableFrom(rt)) {
+                foundToolBean = true;
+                toolBeanArgs = m.getParameterCount();
+                // Story #009d: 5-arg ctor — A2aTransportRouter, AgentConfig,
+                // ObjectMapper, RemoteAgentSchemaBuilder (4 args expected at @Bean level)
+                // Wait: 5-arg ctor has 5 params but AutoConfig @Bean gets the
+                // RemoteAgentTool built from 4 injected beans. Verify at least 4.
+                assertThat(toolBeanArgs)
+                    .as("remoteAgentTool(@Bean) must take >= 4 args (router, cfg, json, schemaBuilder)")
+                    .isGreaterThanOrEqualTo(4);
+            }
+        }
+        assertThat(foundSchemaBuilderBean)
+            .as("AutoConfiguration must expose a RemoteAgentSchemaBuilder @Bean")
+            .isTrue();
+        assertThat(foundToolBean)
+            .as("AutoConfiguration must still expose the RemoteAgentTool @Bean")
+            .isTrue();
+    }
 }
