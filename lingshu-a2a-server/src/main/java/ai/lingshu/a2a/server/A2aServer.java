@@ -1,5 +1,6 @@
 package ai.lingshu.a2a.server;
 
+import ai.lingshu.core.a2a.client.InProcessA2aRegistry;
 import ai.lingshu.core.runtime.AgentConfig;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.sun.net.httpserver.HttpExchange;
@@ -135,6 +136,11 @@ public class A2aServer {
                 e);
         }
 
+        // Step 6: register the freshly-built AgentCard into the in-process registry
+        // (Story #009b — dsh §5.6.3.2 L3241-3243). Done AFTER bind succeeds so a failed
+        // bind doesn't pollute the registry with a card pointing at an unbound port.
+        registerInProcess();
+
         LOG.info("[A2aServer] listening on http://{}:{}", host, actualPort);
     }
 
@@ -146,6 +152,9 @@ public class A2aServer {
         if (server == null) {
             return;
         }
+        // Story #009b — unregister BEFORE server.stop(0) so peer agents see the
+        // LINGS-S08 miss instead of a stale card pointing at a half-closed port.
+        unregisterInProcess();
         int port = actualPort;
         server.stop(0);
         this.server = null;
@@ -155,6 +164,63 @@ public class A2aServer {
     /** Bound port — useful when {@code a2a.port = 0} (OS-assigned). */
     public int getActualPort() {
         return actualPort;
+    }
+
+    /**
+     * 🆕 Story #009b — register this server's AgentCard into the in-process
+     * registry so peer agents (via {@code InProcessA2aTransport.fetchCard})
+     * can discover us without going through the network. Called from
+     * {@link #start()} AFTER the HTTP bind succeeds (so failed bind doesn't
+     * pollute the registry). No-op if {@code Identity.name} is null/blank
+     * — that case is rejected upstream by {@code LocalAgentCardGenerator}
+     * with {@code LINGS-T02} before {@code start()} reaches this method.
+     */
+    private void registerInProcess() {
+        String identityName = resolveIdentityName();
+        if (identityName == null) {
+            return;
+        }
+        AgentCard card = cardRef.get();
+        if (card == null) {
+            // cardRef is set in step 1 of start(); reaching here means the
+            // LocalAgentCardGenerator.generate() call above succeeded, so card
+            // is non-null by construction.
+            return;
+        }
+        InProcessA2aRegistry.getInstance().put(identityName, LocalAgentCardGenerator.toMap(card));
+        String host = cfg.getA2a() != null && cfg.getA2a().getHost() != null
+            ? cfg.getA2a().getHost() : "0.0.0.0";
+        LOG.info("[A2aServer] registered in-process card: {} -> http://{}:{}",
+            identityName, host, actualPort);
+    }
+
+    /**
+     * 🆕 Story #009b — counterpart to {@link #registerInProcess()}. Removes
+     * this server's entry from the in-process registry. Called from
+     * {@link #stop()} BEFORE {@code server.stop(0)} so peer agents see
+     * {@code LINGS-S08} (clean miss) instead of a stale card pointing at a
+     * half-closed port. No-op if {@code Identity.name} is null/blank.
+     */
+    private void unregisterInProcess() {
+        String identityName = resolveIdentityName();
+        if (identityName == null) {
+            return;
+        }
+        InProcessA2aRegistry.getInstance().remove(identityName);
+        LOG.info("[A2aServer] unregistered in-process card: {}", identityName);
+    }
+
+    /** Resolve {@code Identity.name} defensively for the registry hooks. */
+    private String resolveIdentityName() {
+        AgentConfig.Identity id = cfg.getIdentity();
+        if (id == null) {
+            return null;
+        }
+        String name = id.getName();
+        if (name == null || name.trim().isEmpty()) {
+            return null;
+        }
+        return name.trim();
     }
 
     /** Cached card — read-only view for tests. */
