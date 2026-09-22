@@ -5,6 +5,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 🆕 Story #009 — local AgentCard generator (dsh §5.6.8).
@@ -90,5 +92,44 @@ public final class LocalAgentCardGenerator {
      */
     public static String toJson(AgentCard card) throws JsonProcessingException {
         return new ObjectMapper().writeValueAsString(card);
+    }
+
+    /**
+     * Flatten an {@link AgentCard} into an immutable {@code Map<String, Object>}
+     * (Story #009b, dsh §5.6.3.2 L3241-3243).
+     *
+     * <p>The returned Map is wrapped with {@link Collections#unmodifiableMap}
+     * so callers cannot mutate registry state after {@code put}. The underlying
+     * {@link LinkedHashMap} preserves field declaration order, mirroring the
+     * {@link com.fasterxml.jackson.annotation.JsonPropertyOrder} layout of
+     * {@link AgentCard}.</p>
+     *
+     * <p>Used by {@link A2aServer#registerInProcess()} to register this server's
+     * card into the {@code InProcessA2aRegistry} singleton at {@code start()} time,
+     * and by peer agents' {@code InProcessA2aTransport.fetchCard()} (which calls
+     * {@code registry.get(agentName)} to retrieve the card Map).</p>
+     *
+     * @param card the AgentCard to flatten; must be non-null
+     * @return immutable {@code Map<String, Object>} with 12 fields in declaration order
+     * @throws IllegalArgumentException if {@code card} is null
+     */
+    public static Map<String, Object> toMap(AgentCard card) {
+        if (card == null) {
+            throw new IllegalArgumentException("card must not be null");
+        }
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("name", card.getName());
+        map.put("description", card.getDescription());
+        map.put("version", card.getVersion());
+        map.put("skills", card.getSkills());
+        map.put("capabilities", card.getCapabilities());
+        map.put("defaultInputModes", card.getDefaultInputModes());
+        map.put("defaultOutputModes", card.getDefaultOutputModes());
+        map.put("securitySchemes", card.getSecuritySchemes());
+        map.put("security", card.getSecurity());
+        map.put("provider", card.getProvider());
+        map.put("documentationUrl", card.getDocumentationUrl());
+        map.put("iconUrl", card.getIconUrl());
+        return Collections.unmodifiableMap(map);
     }
 }

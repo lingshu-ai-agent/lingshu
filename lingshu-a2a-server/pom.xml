@@ -20,6 +20,13 @@
             <groupId>ai.lingshu</groupId>
             <artifactId>lingshu-core</artifactId>
         </dependency>
+        <!--
+          🆕 Story #009b — InProcessA2aRegistry lives in lingshu-core
+          (package ai.lingshu.core.a2a.client) to break the Maven cycle
+          between lingshu-a2a-server and lingshu-a2a-client. a2a-server
+          already depends on lingshu-core, so no extra <dependency> entry
+          is needed here.
+        -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
