@@ -269,7 +269,9 @@ public class CliRunner implements ApplicationRunner {
      * Story #009 AC-10 tests (port override).
      */
     private static AgentConfig withPort(AgentConfig cfg, int newPort) {
-        AgentConfig.A2a newA2a = new AgentConfig.A2a(cfg.getA2a().getHost(), newPort);
+        AgentConfig.A2a newA2a = new AgentConfig.A2a(cfg.getA2a().getHost(), newPort,
+            cfg.getA2a().getGrpcTarget(),
+            cfg.getA2a().getCardTtl());
         // AgentConfig has 22 fields (Story #006 added tenants, #009 added a2a);
         // preserve all 21, swap only a2a (22nd).
         return new AgentConfig(

@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package ai.lingshu.a2a.v1;
+
+option java_multiple_files = true;
+option java_package = "ai.lingshu.a2a.v1";
+option java_outer_classname = "A2aProto";
+
+// Story #009a — gRPC transport contract (Contract A1).
+// 5 RPCs mapping to A2aTransport interface methods:
+//   GetCard    -> fetchCard(agentName)
+//   Submit     -> submit(agentName, skill, inputJson)
+//   GetTask    -> get(taskId)
+//   Cancel     -> cancel(taskId)
+//   Subscribe  -> subscribe(taskId, onEvent)  (server streaming)
+service A2aService {
+  rpc GetCard   (AgentName)     returns (Card);
+  rpc Submit    (SubmitRequest) returns (Task);
+  rpc GetTask   (TaskId)        returns (Task);
+  rpc Cancel    (TaskId)        returns (CancelAck);
+  rpc Subscribe (TaskId)        returns (stream TaskEvent);
+}
+
+message AgentName {
+  string name = 1;
+}
+
+message SubmitRequest {
+  string agent_name = 1;
+  string skill      = 2;
+  string input_json = 3;
+}
+
+message TaskId {
+  string id = 1;
+}
+
+message Card {
+  string              name        = 1;
+  string              description = 2;
+  string              version     = 3;
+  repeated string     skills      = 4;
+}
+
+message Task {
+  string id          = 1;
+  string status      = 2;          // PENDING / RUNNING / COMPLETED / FAILED / CANCELED
+  string result_json = 3;          // matches ToolResult.output
+  string error       = 4;
+}
+
+message TaskEvent {
+  string task_id      = 1;
+  string event_type   = 2;         // PROGRESS / LOG / PARTIAL_RESULT
+  string payload_json = 3;
+}
+
+message CancelAck {
+  bool accepted = 1;
+}

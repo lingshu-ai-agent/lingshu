@@ -70,7 +70,7 @@ class A2aServerLifecycleTest {
     @Test
     @DisplayName("start_withCustomPort_listensOnCustomPort")
     void start_withCustomPort_listensOnCustomPort() throws Exception {
-        AgentConfig.A2a custom = new AgentConfig.A2a("127.0.0.1", 18090);
+        AgentConfig.A2a custom = new AgentConfig.A2a("127.0.0.1", 18090, "localhost:50051", java.time.Duration.ofMinutes(5));
         server = new A2aServer(configFor(custom, AgentConfig.Identity.defaults()));
         server.start();
 
@@ -84,7 +84,7 @@ class A2aServerLifecycleTest {
     @Test
     @DisplayName("start_withPortZero_returnsOsAssignedPort")
     void start_withPortZero_returnsOsAssignedPort() throws Exception {
-        AgentConfig.A2a zero = new AgentConfig.A2a("127.0.0.1", 0);
+        AgentConfig.A2a zero = new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5));
         server = new A2aServer(configFor(zero, AgentConfig.Identity.defaults()));
         server.start();
 
@@ -94,7 +94,7 @@ class A2aServerLifecycleTest {
     @Test
     @DisplayName("stop_releasesPortForRebind")
     void stop_releasesPortForRebind() throws Exception {
-        AgentConfig.A2a a2a = new AgentConfig.A2a("127.0.0.1", 18091);
+        AgentConfig.A2a a2a = new AgentConfig.A2a("127.0.0.1", 18091, "localhost:50051", java.time.Duration.ofMinutes(5));
         server = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()));
         server.start();
         int port = server.getActualPort();
@@ -114,7 +114,7 @@ class A2aServerLifecycleTest {
     @Test
     @DisplayName("start_withPortAlreadyInUse_throwsLingsS06")
     void start_withPortAlreadyInUse_throwsLingsS06() throws Exception {
-        AgentConfig.A2a a2a = new AgentConfig.A2a("127.0.0.1", 18092);
+        AgentConfig.A2a a2a = new AgentConfig.A2a("127.0.0.1", 18092, "localhost:50051", java.time.Duration.ofMinutes(5));
         server = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()));
         server.start();
 
@@ -146,7 +146,7 @@ class A2aServerLifecycleTest {
     @DisplayName("start_withInvalidPortNegative_throwsLingsS06")
     void start_withInvalidPortNegative_throwsLingsS06() {
         AgentConfig cfg = configFor(
-            new AgentConfig.A2a("127.0.0.1", -1),
+            new AgentConfig.A2a("127.0.0.1", -1, "localhost:50051", java.time.Duration.ofMinutes(5)),
             AgentConfig.Identity.defaults());
         server = new A2aServer(cfg);
         assertThatThrownBy(server::start)
