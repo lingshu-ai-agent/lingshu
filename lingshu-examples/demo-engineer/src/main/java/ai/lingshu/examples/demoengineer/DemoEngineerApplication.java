@@ -2,6 +2,7 @@ package ai.lingshu.examples.demoengineer;
 
 import ai.lingshu.core.impl.config.AgentConfigDefaults;
 import ai.lingshu.core.impl.runtime.AgentFactory;
+import ai.lingshu.core.reload.YamlWatcher;
 import ai.lingshu.core.runtime.Agent;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.RunResult;
@@ -10,7 +11,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 
 /**
  * Story #002 demo — 业务三件套(Identity / Instructions / Memory)+ 5 段 Prompt 装配。
@@ -38,7 +41,18 @@ import org.springframework.context.annotation.ComponentScan;
  * First-token budget: P50 ≤ 30s; AC-09 US1 Scenario 1 asserts.
  */
 @SpringBootApplication
-@ComponentScan(basePackages = {"ai.lingshu.examples.demoengineer", "ai.lingshu.core"})
+@ComponentScan(
+    basePackages = {"ai.lingshu.examples.demoengineer", "ai.lingshu.core"},
+    // 排除 lingshu-core 端的 YamlWatcher(Story #007 热更 daemon)
+    //  —— demo-engineer 是 CLI 一次性 demo,不需要文件 mtime 轮询守护进程;
+    //  且 YamlWatcher 公开构造器 `(@Value String, AgentConfigRegistry, AgentFactory)`
+    //  与包内私有构造器 `(Path, AgentConfigRegistry, AgentFactory, long)` 共存,
+    //  Spring 6 在双构造器场景下要求显式 `@Autowired` 才能解析,而 YamlWatcher
+    //  实现层未加注解 → 启动期会抛 "No default constructor found"。
+    //  解决方案:demo-engineer 这里显式排除,YamlHotReloadIT 走 package-private 构造器直构造。
+    excludeFilters = @ComponentScan.Filter(
+        type = FilterType.ASSIGNABLE_TYPE,
+        classes = YamlWatcher.class))
 public class DemoEngineerApplication implements CommandLineRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DemoEngineerApplication.class);
@@ -47,6 +61,26 @@ public class DemoEngineerApplication implements CommandLineRunner {
 
     public DemoEngineerApplication(AgentFactory agentFactory) {
         this.agentFactory = agentFactory;
+    }
+
+    /**
+     * Provide the process-wide {@link AgentConfig} bean so that
+     * {@code YamlTenantConfigProvider} (which is a Spring singleton in
+     * {@code lingshu-core}) can {@code @Autowired AgentConfig config} without
+     * a missing-bean failure at ApplicationContext bootstrap time.
+     *
+     * <p>Story #002 Bob 模式(Bob = 业务配置方,只写 YAML)在这里保留了一处
+     * 极小的 Java 配置位 —— 这是为了让 demo-engineer 同时充当
+     * {@code @SpringBootTest} 的容器(测试需要 4 个 MemorySource bean +
+     * TenantAwareCostTracker + YamlTenantConfigProvider 全部就绪),
+     * 与 Story #009 / #017 同样的「启动期 wiring」floor 模式。运行时实际
+     * Agent 创建仍走 {@code AgentFactory.create(cfg)}(由 {@link #run(String...)}
+     * 显式调用 {@link AgentConfigDefaults#defaults()}),此 @Bean 仅供
+     * Spring 容器注入使用。
+     */
+    @Bean
+    public AgentConfig agentConfig() {
+        return AgentConfigDefaults.defaults();
     }
 
     public static void main(String[] args) {
