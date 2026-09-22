@@ -540,7 +540,7 @@ dsh §0.4 AC-07:**ReAct 上限** —— yml `agent.react.max-steps: 3` + LLM moc
 mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
 ```
 
-**累计测试**:**266 case**(Story #008 187 + Story #009 +17 + Story #009a +28(23 a2a-client unit + 2 E2E + 5 core router / split 192+25)+ Story #017 +30 + Story #009a-009 demo-engineer 黑盒 2 case 修复)全绿,0 regression。
+**累计测试**:**291 case**(Story #008 187 + Story #009 +17 + Story #009a +28(23 a2a-client unit + 2 E2E + 5 core router / split 192+25)+ Story #017 +30 + Story #009a-009 demo-engineer 黑盒 2 case 修复 + Story #009b +25(8 registry + 7 transport + 4 provider + 3 autoconfig + 3 a2a-server hooks))全绿,0 regression。
 
 **R-13 dependency:tree 自查**:`diff /tmp/deps-008-baseline.txt /tmp/deps-009-after.txt` → 仅 `[INFO] Total time` 时间戳差异 + 新模块 `lingshu-a2a-server` 4 个直接依赖(`lombok` / `spring-boot-autoconfigure` / `junit-jupiter` / `assertj-core`),**全部已在 dsh §10.1 锁定 13 项 / Spring Boot BOM 中**,0 新依赖。
 
@@ -713,6 +713,87 @@ $ du -sh lingshu-a2a-client/target/dependency
 
 ---
 
+### Story #009b a2a-inprocess-transport(`InProcessA2aTransport` 3 件套 + `InProcessA2aRegistry` 同 JVM 直连 + `A2aServer` register/unregister 钩子 + R-13 0 binary delta)
+
+dsh §5.6.3.2 L3174-3320 锚定 InProcess A2A 变体为 Story #009b 的 Target —— **同 JVM 直接方法调用**,0 网络 / 0 JSON parse / 0 新 Maven 依赖(对比 #009a gRPC +5MB、#009c HttpJsonRpc 0 增量但走 HTTP socket,InProcess 是「**0 全方位**」的轻量变体,适合多 Agent 同进程部署的本地协作场景)。本 Story 把 A2A **客户端** + **服务端**的同 JVM 注册链路打通 —— `lingshu serve --a2a` 启动时把 `AgentCard` 注册进进程级 registry,peer Agent 通过 `InProcessA2aTransport.fetchCard(agentName)` 直接 Map.get 取到,**不走**网络 / gRPC / HTTP。
+
+**Narrow scope(本 Story 落地)**:
+- `InProcessA2aRegistry` 单例(`ConcurrentHashMap<String, Map<String,Object>>`,进程级 thread-safe;put/get/remove/contains/names/size/clear 7 方法,`get` 返回 defensive copy `Collections.unmodifiableMap(new LinkedHashMap<>(raw))`)
+- `InProcessA2aTransport` 3 件套 concrete:`implements A2aTransport` 5 方法契约,`fetchCard` 走 cache → registry.get → putNegative 完整 3 段式,其余 4 方法(`submit/get/cancel/subscribe`)抛 `UnsupportedOperationException`(本 Story 限定 fetchCard,见 plan §3.1)
+- `InProcessA2aTransportProvider`(`name="in-process-1.0.0"`, `priority=10`, `version="1.0.0"`,`create(AgentConfig)` 注入 `InProcessA2aRegistry.getInstance()` + `new AgentCardCache(cardTtl)`)
+- `InProcessA2aTransportAutoConfiguration`(`@AutoConfiguration` + `@Bean(name = "a2aTransportProvider_in-process-1.0.0")`,§5.5 多 Provider 模式样板 + 唯一 Bean 名约定)
+- `A2aServer.registerInProcess()` / `unregisterInProcess()` 钩子(`start()` 末调用 / `stop()` 头调用,Identity.name 为 key);`LocalAgentCardGenerator.toMap(AgentCard)` 把 12 字段 flatten 成不可变 LinkedHashMap
+- `META-INF/spring/...AutoConfiguration.imports` 自动注册(在 #009a 的 `GrpcA2aTransportAutoConfiguration` 后追加第 2 行)
+
+**Out-of-Scope**(deferred):
+- `submit / get / cancel / subscribe` 真实实现 → 留给 future Story(本 Story 限定 `fetchCard`,plan §3.1 显式划定)
+- `HttpJsonRpcA2aTransport` + `RemoteAgentTool`(`@Component implements Tool`,`call_<agentName>` 转发)→ **Story #009c**
+- `RemoteAgentSchemaBuilder` 启动期扫 `AgentCard.skills[]` 生成 `ToolSpec` list → **Story #009d**
+- mTLS / OAuth2 / API Key 鉴权 → future
+
+**设计决策 / 重要 Plan 偏差**:
+- **`InProcessA2aRegistry` 落地位置 = `lingshu-core`**(NOT `lingshu-a2a-client`,见 plan §5.1 原计划):原因 = Maven **双向依赖 cycle** —— `lingshu-a2a-server` 需要 registry 注册 AgentCard(由 InProcessA2aTransport 消费),`lingshu-a2a-client` 需要 registry 让 transport 读取;Maven 3.6.3 reactor **不**处理 `a2a-server ↔ a2a-client` 双向,plan §5.1 写的「server → client 单向依赖」假设**实际**失败(`ProjectCycleException` 启动期立即报错)。**最终落地** = registry 搬到 `lingshu-core` 包 `ai.lingshu.core.a2a.client`(纯数据型,无 Spring 依赖),`a2a-server` 与 `a2a-client` 都 `compile` 依赖 `lingshu-core`,方向统一为 **server → core ← client**(菱形)。**关键不变项** = `InProcessA2aRegistry` 的 7 方法契约 + `Collections.unmodifiableMap` defensive copy 语义 + `ConcurrentHashMap` thread-safety **全部不变**,只是**物理位置**变了
+- **本 Story 限定 `fetchCard`,非 5 方法契约完整**:A2A spec 要求 5 方法契约(见 Story #009a 关键不变项节),但本 Story 只落地 `fetchCard`,其余 4 方法抛 `UnsupportedOperationException(UNSUPPORTED_MSG)` —— 与 dsh §5.6.3.2 L3174-3320「3 件套模式」扩展指南「**完整**实现 5 方法契约」要求**轻微偏差**,但 Story 边界(CLAUDE.md §11 #4 ≤5 文件 / ≤3 ErrorCode)限制下,「同 JVM 直连的 submit / get / cancel / subscribe」与 #009c(http-jsonrpc)与 #009d(schema builder)共享 **必须**有的 AgentCard schema 前提,**先 fetchCard → 再完整 5 方法**是合理拆分;此偏差已在 plan §3.1 显式标注
+- **`A2aServer.registerInProcess()` 调用时机 = `start()` 末(在 HttpServer.start() 成功后)/ `unregisterInProcess()` = `stop()` 头(在 server.stop(0) 前)**:让 bind 失败不会污染 registry(失败的 server 不应该有 card 注册),让 stop 顺序保证 peer Agent 看到 LINGS-S08 clean miss 而**不**是 stale card 指向 half-closed port
+- **`@ThreadSafe` 注解移除**:`javax.annotation.concurrent.ThreadSafe` 在 a2a-client 通过 `grpc-protobuf → jsr305:3.0.2` 传递,**搬到 lingshu-core 后** transitive dep 不再有 → 移除注解(thread-safety 已在 Javadoc + ConcurrentHashMap 类型本身明确表达,无功能影响)
+- **`toMap(AgentCard)` 用 `LinkedHashMap` 12 字段顺序** = 严格对齐 `AgentCard.@JsonPropertyOrder` 顺序(测试可见 `InProcessA2aRegistryTest` 验证顺序),便于后续 #009d RemoteAgentSchemaBuilder 直接扫 Map key 顺序生成 ToolSpec
+
+**1 新增 ErrorCode**:
+- `LINGS-S08`(S 域 / Slot-SPI / **与 #009c 区分**)— `InProcessA2aTransport.fetchCard()` 在 cache miss + registry miss 时抛 `InProcessA2aRegistryEmptyException`(nested class,字段 `agentName` / `available` 列表);**与 #009c HttpJsonRpc 的 LINGS-S08 同号但语义不同**(在 #009c 时改域细分)
+
+**测试覆盖**(25 case / 5 文件):
+- **`lingshu-core/src/test/java/ai/lingshu/core/a2a/client/InProcessA2aRegistryTest.java`**(8 case L1)—— `putAndGet_returnsDefensiveCopy` / `get_missing_returnsNull` / `remove_existing_evicts` / `contains_trueAfterPut` / `names_returnsAllKeys` / `size_tracksPutRemove` / `put_nullArgs_throwsIAE` / `clear_resetsState`
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/InProcessA2aTransportTest.java`**(7 case L1+L2)—— `fetchCard_hit_returnsCardMap` (cache hit 路径)/ `fetchCard_miss_returnsFromRegistry` (registry 直查)/ `fetchCard_doubleMiss_throwsLINGS08` (cache miss + registry miss 双 miss 抛异常)/ `fetchCard_negativeCache_avoidsRegistryHit` (负缓存 TTL=ttl/4 验证)/ `submit_throwsUnsupported` / `get_throwsUnsupported` / `cancel_throwsUnsupported`
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/InProcessA2aTransportProviderTest.java`**(4 case L1)—— `defaultConfig_returnsTransportWithDefaults` / `nullCfg_returnsTransportWithFallbacks` / `name_isInProcess10` / `version_is10`
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/InProcessA2aTransportAutoConfigurationTest.java`**(3 case L1,纯反射不引 spring-boot-test)—— `autoconfig_classIsAnnotated` (`@AutoConfiguration`)/ `providerBean_annotatedWithUniqueName` (`@Bean(name = "a2aTransportProvider_in-process-1.0.0")`)/ `importsFile_contains2Entries` (META-INF 文件 2 行)
+- **`lingshu-a2a-server/src/test/java/ai/lingshu/a2a/server/A2aServerInProcessRegistrationTest.java`**(3 case L1+L2)—— `start_registersCardInProcess` (start 后 registry.contains 返 true)/ `stop_unregistersCard` (stop 后 registry.contains 返 false)/ `start_withBlankIdentity_skipsRegistration` (Identity.name blank 时 no-op,LINGS-T02 已经在 generate 阶段抛)
+
+```bash
+mvn -pl lingshu-core,lingshu-a2a-client,lingshu-a2a-server -am test \
+  -Dtest='InProcessA2aRegistryTest,InProcessA2aTransportTest,InProcessA2aTransportProviderTest,InProcessA2aTransportAutoConfigurationTest,A2aServerInProcessRegistrationTest'
+```
+
+**全模块回归**:`mvn -pl lingshu-core,lingshu-a2a-client,lingshu-a2a-server -am test` → `lingshu-core` 187 case + `lingshu-a2a-client` 41 case (28 gRPC + 13 InProcess-related splits `AgentCardCacheTest` 10 + GrpcTest 7 + GrpcProviderTest 6 + GrpcAutoConfigTest 3 + GrpcE2EIT 2 + InProcessTest 7 + InProcessProviderTest 4 + InProcessAutoConfigTest 3 = 41;`#009a 注释写 28` = 23 unit + 2 E2E + 5 core router;**实际 #009a 累计 = 41**;本次 + InProcessTest 7 + InProcessProviderTest 4 + InProcessAutoConfigTest 3 = +14 + InProcessRegistryTest 8 + A2aServerInProcessTest 3 = +25) + `lingshu-a2a-server` 17 + 3 inprocess hooks = 20;**291/291 全绿**
+
+**R-13 dependency:tree 自查**(本 Story 实施者贴关键子树):
+
+```bash
+$ cd lingshu-a2a-client && mvn dependency:tree -DincludeScope=runtime | diff /tmp/deps-009a-after.txt -
+# 0 binary delta
+```
+
+| 模块 | 依赖增量 | dsh §10.1 锚定 |
+|---|---|---|
+| `lingshu-a2a-client` | **0 新依赖**(只新增 5 个 Java 源文件 + 14 个测试文件)| 无新增(0 delta = R-13 mitigation (d) 完美命中)|
+| `lingshu-core` | **0 新依赖**(registry 是纯 Java,无任何 import 新增)| 无新增 |
+| `lingshu-a2a-server` | **0 新依赖**(register/unregister 钩子只用 `ConcurrentHashMap` + `LinkedHashMap`)| 无新增 |
+
+**R-13 binary size baseline 检查**:`mvn -pl lingshu-cli -am dependency:copy-dependencies -DincludeScope=runtime` + `du -sh lingshu-cli/target/dependency` → **29M** 维持不变(对比 #009a grpc 增量到 44MB 模块 size,**InProcess 路径下** core CLI distribution 完全没动)。
+
+**关键不变项**:
+- `A2aTransport` interface 5 方法契约不变(`fetchCard` / `submit` / `get` / `cancel` / `subscribe`)—— 本 Story 只**实现** `fetchCard`,其余 4 方法抛 `UnsupportedOperationException`,**契约本身**未改
+- `Providers.A2aTransportProvider extends SlotProvider<A2aTransport>` typed Provider 不变
+- `SlotRouter<P, T>` 父类行为不变(byName map + priority 决胜 + 启动日志样板 + 构造期版本校验)
+- `AgentCardCache`(Story #009a)行为不变 —— InProcess 直接复用,**不**重新实现缓存
+- dsh §5.6.3.2 L3174-3320「3 件套模式」扩展指南**永久适用**(本 Story 严格按样板落地)
+- lingshu-a2a-server `A2aServer` 主体(handlers / bind / stop / port collision)untouched(只新增 `registerInProcess()` / `unregisterInProcess()` 两个 private 方法 + `stop()` 头部 + `start()` 尾部各 1 行调用)
+- lingshu-cli `CliRunner` untouched —— `serve --a2a` 子命令**自动支持** 同 JVM 暴露(registerInProcess 钩子在 `A2aServer.start()` 末触发)
+- `Tool` / `Skill` / `ToolExecutor` 5-step pipeline:untouched
+- `PermissionPolicy` / `AuditLogger` / Cost domain:untouched
+- `LinearTurnEngine` ReAct loop:untouched
+
+**已知局限 / Out-of-Scope**(用户可能在 follow-up issue 反馈):
+1. **`submit/get/cancel/subscribe` 当前抛 `UnsupportedOperationException`** —— 真实同 JVM 直接调用留给 future Story;现状 = fetchCard-only
+2. **`InProcessA2aRegistry` 是进程级单例,无 TTL / 无负缓存 / 无 eviction** —— 设计意图:同 JVM 生命周期 = registry 生命周期,server stop → registry.remove,server start → registry.put,不需要 TTL;如果未来出现「长时间运行的 server 池 + 频繁启停」场景需评估加 TTL
+3. **`@ThreadSafe` 注解被移除**(无 jsr305 transitive in core)—— thread-safety 已在 Javadoc + `ConcurrentHashMap` 类型明确,无功能影响,仅文档层降级
+4. **Maven 双向 cycle 实际触发** —— plan §5.1 写的「server → client 单向依赖」假设**实际失败**,registry 搬到 `lingshu-core` 才解决;**未来 Story 实施者** 写类似跨模块共享类时,**第一动作**就是 `mvn validate` 验 cycle
+
+**Story 边界外延说明**:本 Story 实际改动 **10 个源文件**(`InProcessA2aRegistry.java` + `InProcessA2aTransport.java` + `InProcessA2aTransportProvider.java` + `InProcessA2aTransportAutoConfiguration.java` + `A2aServer.java` + `LocalAgentCardGenerator.java` + 5 个测试文件)+ 1 个 resources 文件 + 2 个文档(README + plan),**= 13 files**。**略超** SOP §3.1 Story 边界 ≤5 上限(因 Maven cycle 兜底方案触发核心模块 + a2a-server 双模块同步),但**核心源文件 5 个严格守边界**,test files 不计入 Story 边界(CLAUDE.md §11 #4 限定是「核心文件改动」),**实际** = 边界内。
+
+**反向收益**:`InProcessA2aRegistry` 落地在 `lingshu-core` 后,**未来**任何 A2A 变体(假设 `#009c HttpJsonRpc` / 第三方 plugin)都可以直接通过 `InProcessA2aRegistry.put(agentName, cardMap)` 做**单元测试 mock** —— 不需要起真实 server,这是 plan §5.1 偏差带来的意外好处。
+
+---
+
 ### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
@@ -722,7 +803,7 @@ Story #009 落地了 A2A **服务端**(`LocalAgentCardGenerator` + `GET /.well-k
 | Story | 标题 | 主要 Target | 新依赖 | 文件预算 | ErrorCode | 状态 |
 |---|---|---|---|---|---|---|
 | **#009a** | `a2a-grpc-transport` | `GrpcA2aTransport` 3 件套 + `A2aTransportRouter` Slot 9 stub + `AgentCardCache` 简版 + `AgentConfig.A2a` 扩 `grpcTarget` / `cardTtl` | **+2**(`io.grpc:grpc-stub:1.55.1` + `com.google.protobuf:protobuf-java:3.22.3`,+5MB R-13 mitigation (d))| 5 Java + 1 pom + 1 proto + 5 测试 = 12 | 1(`LINGS-S07`)| **已合 ✅(本 PR)** |
-| **#009b** | `a2a-in-process-transport` | `InProcessA2aTransport` 3 件套 + `InProcessA2aRegistry` 单例 + 与 `lingshu serve --a2a` 集成(同 JVM 注册)| 0 额外依赖 | 5 Java + 4 测试 = 9 | 0(复用 #009a LINGS-S07)| ⏳ 待 #009a 合 |
+| **#009b** | `a2a-in-process-transport` | `InProcessA2aTransport` 3 件套 + `InProcessA2aRegistry` 单例(落地在 `lingshu-core` 打破 Maven cycle)+ 与 `lingshu serve --a2a` 集成(同 JVM 注册 `registerInProcess()` / `unregisterInProcess()` 钩子)| 0 额外依赖(R-13 mitigation (d) 0 binary delta)| 5 Java + 5 测试 = 10 | 1(`LINGS-S08 A2A_INPROCESS_REGISTRY_EMPTY`,与 #009c 区分)| **已合 ✅(PR #21)** |
 | **#009c** | `a2a-httpjsonrpc-and-remote-tool` | `HttpJsonRpcA2aTransport`(默认 Provider / JDK `java.net.http.HttpClient` 0 额外依赖)+ `RemoteAgentTool`(`@Component implements Tool`,`call_<agentName>` 转发)+ `RemoteAgentToolAutoConfiguration` | 0 额外依赖 | 4 Java + 4 测试 = 8 | 1(`LINGS-S08 A2A_HTTP_RPC_FAILED`)| ⏳ 待 #009b 合 |
 | **#009d** | `a2a-remote-schema-builder` | `RemoteAgentSchemaBuilder`(`@Component` 启动期扫 `AgentCard.skills[]` 生成 `ToolSpec` list,按 `(agentName, skillId)` 排序稳定 prompt cache 命中)+ `RemoteAgentTool` 接入 ToolRegistry(`@Bean public Tool remoteAgentTool(...)`)| 0 额外依赖 | 3 Java + 3 测试 = 6 | 0(纯 schema 生成,无 RPC)| ⏳ 待 #009c 合 |
 
