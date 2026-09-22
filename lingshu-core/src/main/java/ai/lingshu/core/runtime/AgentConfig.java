@@ -281,13 +281,18 @@ public class AgentConfig {
         String host;
         /** TCP port; {@code 0} = OS-assigned; default {@code 8080}; valid range {@code 0..65535}. */
         Integer port;
+        /** Story #009a: gRPC channel target (host:port); default {@code "localhost:50051"}. */
+        String grpcTarget;
+        /** Story #009a: AgentCard cache TTL; default {@code Duration.ofMinutes(5)}. */
+        java.time.Duration cardTtl;
 
         /**
-         * Zero-config default (dsh §5.6.8 default) — bind on all interfaces port 8080.
+         * Zero-config default (dsh §5.6.8 default + Story #009a extension) —
+         * bind on all interfaces port 8080; gRPC localhost:50051; 5-min card cache.
          * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
          */
         public static A2a defaults() {
-            return new A2a("0.0.0.0", 8080);
+            return new A2a("0.0.0.0", 8080, "localhost:50051", java.time.Duration.ofMinutes(5));
         }
     }
 }

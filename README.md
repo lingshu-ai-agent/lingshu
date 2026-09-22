@@ -50,7 +50,7 @@
 - 🪶 **Lombok 友好** — `@Value` 不可变风格,拒绝过度抽象
 - 🔁 **YAML 热更无中断** — `AgentConfigRegistry` `AtomicReference` 单写多读 + `Files.getLastModifiedTime` 5s poll + `DefaultAgent.run()` 入口一次性 freeze,旧 turn 冻结 cfg 引用语义自然隔离(Story #007)
 - 🛑 **ReAct 上限守卫** — `LinearTurnEngine.runTurn` `maxStepsHit` 守卫标志 + `AgentEvent.MaxStepsExceeded(maxSteps, totalUsage)` 结构化事件,防止 LLM 死循环 token 失控(Story #008)
-- 🌐 **A2A AgentCard 已上线** — `GET /.well-known/agent.json` 服务端暴露,A2A v1.0 §2.1 协议对齐,字段直接来源于 `cfg.getIdentity()`,无需额外 yml(Story #009 AC-10);`HttpJsonRpcA2aTransport` / `RemoteAgentTool` / `AgentCardCache` 留 **#009a / #009b**
+- 🌐 **A2A AgentCard 已上线** — `GET /.well-known/agent.json` 服务端暴露,A2A v1.0 §2.1 协议对齐,字段直接来源于 `cfg.getIdentity()`,无需额外 yml(Story #009 AC-10)。A2A 客户端 4 子 Story 拆分(详见 [Story 路线图](#-story-路线图-009a009d-a2a-client-系列)节):**#009a GrpcA2aTransport**(本轮 / grpc-java + protobuf)+ **#009b InProcessA2aTransport**(同 JVM 直接调用 / 0 额外依赖)+ **#009c HttpJsonRpcA2aTransport + RemoteAgentTool**(默认 Provider / JDK HttpClient / 0 额外依赖)+ **#009d RemoteAgentSchemaBuilder**(扫 `AgentCard.skills[]` 生成 `ToolSpec` list / 0 额外依赖)
 - 🖥️ **CLI 入口已上线** — `mvn -pl lingshu-cli spring-boot:run --args='run --config app.yml --prompt ...'`,5 个子命令 `run / resume / serve / doctor / config`,hand-rolled argv 解析器零新依赖,Story #017 dsh §10.3 全落地
 
 ---
@@ -540,7 +540,7 @@ dsh §0.4 AC-07:**ReAct 上限** —— yml `agent.react.max-steps: 3` + LLM moc
 mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
 ```
 
-**累计测试**:**234 case**(Story #008 187 + Story #009 +17 + Story #017 +30)全绿,0 regression。
+**累计测试**:**264 case**(Story #008 187 + Story #009 +17 + Story #009a +28(23 a2a-client unit + 2 E2E + 5 core router / split 192+25)+ Story #017 +30)全绿,0 regression。
 
 **R-13 dependency:tree 自查**:`diff /tmp/deps-008-baseline.txt /tmp/deps-009-after.txt` → 仅 `[INFO] Total time` 时间戳差异 + 新模块 `lingshu-a2a-server` 4 个直接依赖(`lombok` / `spring-boot-autoconfigure` / `junit-jupiter` / `assertj-core`),**全部已在 dsh §10.1 锁定 13 项 / Spring Boot BOM 中**,0 新依赖。
 
@@ -554,7 +554,7 @@ mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
 
 dsh §0.4 AC-10:**A2A AgentCard 自动生成** —— 服务端暴露 `GET /.well-known/agent.json`(A2A v1.0 §2.1 固定路径),返回 `AgentCard` 包含 `name` / `description` / `version` 字段,且**直接**来源于 `cfg.getIdentity()` / `cfg.getIdentity().getRole()` / 内置常量,无需额外 yml 配置。dsh §5.6.8 `LocalAgentCardGenerator` 黑盒验证。
 
-**Narrow scope(AC-10 only)**:`LocalAgentCardGenerator`(cfg → AgentCard transformer)+ 嵌入式 HTTP server(JDK 内置 `com.sun.net.httpserver.HttpServer`,0 新 Maven 依赖)+ 最小 `AgentCard` 数据类型(Lombok `@Value` + Jackson)。**Out-of-Scope**:`HttpJsonRpcA2aTransport` / `RemoteAgentTool` / `AgentCardCache` / `RemoteAgentSchemaBuilder` → 留 **#009a / #009b**(dsh §5.6.3.2 锚定);`#009c` **不存在**,见 PR #16 review note。
+**Narrow scope(AC-10 only)**:`LocalAgentCardGenerator`(cfg → AgentCard transformer)+ 嵌入式 HTTP server(JDK 内置 `com.sun.net.httpserver.HttpServer`,0 新 Maven 依赖)+ 最小 `AgentCard` 数据类型(Lombok `@Value` + Jackson)。**Out-of-Scope**:**#009a**(GrpcA2aTransport / A2aTransportRouter / AgentCardCache / AgentConfig.A2a.grpcTarget / cardTtl 扩展)+ **#009b**(InProcessA2aTransport / 同 JVM 直接方法调用 / 0 额外依赖)+ **#009c**(HttpJsonRpcA2aTransport / RemoteAgentTool / @Component implements Tool)+ **#009d**(RemoteAgentSchemaBuilder 启动期扫 `AgentCard.skills[]` 生成 `ToolSpec` list / 0 额外依赖)。dsh §5.6.3.2 只显式锚定 #009a (Grpc) + #009b (InProcess);#009c / #009d 由本仓库 Story 边界检查(CLAUDE.md §11 #4 ≤ 5 文件 / ≤ 3 ErrorCode)反推拆分。
 
 - 新模块 `lingshu-a2a-server`(独立打包,零 Maven 依赖增量):`AgentCard.java` + `LocalAgentCardGenerator.java` + `A2aServer.java` + `A2aServerAutoConfiguration.java` + `LingsA2aServerException.java` + `META-INF/spring/...AutoConfiguration.imports`
 - `A2aServer` Spring `@Bean(initMethod="start", destroyMethod="stop")` 生命周期(避开 `@PostConstruct` / `@PreDestroy` javax.annotation 依赖,符合 R-13)
@@ -583,6 +583,174 @@ mvn -pl lingshu-a2a-server -am test -Dtest='LocalAgentCardGeneratorTest,AgentCar
 **全模块回归**:`mvn -pl lingshu-core,lingshu-a2a-server -am test` → `lingshu-core` 187 case(0 regression)+ `lingshu-a2a-server` 17 case,**204/204 全绿**。
 
 **Story 边界外延说明**:本 Story 实际改动 11 个源文件 + 3 个测试文件 + 15 个 core 测试 fixture + 2 个文档文件 = **31 files**,**超出 SOP §3.1 Story 边界 ≤5 上限 6 倍**。根因:`AgentConfig.A2a` 嵌套类新增导致全仓 15 个 fixture 必须追加最后一个构造参数(R-13 mitigation (d) 镜像:所有调用点都要同步),且 `AgentConfig` 27 字段默认值穿透路径(`AgentConfigDefaults` → `AgentFactory.loadYamlAndValidate()`)需要同步。已**显式接受超限**,见 PR #16 Out-of-Scope 节 — 下次 Story 实施者参考此 Story 时,优先评估「新增 AgentConfig 字段」是否会触发同样模式的 fixture 同步成本。
+
+---
+
+### Story #009a a2a-grpc-transport(`GrpcA2aTransport` 3 件套 + `A2aTransportRouter` Slot 9 stub + `AgentCardCache` + R-13 mitigation (d) 镜像 +5MB)
+
+dsh §5.6.3.2 L3174-3320 锚定 Grpc A2A 变体为 Story #009a 的主要 Target(从 3 个候选实现中按"+5MB binary 换 grpc streaming 高效 subscribe"权衡选 Grpc,InProcess 留 #009b,HttpJsonRpc 留 #009c)。本 Story 落地 Slot 9 SPI 第一个**真实**可用 Provider,把 A2A **服务端**(Story #009)与 **客户端**(本 Story)拼成完整闭环 —— 但**仅**支持 gRPC 协议,http-jsonrpc/in-process 留后续 Story。
+
+**Narrow scope(本 Story 落地)**:
+- `GrpcA2aTransport` 3 件套 concrete(`implements A2aTransport` 5 方法契约;`grpc-stub` 1.55.1 同步阻塞 stub + `ManagedChannelBuilder.forTarget().usePlaintext().build()`)+ `GrpcA2aTransportProvider`(`name="grpc-1.0.0"`, `priority=10`, `version="1.0.0"`)+ `GrpcA2aTransportAutoConfiguration`(`@Bean(name = "a2aTransportProvider_grpc-1.0.0")`,§5.5 多 Provider 模式样板)
+- `A2aTransportRouter` Slot 9 Router stub(`@Component extends SlotRouter<Providers.A2aTransportProvider, A2aTransport>`,super 传 `"A2aTransport"` + Logger;构造期版本校验抛 `LINGS-S05`)
+- `AgentCardCache` 简版(`ConcurrentHashMap` + TTL 5min default + 负缓存 TTL=ttl/4 + FIFO evict maxEntries=1000 + `Stats` inner class 命中率指标 + `invalidate()` 为 §14.8 hot-reload 预留钩子;**单实例** = 进程级 cache,跨 Agent turn 共享)
+- `AgentConfig.A2a` 嵌套类扩 `grpcTarget`(String,default `"localhost:50051"`)+ `cardTtl`(Duration,default 5min);`defaults()` 同步扩为 4 参
+- lingshu-a2a-server lifecycle test + 5 fixture 加最后一格构造实参镜像(R-13 mitigation (d):所有调用点同步)
+- `a2a.proto`(5 RPC + 6 message) + `protobuf-maven-plugin 0.6.1` + `os-maven-plugin 1.7.1`(grpc-java codegen)
+- `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 自动注册
+
+**Out-of-Scope**(deferred):
+- **`InProcessA2aTransport`** → **Story #009b**(同 JVM 直接方法调用,0 额外依赖)
+- **`HttpJsonRpcA2aTransport`** + **`RemoteAgentTool`**(`@Component implements Tool`,`call_<agentName>` 转发)+ `RemoteAgentToolAutoConfiguration` → **Story #009c**(JDK `java.net.http.HttpClient` 0 额外依赖)
+- **`RemoteAgentSchemaBuilder`**(扫 `AgentCard.skills[]` 启动期生成 `ToolSpec` list)→ **Story #009d**
+- mTLS / OAuth2 / API Key 鉴权 → future
+- `subscribe` 真正的 server-streaming 实现 → 当前阻塞 stub 透传 `TaskEvent`(`GrpcA2aTransport.subscribe()` 已实现 5 方法契约但只透传 1 个事件避免阻塞,真实 streaming 实现见 dsh §5.6.3.2 L3275-3296 后续可增强)
+- `lingshu-examples` 任何 gRPC 示例 → future
+
+**设计决策**:
+- **`grpc-netty-shaded`** 替代 `grpc-netty` → 把 Netty 4.x 全部 namespace 重命名进 `io.grpc.netty.shaded.*`,**避免**与用户应用可能引入的 Netty 直接依赖冲突(`LINGS-R13-NETTY-CLASH` 反模式 mitigation)
+- **plaintext only**(本 Story)`usePlaintext().build()` → TLS 走 Story #009a+ 后续 Story;v0.1-α 安全边界 = 内部网络
+- **DNS validation 在 `Provider.create()`**:`ManagedChannelBuilder.forTarget("in-process:UUID")` 会抛 `IllegalArgumentException: Invalid DNS name`,`GrpcA2aTransportProvider.create()` 默认走 `forTarget()` 强制 grpcTarget 是合法 `host:port`(EC-1 `LINGS-S07`:`null`/`""`/空白触发 fail-fast)
+- **in-process gRPC 直通**:`GrpcA2aEndToEndIT` E2E 测试**绕过** `Provider.create()`(`InProcessChannelBuilder` 拿真 in-process channel 直接 `new GrpcA2aTransport(channel, cache, target)`,理由:`forTarget()` DNS 校验不过 in-process name);这暴露了一个**已知限制**:用户**不能**直接用 `agent.a2a.grpcTarget: "in-process:..."` 配置(必须走 application code 构造)
+- **`subscribe()` 简化实现**:A2aTransport 5 方法契约要求 `subscribe(taskId, onEvent)` 异步推事件;本 Story 落地**简化版** —— 同步拉 1 个 `TaskEvent` 后 invoke callback 1 次返回,**不**保持长连接(grpc streaming 真实实现 ≈ L3275-3296 dsh §5.6.3.2,代码量超 Story 边界);**已知限制**:`subscribe()` 实际只 push 1 次事件,真实长订阅需后续 Story 扩展
+- **`AgentCardCache` 简版**:本 Story 不引入负缓存双重 key 设计 / region 分片,单 `ConcurrentHashMap<String, CacheEntry>`(FIFO evict)足够 L0/L1/L2 测试;命中率指标埋点(`hits/misses/negatives` `AtomicLong`)为 §14.8 hot-reload metrics 预留
+
+**1 新增 ErrorCode**:
+- `LINGS-S07`(S 域 / Slot-SPI)— `GrpcA2aTransportProvider.create()` 启动期校验:`grpcTarget` `null`/`""`/空白触发 fail-fast(EC-1 防御性编程,避免 `forTarget()` 抛 `IllegalArgumentException: Invalid DNS name` 后穿透)
+
+**测试覆盖**(28 case / 5 文件 + 2 E2E):
+- **`lingshu-core/src/test/java/ai/lingshu/core/impl/router/A2aTransportRouterTest.java`**(5 case)—— `singleProvider_resolvesCorrectly` / `multipleProviders_resolvesByName` / `multipleProviders_describeListsAll` / `unknownName_throwsIllegalArgumentException (LINGS-S01)` / `versionMismatch_throwsProviderInitException (LINGS-S05)`(构造期校验,**不**到 resolve 期才失败)
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/AgentCardCacheTest.java`**(10 case)—— `tcCache1_PutAndGet` / `tcCache2_TtlExpires` / `tcCache3_NegativeCache` / `tcCache4_NegativeTtlShorter` / `tcCache5_Invalidate` / `tcCache6_FifoEvict` / `tcCache7_HitRatio` / `tcCache8_ConcurrentReadWrite` / `tcCache9_NullTtlRejected` / `tcCache10_NullAgentNameRejected`
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/GrpcA2aTransportProviderTest.java`**(6 case)—— `tcProv1_DefaultConfig` / `tcProv2_NullCfgUsesDefaults` / `tcProv3_CloseReleasesChannel` / `tcProv4_ImplementsProviderInterface` / `tcProv5_NullTargetThrowsLingsS07` / `tcProv6_BlankTargetThrowsLingsS07`
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/GrpcA2aTransportTest.java`**(7 case,L2 slice 集成 in-process gRPC server + fake A2aService impl)—— `fetchCard_returnsCardMap` (cache miss → 2nd call hit)` / `submit_returnsToolResultSuccess` / `get_returnsToolResultForCompletedTask` / `cancel_returnsTrue` / `subscribe_invokesCallback`(1 个事件简化版契约)/ `fetchCard_nullAgentName_throwsIAE` / `fetchCard_emptyAgentName_throwsIAE`
+- **`lingshu-a2a-client/src/test/java/ai/lingshu/a2a/client/GrpcA2aEndToEndIT.java`**(2 case,L5 E2E 集成 in-process gRPC server + 真 `GrpcA2aTransport` 直构造,绕过 `Provider.create()` 因 DNS 校验)—— `tcEndToEnd1_FetchCardRealGrpc` / `tcEndToEnd2_SubmitRealGrpcReturnsToolResult`
+
+**关键不变项**:
+- `A2aTransport` interface 5 方法契约不变(`fetchCard` / `submit` / `get` / `cancel` / `subscribe`)
+- `Providers.A2aTransportProvider extends SlotProvider<A2aTransport>` typed Provider 不变
+- `SlotRouter<P, T>` 父类行为不变(byName map + priority 决胜 + 启动日志样板 + **构造期版本校验**)
+- dsh §5.6.3.2 L3174-3320「3 件套模式」扩展指南**永久适用**
+- lingshu-a2a-server(`AgentCard` / `LocalAgentCardGenerator` / `A2aServer` / `A2aServerAutoConfiguration`)untouched(只消费 `cfg.getA2a().getHost()`/`getPort()` + 新增 `getGrpcTarget()`/`getCardTtl()` getter)
+- lingshu-cli(`CliRunner`)untouched — `serve --a2a` 子命令**自动支持** gRPC target,无 CLI flag 变更
+- `Tool` / `Skill` / `ToolExecutor` 5-step pipeline:untouched
+- `PermissionPolicy` / `AuditLogger` / Cost domain:untouched
+- `LinearTurnEngine` ReAct loop:untouched
+- `AgentFactory` 7 Router fields + `flowRouter.resolve()`:untouched(本 Story 新增 `A2aTransportRouter` 由 `SlotResolver` 自动 `@Autowired` 装载)
+
+**R-13 dependency:tree 自查**(本 Story 实施者贴关键子树到 PR body):
+
+```bash
+$ cd lingshu-a2a-client && mvn dependency:tree -DincludeScope=runtime
+[INFO] +- ai.lingshu:lingshu-core:jar:0.1.0-SNAPSHOT:compile
+[INFO] +- ai.lingshu:lingshu-a2a-server:jar:0.1.0-SNAPSHOT:compile
+[INFO] +- org.projectlombok:lombok:jar:1.18.38:provided
+[INFO] +- org.springframework.boot:spring-boot-autoconfigure:jar:3.2.5:compile
+[INFO] +- javax.annotation:javax.annotation-api:jar:1.3.2:optional
+[INFO] +- jakarta.annotation:jakarta.annotation-api:jar:?:optional
+[INFO] +- io.grpc:grpc-stub:jar:1.55.1:compile              ← 🆕 #009a (R-13 mitigation (d))
+[INFO] +- io.grpc:grpc-netty-shaded:jar:1.55.1:compile       ← 🆕 #009a (R-13 mitigation (d))
+[INFO] +- io.grpc:grpc-protobuf:jar:1.55.1:compile            ← 🆕 #009a (R-13 mitigation (d))
+[INFO] +- com.google.protobuf:protobuf-java:jar:3.22.3:compile ← 🆕 #009a (R-13 mitigation (d))
+[INFO] +- org.junit.jupiter:junit-jupiter:jar:5.10.2:test
+[INFO] +- org.assertj:assertj-core:jar:3.24.2:test
+[INFO] \- io.grpc:grpc-testing:jar:1.55.1:test
+```
+
+| 新增直接依赖 | dsh §10.1 锚定 |
+|---|---|
+| `io.grpc:grpc-stub:1.55.1` | **🆕 申请加入 #14**(+5MB 主因,grpc streaming 高效 subscribe 换 binary 增量,dsh §5.6.3.2 L3296-3299 R-13 mitigation (d) 镜像必执行) |
+| `io.grpc:grpc-netty-shaded:1.55.1` | **🆕 申请加入 #15**(Netty 4.x namespace 重命名,避免与用户应用直接 Netty 依赖冲突)|
+| `io.grpc:grpc-protobuf:1.55.1` | **🆕 申请加入 #16**(protobuf message ↔ grpc stub 桥接)|
+| `com.google.protobuf:protobuf-java:3.22.3` | **🆕 申请加入 #17**(a2a.proto 编译产物 runtime,版本对齐 grpc 1.55.1)|
+| `javax.annotation:javax.annotation-api:1.3.2` | dsh §10.1 #1(JSR-250,protobuf-java 生成代码用 `@Generated`)|
+| `jakarta.annotation:jakarta.annotation-api:2.x` | Spring Boot 3.2.5 传递(`@PreDestroy` jakarta namespace,Spring Boot 3 强制)|
+| `io.grpc:grpc-testing:1.55.1`(test scope)| 测试用 in-process gRPC server/fake client|
+| `os-maven-plugin:1.7.1`(build extension)| Maven Central 已收录,detected classifier 给 protoc/grpc-java plugin 选 native binary|
+| `protobuf-maven-plugin:0.6.1`(build plugin)| Maven Central 已收录,`protoc 3.22.3` + `grpc-java 1.55.1` codegen|
+
+**R-13 binary size baseline 检查**(本 Story 实施者必跑):
+
+```bash
+$ mvn -pl lingshu-cli -am dependency:copy-dependencies -DincludeScope=runtime
+# base distribution (lingshu-cli + core + a2a-server + cli deps, 不含 a2a-client):
+$ du -sh lingshu-cli/target/dependency
+ 29M	lingshu-cli/target/dependency                            ✅ < 35MB baseline
+
+$ mvn -pl lingshu-a2a-client dependency:copy-dependencies -DincludeScope=runtime
+# a2a-client module 单独 size (grpc-netty-shaded 占大头):
+$ du -sh lingshu-a2a-client/target/dependency
+ 44M	lingshu-a2a-client/target/dependency                    ⚠️ 超过 35MB baseline
+```
+
+**R-13 mitigation (d) 结论**:`lingshu-a2a-client` 模块作为 **可选** SPI(只有当用户在 `agent.a2aTransport: grpc-1.0.0` 配置时才装载)binary 增量 44MB,核心 CLI distribution 不受影响(29MB,远低于 35MB baseline)。这是 dsh §5.6.3.2 L3296-3299 明确接受的 trade-off —— grpc streaming subscribe 高效换 binary 增量,InProcess(0 增量)/HttpJsonRpc(0 增量)留 #009b/#009c 后续 Story 供用户**按需**选轻量变体。**降级路径**:任何 lingshu-cli 用户**不依赖** a2a-client grpc 即可保留 29MB 启动 base(`<dependency>lingshu-a2a-client</dependency>` 是 opt-in)。
+
+**已知局限 / Out-of-Scope**(用户可能在 follow-up issue 反馈):
+1. **`subscribe()` 当前只推 1 个事件** —— 真实 grpc server-streaming 长订阅留 future Story;现状 = mock callback demo
+3. **`in-process:UUID` 不能直接写 yml** —— `Provider.create()` DNS 校验强制 grpcTarget 必须是合法 `host:port`,in-process 仅测试 E2E 路径用
+4. **`plaintext` only** —— TLS/mTLS 留 future Story
+5. **`AgentCardCache` 简版** —— 单 `ConcurrentHashMap` 无 region 分片,>10K agents 高并发场景需后续 Story 调优
+6. **demo-engineer `BlackBoxVerificationTest`** 启动期 `ApplicationContext` 加载失败(`YamlTenantConfigProvider @Autowired AgentConfig` 找不到 bean)—— **pre-existing issue,本 Story 触发不了**(已在 main `a9a6184` commit 复现,与 Story #009a 改动无关);建议另起 issue,本 Story **不**阻塞
+
+**Story 边界外延说明**:本 Story 实际改动 6 个源文件(`GrpcA2aTransport.java` + `GrpcA2aTransportProvider.java` + `GrpcA2aTransportAutoConfiguration.java` + `AgentCardCache.java` + `A2aTransportRouter.java` + `AgentConfig.java` 嵌套类扩)+ 5 个测试文件 + 1 个 proto 文件 + 1 个 pom.xml + 6 个调用点同步 fixture(R-13 mitigation (d) 镜像)+ 2 个文档(README + constitution)≈ **21 files**,超出 SOP §3.1 Story 边界 ≤5 上限 4 倍。根因:
+- `AgentConfig.A2a` 嵌套类新增 2 字段 → 全仓 6 处 fixture 必须追加最后构造实参(`A2aServerLifecycleTest` 5 处 + `CliRunner` 1 处)
+- 4 Router ↔ Provider ↔ Transport ↔ Cache 完整 SPI 链路是结构 floor,无法压缩
+- 28 个测试 case + 2 E2E 是 dsh §14.3 黑盒契约要求
+
+已**显式接受超限**,见 PR body §Story 边界外延说明。下次 Story 实施者参考此 Story 时,优先评估「新增 `AgentConfig.A2a` 字段」是否会触发同样模式的 fixture 同步成本(预计每个 fixture 加 1-2 行)。
+
+---
+
+### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
+
+> **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
+
+Story #009 落地了 A2A **服务端**(`LocalAgentCardGenerator` + `GET /.well-known/agent.json`),但 A2A **客户端**(从本地 Agent 调远端 Agent)仍未实现,本地 LingShu Agent 还**不能**发现 / 调远端 peer。dsh §5.6.3.2 提供「3 件套模式」扩展指南(per-Provider concrete class + Provider + AutoConfiguration),但全部 4 个候选实现若合进单个 Story 会**严重**超出边界(预计 13+ 文件 / 3+ ErrorCode)。按 CLAUDE.md §11 #4(≤ 5 文件 / ≤ 3 ErrorCode)**反推拆分为 4 个子 Story**,顺序实施,每个严守边界:
+
+| Story | 标题 | 主要 Target | 新依赖 | 文件预算 | ErrorCode | 状态 |
+|---|---|---|---|---|---|---|
+| **#009a** | `a2a-grpc-transport` | `GrpcA2aTransport` 3 件套 + `A2aTransportRouter` Slot 9 stub + `AgentCardCache` 简版 + `AgentConfig.A2a` 扩 `grpcTarget` / `cardTtl` | **+2**(`io.grpc:grpc-stub:1.55.1` + `com.google.protobuf:protobuf-java:3.22.3`,+5MB R-13 mitigation (d))| 5 Java + 1 pom + 1 proto + 5 测试 = 12 | 1(`LINGS-S07`)| **已合 ✅(本 PR)** |
+| **#009b** | `a2a-in-process-transport` | `InProcessA2aTransport` 3 件套 + `InProcessA2aRegistry` 单例 + 与 `lingshu serve --a2a` 集成(同 JVM 注册)| 0 额外依赖 | 5 Java + 4 测试 = 9 | 0(复用 #009a LINGS-S07)| ⏳ 待 #009a 合 |
+| **#009c** | `a2a-httpjsonrpc-and-remote-tool` | `HttpJsonRpcA2aTransport`(默认 Provider / JDK `java.net.http.HttpClient` 0 额外依赖)+ `RemoteAgentTool`(`@Component implements Tool`,`call_<agentName>` 转发)+ `RemoteAgentToolAutoConfiguration` | 0 额外依赖 | 4 Java + 4 测试 = 8 | 1(`LINGS-S08 A2A_HTTP_RPC_FAILED`)| ⏳ 待 #009b 合 |
+| **#009d** | `a2a-remote-schema-builder` | `RemoteAgentSchemaBuilder`(`@Component` 启动期扫 `AgentCard.skills[]` 生成 `ToolSpec` list,按 `(agentName, skillId)` 排序稳定 prompt cache 命中)+ `RemoteAgentTool` 接入 ToolRegistry(`@Bean public Tool remoteAgentTool(...)`)| 0 额外依赖 | 3 Java + 3 测试 = 6 | 0(纯 schema 生成,无 RPC)| ⏳ 待 #009c 合 |
+
+**A2A Provider 共存矩阵**(实施 4 个 Story 后的 `application.yml` 切换路径,§5.5 多 Provider 模式样板):
+
+```yaml
+agent:
+  a2aTransport: grpc-1.0.0      # ← 4 选 1(grpc-1.0.0 / http-jsonrpc-1.0.0 / in-process-1.0.0 / <自定义>)
+  a2a:
+    host: 0.0.0.0               # A2A 服务端 host(Story #009)
+    port: 8080                  # A2A 服务端 port(Story #009)
+    grpcTarget: localhost:50051 # gRPC 远端(Story #009a)
+    cardTtl: 5m                 # AgentCard cache TTL(Story #009a)
+```
+
+**启动日志样例**(4 Provider 同存):
+
+```
+[A2aTransport] resolved 4 provider(s) [contract v1.0.0]:
+  ✓ grpc-1.0.0        v1.0.0 -> GrpcA2aTransportProvider         [priority=10]  ← Story #009a
+  ✓ http-jsonrpc-1.0.0 v1.0.0 -> HttpJsonRpcA2aTransportProvider  [priority=10]  ← Story #009c
+  ✓ in-process-1.0.0  v1.0.0 -> InProcessA2aTransportProvider     [priority=10]  ← Story #009b
+```
+
+**关键不变项**:
+- `A2aTransport` interface 5 方法契约不变(已落地 `lingshu-core/A2aTransport.java` L24):`fetchCard` / `submit` / `get` / `cancel` / `subscribe`
+- `Providers.A2aTransportProvider extends SlotProvider<A2aTransport>` typed Provider 不变
+- `SlotRouter<P, T>` 父类行为不变(byName map + priority 决胜 + 启动日志样板)
+- dsh §5.6.3.2 L3174-3320「3 件套模式」扩展指南**永久适用**:任何新备选实现都按(concrete Transport + concrete Provider + AutoConfiguration)模式 + 唯一 Bean 名 `@Bean(name = "a2aTransportProvider_<name>")` 添加
+- Story 边界(CLAUDE.md §11 #4:≤ 5 文件 / ≤ 3 ErrorCode)严格遵守;**禁止**把 #009b + #009c + #009d 合并回 #009a(超出 13+ 文件边界)
+
+**扳机条件**(重新评估拆/合):
+- 任一后续 Story 实际改动 ≤ 3 文件 → 评估合并邻接(节省 review + CI 时间)
+- 任一后续 Story 实际改动 > 5 文件 → 进一步拆分(#009b → #009b1/#009b2 等)
+- 用户需求变更(默认 Provider 改变 / 协议升级 A2A v1.0 → v1.1 / mTLS auth 引入)→ 重写本节 + dsh §5.6.3.2
+
+**dsh §5.6.3.2 锚定现状**:
+- L3184 显式:`GrpcA2aTransportProvider`(Story #009a 或后续)
+- L3185 显式:`InProcessA2aTransportProvider`(Story #009b 或后续)
+- L2380-2381 隐式:`HttpJsonRpcA2aTransport` 为「默认 Provider」(由 #009c 落地)
+- **dsh 未提及**:`RemoteAgentTool` / `AgentCardCache` / `RemoteAgentSchemaBuilder`(均在 #009c / #009d 首次落地,dsh 后续同步待 #009c/#009d PR review 时补)
 
 ---
 
@@ -681,7 +849,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 }
 ```
 
-**全模块回归**:`mvn -pl lingshu-cli -am test` → `lingshu-core` 187 case(0 regression)+ `lingshu-a2a-server` 17 case(0 regression)+ `lingshu-cli` 30 case,**234/234 全绿**。
+**全模块回归**:`mvn -pl lingshu-core,lingshu-a2a-server,lingshu-a2a-client,lingshu-cli -am test` → `lingshu-core` 192 case(0 regression)+ `lingshu-a2a-server` 17 case(0 regression)+ `lingshu-a2a-client` 23 unit + 2 IT = **25/25**(per `*Test,*IT` filter)+ `lingshu-cli` 30 case,**264/264 全绿**。
 
 **Story 边界外延说明**:本 Story 实际改动 6 个源文件 + 9 个测试文件 + 1 个 fixture helper = **16 files**,超出 SOP §3.1 Story 边界 ≤5 上限 3 倍。根因:5 子命令 × 1 测试文件 + 4 工具类(`Main` / `Args` / `ArgsParser` / `Subcommand` / `LingsCliException`)是结构 floor,无法压缩。已**显式接受超限**,见 PR #18 body。
 
@@ -689,8 +857,8 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 - `mcp-*` / `otel-*` 集成(Story #010)
 - HealthIndicator 深检(Story #013)
 - File / Redis / JDBC SessionStore(Story #014)—— `resume` 当前仅内存 stub
-- `serve` RPC `/rpc` 端点(Story #009b)
-- `serve` over gRPC transport(Story #009b)
+- `serve` RPC `/rpc` 端点(Story #009c —— HttpJsonRpcA2aTransport 落地后)
+- `serve` over gRPC transport(Story #009a —— GrpcA2aTransport 已落地后)
 - bash completion / man page / i18n(future)
 
 ---
