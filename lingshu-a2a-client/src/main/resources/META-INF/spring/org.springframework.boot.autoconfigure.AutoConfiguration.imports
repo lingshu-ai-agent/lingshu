@@ -1,2 +1,3 @@
 ai.lingshu.a2a.client.GrpcA2aTransportAutoConfiguration
 ai.lingshu.a2a.client.InProcessA2aTransportAutoConfiguration
+ai.lingshu.a2a.client.HttpJsonRpcA2aTransportAutoConfiguration
