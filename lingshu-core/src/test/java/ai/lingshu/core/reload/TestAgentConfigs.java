@@ -66,7 +66,8 @@ final class TestAgentConfigs {
             AgentConfig.Memory.defaults(),
             null,                       // a2aTransport
             null,                       // tenants
-            AgentConfig.A2a.defaults()); // a2a (Story #009)
+            AgentConfig.A2a.defaults(), // a2a (Story #009)
+            AgentConfig.CompactorConfig.defaults()); // compactorConfig (Story #018)
     }
 
     /** Minimal AgentConfig with the {@code [ls, cat]} baseline whitelist. */

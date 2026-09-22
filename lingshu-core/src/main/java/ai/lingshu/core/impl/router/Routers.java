@@ -2,6 +2,7 @@ package ai.lingshu.core.impl.router;
 
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
+import ai.lingshu.core.slot.Compactor;
 import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
@@ -66,6 +67,24 @@ public final class Routers {
             super(providers, "PromptBuilder", LoggerFactory.getLogger(PromptBuilderRouter.class));
         }
         @Override protected Class<PromptBuilder> getSlotInterface() { return PromptBuilder.class; }
+    }
+
+    /**
+     * CompactorRouter — Story #018 (dsh §5.3.1.0 + §6.2). Resolves one Compactor
+     * by name from the {@code agent.compactor.name} yaml key. Default implementation:
+     * {@code TruncatingCompactorProvider} ({@code name="truncating"}).
+     *
+     * <p>NOT yet wired into {@code AgentFactory} (separate concern for the follow-up
+     * Story that integrates compaction into {@code LinearTurnEngine}); tests resolve
+     * the router directly.
+     */
+    @Component
+    public static class CompactorRouter
+            extends SlotRouter<Providers.CompactorProvider, Compactor> {
+        public CompactorRouter(List<Providers.CompactorProvider> providers) {
+            super(providers, "Compactor", LoggerFactory.getLogger(CompactorRouter.class));
+        }
+        @Override protected Class<Compactor> getSlotInterface() { return Compactor.class; }
     }
 
     /**

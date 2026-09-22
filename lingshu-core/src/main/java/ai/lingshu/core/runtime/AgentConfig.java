@@ -64,6 +64,8 @@ public class AgentConfig {
     TenantsConfig tenants;
     /** 🆕 Story #009 — embedded A2A HTTP server config (AgentCard endpoint + RPC placeholder). */
     A2a a2a;
+    /** 🆕 Story #018 — TruncatingCompactor tunables. Null uses {@link CompactorConfig#defaults()}. */
+    CompactorConfig compactorConfig;
 
     // ── Nested config records ───────────────────────────────────────────
 
@@ -183,6 +185,68 @@ public class AgentConfig {
         boolean enabled;
         Path project;
         Path user;
+    }
+
+    // ── 🆕 Story #018 — Slot 6 Compactor tunables ────────────────────────
+
+    /**
+     * TruncatingCompactor tunables (Story #018, dsh §6.2 L3813-3889).
+     *
+     * <p>Three thresholds:
+     * <ul>
+     *   <li>{@link #maxPromptTokens} — token estimate above which {@code shouldCompact()}
+     *       returns {@code true}; default {@code 100_000} (dsh §14.15.1 single-turn cap)</li>
+     *   <li>{@link #maxToolResultBytes} — any single {@code ToolResult.content} longer than
+     *       this is truncated in-place; default {@code 50_000} (50KB)</li>
+     *   <li>{@link #keepRecentTurns} — sliding-window retention of assistant messages;
+     *       default {@code 20}</li>
+     * </ul>
+     *
+     * <p>Validated eagerly at {@link AgentFactory#create} time so a typo in
+     * {@code application.yml} surfaces as a {@link LingsConfigException} with code
+     * {@code "C02"} (Story #001) rather than confusing arithmetic behavior mid-turn.
+     */
+    @Value
+    public static class CompactorConfig {
+
+        /** Token estimate threshold above which compact runs. Default {@code 100_000}. */
+        int maxPromptTokens;
+
+        /** Byte threshold above which a single ToolResult is truncated. Default {@code 50_000}. */
+        int maxToolResultBytes;
+
+        /** Number of most-recent assistant messages to keep in the sliding window. Default {@code 20}. */
+        int keepRecentTurns;
+
+        /**
+         * Zero-config default (empty yml must boot per Story #001 AC-01-2).
+         */
+        public static CompactorConfig defaults() {
+            return new CompactorConfig(100_000, 50_000, 20);
+        }
+
+        /**
+         * Validate every field &gt; 0; aggregate all failures into a single
+         * {@link LingsConfigException} so the user sees every problem in one shot.
+         *
+         * @throws LingsConfigException with code {@code "C02"} when any field is &le; 0
+         */
+        public void validate() {
+            List<String> errors = new ArrayList<>();
+            if (maxPromptTokens <= 0) {
+                errors.add("agent.compactor.max-prompt-tokens must be > 0 (got " + maxPromptTokens + ")");
+            }
+            if (maxToolResultBytes <= 0) {
+                errors.add("agent.compactor.max-tool-result-bytes must be > 0 (got " + maxToolResultBytes + ")");
+            }
+            if (keepRecentTurns <= 0) {
+                errors.add("agent.compactor.keep-recent-turns must be > 0 (got " + keepRecentTurns + ")");
+            }
+            if (!errors.isEmpty()) {
+                throw new LingsConfigException("C02",
+                    "agent.compactor config validation failed:\n  - " + String.join("\n  - ", errors));
+            }
+        }
     }
 
     /**

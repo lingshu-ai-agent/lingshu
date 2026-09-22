@@ -45,7 +45,8 @@ class CancellationTokenSharingTest {
             AgentConfig.Memory.defaults(),
             null,               // a2aTransport
             null,                  // tenants (Story #006 — single-tenant mode)
-            AgentConfig.A2a.defaults());  // a2a (Story #009)
+            AgentConfig.A2a.defaults(),    // a2a (Story #009)
+            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
     }
 
     @Test

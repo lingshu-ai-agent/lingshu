@@ -75,4 +75,23 @@ public class DefaultSession implements Session {
         meta.put("subagent", "");
         return new Checkpoint(id, history(), meta, Instant.now());
     }
+
+    /**
+     * 🆕 Story #018 — Atomically replace history under the same lock that guards
+     * {@link #append(Message)} and {@link #fork(String)} so a concurrent tool-result
+     * append cannot interleave with a compactor swap.
+     *
+     * <p>Caller-owned {@code newHistory} is defensively copied; the original list
+     * is not retained.
+     */
+    @Override
+    public void compact(List<Message> newHistory) {
+        if (newHistory == null) {
+            throw new IllegalArgumentException("newHistory must not be null");
+        }
+        synchronized (history) {
+            history.clear();
+            history.addAll(new ArrayList<>(newHistory));
+        }
+    }
 }
