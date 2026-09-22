@@ -3,6 +3,9 @@ package ai.lingshu.a2a.server;
 import ai.lingshu.core.a2a.client.InProcessA2aRegistry;
 import ai.lingshu.core.runtime.AgentConfig;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -11,20 +14,31 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 🆕 Story #009 — embedded A2A HTTP server (dsh §5.6.8).
+ * 🆕 Story #009c — POST /rpc is now a minimal JSON-RPC 2.0 dispatcher
+ * (dsh §5.6.3.1 L2995-3172), sufficient to drive Story #009c's HTTP transport
+ * integration tests. <b>Not</b> a full skill dispatcher — see
+ * {@link RpcDispatcherHandler} class Javadoc for scope.
  *
  * <p>Wraps JDK built-in {@code com.sun.net.httpserver.HttpServer} (zero new Maven
  * dependencies — see R-13 mitigation (d) in dsh §17) to serve:
  * <ul>
  *   <li>{@code GET /.well-known/agent.json} → JSON AgentCard (A2A v1.0 spec §2.1 fixed path)</li>
- *   <li>{@code POST /rpc} → 501 placeholder (deferred to Story #009b)</li>
+ *   <li>{@code POST /rpc} → JSON-RPC 2.0 dispatcher (Story #009c): handles
+ *       {@code message/send} / {@code tasks/get} / {@code tasks/cancel}; unknown
+ *       methods return {@code -32601 Method not found}.</li>
  *   <li>anything else → 404 (catch-all)</li>
  * </ul>
  *
@@ -34,8 +48,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *       bean construction; binds, registers handlers, calls {@code server.start()}. Fails
  *       Spring context startup on port collision / unknown host / invalid port (LINGS-S06)
  *       or blank {@code Identity.name} (LINGS-T02).</li>
- *   <li>running — handlers serve concurrent GET requests; thread-safe because
- *       {@code LocalAgentCardGenerator} is stateless and {@code ObjectMapper} is thread-safe.</li>
+ *   <li>running — handlers serve concurrent GET/POST requests; thread-safe because
+ *       {@code LocalAgentCardGenerator} is stateless and {@code ObjectMapper} is thread-safe.
+ *       The in-process task map (used by {@link RpcDispatcherHandler}) is a
+ *       {@link ConcurrentMap} so concurrent POST /rpc requests are safe.</li>
  *   <li>{@link #stop()} — invoked by Spring via {@code @Bean(destroyMethod = "stop")} on
  *       context close; calls {@code server.stop(0)} and releases the port. Idempotent
  *       (a second call no-ops because {@code server} is nulled).</li>
@@ -48,6 +64,14 @@ public class A2aServer {
 
     /** Cached AgentCard — generated once at startup; immutable thereafter. */
     private final AtomicReference<AgentCard> cardRef = new AtomicReference<AgentCard>();
+
+    /**
+     * 🆕 Story #009c — minimal in-process task store backing {@link RpcDispatcherHandler}.
+     * Keyed by taskId (UUID); value is the JSON string originally submitted via
+     * {@code message/send}. Cleared on {@link #stop()}. Concurrent because
+     * {@code com.sun.net.httpserver.HttpServer} default executor is multi-threaded.
+     */
+    private final ConcurrentMap<String, String> taskStore = new ConcurrentHashMap<String, String>();
 
     /** The JDK HttpServer; null before {@link #start()} and after {@link #stop()}. */
     private HttpServer server;
@@ -121,7 +145,7 @@ public class A2aServer {
 
         // Step 4: register handlers.
         server.createContext("/.well-known/agent.json", new AgentCardHandler());
-        server.createContext("/rpc", new RpcPlaceholderHandler());
+        server.createContext("/rpc", new RpcDispatcherHandler());
         server.createContext("/", new NotFoundHandler());
 
         // Step 5: start (use default executor — cached thread pool, see contracts/...lifecycle.md §3.1).
@@ -155,6 +179,9 @@ public class A2aServer {
         // Story #009b — unregister BEFORE server.stop(0) so peer agents see the
         // LINGS-S08 miss instead of a stale card pointing at a half-closed port.
         unregisterInProcess();
+        // Story #009c — drop in-process task state so a restart doesn't replay
+        // tasks from the previous JVM lifetime.
+        taskStore.clear();
         int port = actualPort;
         server.stop(0);
         this.server = null;
@@ -264,18 +291,230 @@ public class A2aServer {
         }
     }
 
-    /** POST /rpc → 501 placeholder (Story #009b will replace with JSON-RPC dispatcher). */
-    private static final class RpcPlaceholderHandler implements HttpHandler {
+    /**
+     * 🆕 Story #009c — minimal JSON-RPC 2.0 dispatcher for {@code POST /rpc}
+     * (dsh §5.6.3.1 L2995-3172 wire protocol).
+     *
+     * <p><b>Scope is test-driver-only</b>: this is NOT a full skill dispatcher.
+     * It supports the 3 methods needed by
+     * {@link ai.lingshu.a2a.client.HttpJsonRpcA2aTransport} integration tests:
+     * <ul>
+     *   <li>{@code message/send} — accepts {@code params.{agentName, skill, inputJson}},
+     *       synthesizes a taskId (UUID), echoes the input back inside {@code resultJson},
+     *       returns {@code {status:COMPLETED, taskId, resultJson}}. Stores {@code inputJson}
+     *       in {@link #taskStore} so {@code tasks/get} and {@code tasks/cancel} can be
+     *       exercised by follow-up calls.</li>
+     *   <li>{@code tasks/get} — returns {@code {status:COMPLETED, taskId, resultJson}}
+     *       for any previously-submitted taskId; unknown taskId returns
+     *       {@code {status:FAILED, taskId, error:"LINGS-S08 taskId not found"}}.
+     *       Returns HTTP 200 always (JSON-RPC 2.0 envelope); the error lives in
+     *       the JSON {@code result} field.</li>
+     *   <li>{@code tasks/cancel} — returns {@code {acknowledged:true}} for any
+     *       previously-submitted taskId (best-effort, idempotent); unknown taskId
+     *       returns {@code {acknowledged:false}} (no exception, per EC-8).</li>
+     * </ul>
+     *
+     * <p><b>JSON-RPC 2.0 error envelope</b> (HTTP 200, body envelope):
+     * <ul>
+     *   <li>{@code -32600} Invalid Request — body not parseable as JSON object, or
+     *       missing {@code method}.</li>
+     *   <li>{@code -32601} Method not found — {@code method} is not one of the 3 above.</li>
+     *   <li>{@code -32602} Invalid params — {@code params} missing required keys
+     *       (e.g. {@code inputJson} on {@code message/send}, {@code id} on
+     *       {@code tasks/get} / {@code tasks/cancel}).</li>
+     * </ul>
+     *
+     * <p><b>Thread-safety</b>: writes go through {@link #taskStore} which is a
+     * {@link ConcurrentMap}. {@link ObjectMapper} is thread-safe.
+     */
+    private final class RpcDispatcherHandler implements HttpHandler {
+
+        /** JSON-RPC 2.0 standard error codes (jsonrpc.org §5.1). */
+        private static final int ERR_INVALID_REQUEST = -32600;
+        private static final int ERR_METHOD_NOT_FOUND = -32601;
+        private static final int ERR_INVALID_PARAMS = -32602;
+
         @Override
         public void handle(HttpExchange ex) throws IOException {
-            String body = "{\"error\":\"not implemented\",\"path\":\"/rpc\"}";
-            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-            ex.sendResponseHeaders(501, bytes.length);
-            try (OutputStream os = ex.getResponseBody()) {
-                os.write(bytes);
+            // Step 1: method gate — only POST is accepted.
+            if (!"POST".equalsIgnoreCase(ex.getRequestMethod())) {
+                sendJson(ex, 405,
+                    "{\"error\":\"method not allowed\",\"method\":\""
+                        + ex.getRequestMethod() + "\"}",
+                    "POST");
+                return;
+            }
+            // Step 2: read body fully (no streaming — body is small JSON-RPC envelope).
+            byte[] body = readAllBytes(ex.getRequestBody());
+            String bodyText = new String(body, StandardCharsets.UTF_8);
+            JsonNode root;
+            try {
+                root = SHARED_MAPPER.readTree(bodyText);
+            } catch (IOException jpe) {
+                writeError(ex, null, ERR_INVALID_REQUEST, "body is not valid JSON");
+                return;
+            }
+            if (root == null || !root.isObject()) {
+                writeError(ex, null, ERR_INVALID_REQUEST, "body must be a JSON object");
+                return;
+            }
+            String method = root.path("method").asText("");
+            JsonNode idNode = root.get("id");
+            // JSON-RPC 2.0 spec: id may be string/number/null; we pass through as-is.
+            if (method.isEmpty()) {
+                writeError(ex, idNode, ERR_INVALID_REQUEST, "missing 'method' field");
+                return;
+            }
+            JsonNode params = root.get("params");
+            // Step 3: dispatch.
+            try {
+                switch (method) {
+                    case "message/send":
+                        handleMessageSend(ex, idNode, params);
+                        return;
+                    case "tasks/get":
+                        handleTasksGet(ex, idNode, params);
+                        return;
+                    case "tasks/cancel":
+                        handleTasksCancel(ex, idNode, params);
+                        return;
+                    default:
+                        writeError(ex, idNode, ERR_METHOD_NOT_FOUND,
+                            "Method not found: " + method);
+                        return;
+                }
+            } catch (RuntimeException re) {
+                LOG.warn("[A2aServer] /rpc {} handler threw", method, re);
+                writeError(ex, idNode, -32603,
+                    "Internal error: " + re.getClass().getSimpleName() + ": " + re.getMessage());
             }
         }
+
+        /**
+         * {@code message/send}: require params.{agentName, skill, inputJson};
+         * synthesize taskId, store inputJson, return echo.
+         */
+        private void handleMessageSend(HttpExchange ex, JsonNode idNode, JsonNode params)
+                throws IOException {
+            if (params == null || !params.isObject()) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS, "params must be an object");
+                return;
+            }
+            String agentName = params.path("agentName").asText("");
+            String skill = params.path("skill").asText("");
+            String inputJson = params.path("inputJson").asText("{}");
+            if (agentName.isEmpty() || skill.isEmpty()) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS,
+                    "params.agentName and params.skill must be non-empty");
+                return;
+            }
+            String taskId = UUID.randomUUID().toString();
+            // Store inputJson so tasks/get and tasks/cancel can reference it.
+            taskStore.put(taskId, inputJson);
+            ObjectNode result = SHARED_MAPPER.createObjectNode();
+            result.put("status", "COMPLETED");
+            result.put("taskId", taskId);
+            // Echo the input — sufficient for client-side deserialization tests.
+            result.put("resultJson", SHARED_MAPPER.createObjectNode()
+                .put("agentName", agentName)
+                .put("skill", skill)
+                .put("echo", inputJson)
+                .toString());
+            writeResult(ex, idNode, result);
+        }
+
+        /**
+         * {@code tasks/get}: require params.id; return synthesized COMPLETED status
+         * with the original inputJson as resultJson.
+         */
+        private void handleTasksGet(HttpExchange ex, JsonNode idNode, JsonNode params)
+                throws IOException {
+            if (params == null || !params.isObject()) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS, "params must be an object");
+                return;
+            }
+            String taskId = params.path("id").asText("");
+            if (taskId.isEmpty()) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS, "params.id must be non-empty");
+                return;
+            }
+            String inputJson = taskStore.get(taskId);
+            ObjectNode result = SHARED_MAPPER.createObjectNode();
+            result.put("taskId", taskId);
+            if (inputJson == null) {
+                result.put("status", "FAILED");
+                result.put("error", "LINGS-S08 taskId not found: " + taskId);
+            } else {
+                result.put("status", "COMPLETED");
+                result.put("resultJson", inputJson);
+            }
+            writeResult(ex, idNode, result);
+        }
+
+        /**
+         * {@code tasks/cancel}: require params.id; return {@code {acknowledged:true}}
+         * for any previously-submitted taskId, {@code false} otherwise
+         * (best-effort, idempotent — no exception per EC-8).
+         */
+        private void handleTasksCancel(HttpExchange ex, JsonNode idNode, JsonNode params)
+                throws IOException {
+            if (params == null || !params.isObject()) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS, "params must be an object");
+                return;
+            }
+            String taskId = params.path("id").asText("");
+            if (taskId.isEmpty()) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS, "params.id must be non-empty");
+                return;
+            }
+            String removed = taskStore.remove(taskId);
+            ObjectNode result = SHARED_MAPPER.createObjectNode();
+            result.put("acknowledged", removed != null);
+            if (removed == null) {
+                result.put("taskId", taskId);
+                result.put("note", "taskId not in store (best-effort)");
+            }
+            writeResult(ex, idNode, result);
+        }
+
+        /** Wrap a result object in a JSON-RPC 2.0 success envelope and send. */
+        private void writeResult(HttpExchange ex, JsonNode idNode, JsonNode result)
+                throws IOException {
+            ObjectNode envelope = SHARED_MAPPER.createObjectNode();
+            envelope.put("jsonrpc", "2.0");
+            envelope.set("id", idNode != null && !idNode.isMissingNode()
+                ? idNode : SHARED_MAPPER.nullNode());
+            envelope.set("result", result);
+            sendJson(ex, 200, envelope.toString(), null);
+        }
+
+        /** Wrap a JSON-RPC 2.0 error object and send (HTTP 200, error in envelope). */
+        private void writeError(HttpExchange ex, JsonNode idNode, int code, String message)
+                throws IOException {
+            ObjectNode error = SHARED_MAPPER.createObjectNode();
+            error.put("code", code);
+            error.put("message", message);
+            ObjectNode envelope = SHARED_MAPPER.createObjectNode();
+            envelope.put("jsonrpc", "2.0");
+            envelope.set("id", idNode != null && !idNode.isMissingNode()
+                ? idNode : SHARED_MAPPER.nullNode());
+            envelope.set("error", error);
+            sendJson(ex, 200, envelope.toString(), null);
+        }
+    }
+
+    /** Shared JSON-RPC ObjectMapper — thread-safe per Jackson contract. */
+    private static final ObjectMapper SHARED_MAPPER = new ObjectMapper();
+
+    /** Read entire request body into a byte[]; helper for {@link RpcDispatcherHandler}. */
+    private static byte[] readAllBytes(InputStream in) throws IOException {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        byte[] chunk = new byte[2048];
+        int n;
+        while ((n = in.read(chunk)) != -1) {
+            buf.write(chunk, 0, n);
+        }
+        return buf.toByteArray();
     }
 
     /** Catch-all 404 for any other path. */

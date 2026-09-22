@@ -128,6 +128,21 @@
                     </execution>
                 </executions>
             </plugin>
+            <!--
+                Module compile target override (Story #009c):
+                java.net.http.HttpClient (used by HttpJsonRpcA2aTransport) requires JDK 11+.
+                Only lingshu-a2a-client module is bumped to 1.11; lingshu-core / lingshu-a2a-server
+                still compile against JDK 1.8 (parent POM inherits 1.8). 0 binary delta (R-13 mitigation (d)).
+                See specs/009c-a2a-httpjsonrpc-and-remote-tool/plan.md §5.1.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>1.11</source>
+                    <target>1.11</target>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

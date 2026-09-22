@@ -285,14 +285,23 @@ public class AgentConfig {
         String grpcTarget;
         /** Story #009a: AgentCard cache TTL; default {@code Duration.ofMinutes(5)}. */
         java.time.Duration cardTtl;
+        /** Story #009c: HTTP-JSON-RPC server base URL; default {@code "http://localhost:8080"} (aligns with A2aServer host=0.0.0.0 + port=8080). */
+        String httpBaseUrl;
+        /** Story #009c: HTTP client call timeout; default {@code Duration.ofSeconds(30)}. */
+        java.time.Duration callTimeout;
 
         /**
-         * Zero-config default (dsh §5.6.8 default + Story #009a extension) —
-         * bind on all interfaces port 8080; gRPC localhost:50051; 5-min card cache.
+         * Zero-config default (dsh §5.6.8 default + Story #009a + #009c extensions) —
+         * bind on all interfaces port 8080; gRPC localhost:50051; 5-min card cache;
+         * http-jsonrpc at {@code http://localhost:8080} with 30s call timeout.
          * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
          */
         public static A2a defaults() {
-            return new A2a("0.0.0.0", 8080, "localhost:50051", java.time.Duration.ofMinutes(5));
+            return new A2a(
+                "0.0.0.0", 8080,
+                "localhost:50051", java.time.Duration.ofMinutes(5),
+                "http://localhost:8080", java.time.Duration.ofSeconds(30)
+            );
         }
     }
 }
