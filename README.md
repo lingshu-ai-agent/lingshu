@@ -540,7 +540,7 @@ dsh §0.4 AC-07:**ReAct 上限** —— yml `agent.react.max-steps: 3` + LLM moc
 mvn -pl lingshu-core test -Dtest=MaxStepsGuardTest
 ```
 
-**累计测试**:**264 case**(Story #008 187 + Story #009 +17 + Story #009a +28(23 a2a-client unit + 2 E2E + 5 core router / split 192+25)+ Story #017 +30)全绿,0 regression。
+**累计测试**:**266 case**(Story #008 187 + Story #009 +17 + Story #009a +28(23 a2a-client unit + 2 E2E + 5 core router / split 192+25)+ Story #017 +30 + Story #009a-009 demo-engineer 黑盒 2 case 修复)全绿,0 regression。
 
 **R-13 dependency:tree 自查**:`diff /tmp/deps-008-baseline.txt /tmp/deps-009-after.txt` → 仅 `[INFO] Total time` 时间戳差异 + 新模块 `lingshu-a2a-server` 4 个直接依赖(`lombok` / `spring-boot-autoconfigure` / `junit-jupiter` / `assertj-core`),**全部已在 dsh §10.1 锁定 13 项 / Spring Boot BOM 中**,0 新依赖。
 
@@ -689,7 +689,7 @@ $ du -sh lingshu-a2a-client/target/dependency
 3. **`in-process:UUID` 不能直接写 yml** —— `Provider.create()` DNS 校验强制 grpcTarget 必须是合法 `host:port`,in-process 仅测试 E2E 路径用
 4. **`plaintext` only** —— TLS/mTLS 留 future Story
 5. **`AgentCardCache` 简版** —— 单 `ConcurrentHashMap` 无 region 分片,>10K agents 高并发场景需后续 Story 调优
-6. **demo-engineer `BlackBoxVerificationTest`** 启动期 `ApplicationContext` 加载失败(`YamlTenantConfigProvider @Autowired AgentConfig` 找不到 bean)—— **pre-existing issue,本 Story 触发不了**(已在 main `a9a6184` commit 复现,与 Story #009a 改动无关);建议另起 issue,本 Story **不**阻塞
+6. ~~**demo-engineer `BlackBoxVerificationTest`** 启动期 `ApplicationContext` 加载失败(`YamlTenantConfigProvider @Autowired AgentConfig` 找不到 bean)~~ —— **本 PR 已修**:`@Bean AgentConfig` + `@ComponentScan` 排除 `YamlWatcher`(详见本节 Story 改进节);2 case 现已 2/2 全绿
 
 **Story 边界外延说明**:本 Story 实际改动 6 个源文件(`GrpcA2aTransport.java` + `GrpcA2aTransportProvider.java` + `GrpcA2aTransportAutoConfiguration.java` + `AgentCardCache.java` + `A2aTransportRouter.java` + `AgentConfig.java` 嵌套类扩)+ 5 个测试文件 + 1 个 proto 文件 + 1 个 pom.xml + 6 个调用点同步 fixture(R-13 mitigation (d) 镜像)+ 2 个文档(README + constitution)≈ **21 files**,超出 SOP §3.1 Story 边界 ≤5 上限 4 倍。根因:
 - `AgentConfig.A2a` 嵌套类新增 2 字段 → 全仓 6 处 fixture 必须追加最后构造实参(`A2aServerLifecycleTest` 5 处 + `CliRunner` 1 处)
@@ -697,6 +697,19 @@ $ du -sh lingshu-a2a-client/target/dependency
 - 28 个测试 case + 2 E2E 是 dsh §14.3 黑盒契约要求
 
 已**显式接受超限**,见 PR body §Story 边界外延说明。下次 Story 实施者参考此 Story 时,优先评估「新增 `AgentConfig.A2a` 字段」是否会触发同样模式的 fixture 同步成本(预计每个 fixture 加 1-2 行)。
+
+**demo-engineer `BlackBoxVerificationTest` 修复说明**(本 PR 增量):
+
+排查发现 2 个独立的 Spring 启动期 wiring 问题(demo-engineer 端 `BlackBoxVerificationTest` 在 main `a9a6184` commit 已失败 2 个 case,与 Story #009a 改动无关,但本 PR 顺手修了):
+
+| # | 问题 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | `YamlTenantConfigProvider @Autowired AgentConfig` 找不到 bean | `lingshu-core` 的 `YamlTenantConfigProvider`(Story #006)是 Spring `@Component`,依赖 `AgentConfig` bean;demo-engineer 启动时没人提供 | `@Bean public AgentConfig agentConfig() { return AgentConfigDefaults.defaults(); }` —— 极小 wiring floor,与 Story #009 / #017 同样模式(启动期 wiring 必填) |
+| 2 | `YamlWatcher` Spring 6 抛 "No default constructor found" | `YamlWatcher` 公开构造器 `(@Value String, AgentConfigRegistry, AgentFactory)` 与包内私有构造器 `(Path, AgentConfigRegistry, AgentFactory, long)` 共存 —— Spring 6 双构造器场景要求显式 `@Autowired` 才能解析,而 `YamlWatcher` 实现层未加注解 → 启动期失败;**且** demo-engineer 是 CLI 一次性 demo,根本不需要 yml mtime 热更守护进程 | `@ComponentScan(excludeFilters = @Filter(ASSIGNABLE_TYPE, YamlWatcher.class))` —— 显式排除,`YamlHotReloadIT` 仍走 package-private 构造器直构造(`@SpringBootTest` 没用过 YamlWatcher) |
+
+**关键判断**:`YamlWatcher` 是否加 `@Autowired` 是 core 端的设计选择(改 core 端跨 Story);本修复选择**消费侧排除**而不是**生产侧加注解** —— 因为 demo-engineer 是 demo,不该背 YamlWatcher 的设计债务。
+
+**反向收益**:`dingshu-examples/demo-engineer` 2 case 从 pre-existing failure → **2/2 全绿**,**累计测试 264 → 266**。
 
 ---
 
@@ -849,7 +862,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 }
 ```
 
-**全模块回归**:`mvn -pl lingshu-core,lingshu-a2a-server,lingshu-a2a-client,lingshu-cli -am test` → `lingshu-core` 192 case(0 regression)+ `lingshu-a2a-server` 17 case(0 regression)+ `lingshu-a2a-client` 23 unit + 2 IT = **25/25**(per `*Test,*IT` filter)+ `lingshu-cli` 30 case,**264/264 全绿**。
+**全模块回归**:`mvn -pl lingshu-core,lingshu-a2a-server,lingshu-a2a-client,lingshu-cli,lingshu-examples/demo-engineer -am test` → `lingshu-core` 192 case(0 regression)+ `lingshu-a2a-server` 17 case(0 regression)+ `lingshu-a2a-client` 23 case(0 regression)+ `lingshu-cli` 30 case(0 regression)+ `lingshu-examples/demo-engineer` 2 case(本 PR 修复,pre-existing on `a9a6184`),**266/266 全绿**。
 
 **Story 边界外延说明**:本 Story 实际改动 6 个源文件 + 9 个测试文件 + 1 个 fixture helper = **16 files**,超出 SOP §3.1 Story 边界 ≤5 上限 3 倍。根因:5 子命令 × 1 测试文件 + 4 工具类(`Main` / `Args` / `ArgsParser` / `Subcommand` / `LingsCliException`)是结构 floor,无法压缩。已**显式接受超限**,见 PR #18 body。
 
