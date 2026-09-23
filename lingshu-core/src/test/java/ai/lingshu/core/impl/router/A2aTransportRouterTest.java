@@ -71,7 +71,8 @@ class A2aTransportRouterTest {
             "default",
             null,
             AgentConfig.A2a.defaults(),
-            AgentConfig.CompactorConfig.defaults()
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults()  // tools (Story #019)
         );
     }
 
@@ -85,7 +86,8 @@ class A2aTransportRouterTest {
             cfg.getLlmTimeoutSeconds(), cfg.getReactMaxSteps(),
             cfg.getIdentity(), cfg.getInstructions(), cfg.getMemory(),
             name,                          // new a2aTransport
-            cfg.getTenants(), cfg.getA2a(), cfg.getCompactorConfig()
+            cfg.getTenants(), cfg.getA2a(), cfg.getCompactorConfig(),
+            cfg.getTools()                   // tools (Story #019)
         );
     }
 

@@ -67,7 +67,8 @@ public final class AgentConfigDefaults {
             DEFAULT_NAME,    // a2aTransport
             null,            // tenants (Story #006 — null = single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
     }
 
     /** Static fallback map (used by tests / debug endpoints). */

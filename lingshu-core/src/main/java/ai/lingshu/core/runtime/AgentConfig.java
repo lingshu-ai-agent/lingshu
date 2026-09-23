@@ -66,6 +66,8 @@ public class AgentConfig {
     A2a a2a;
     /** 🆕 Story #018 — TruncatingCompactor tunables. Null uses {@link CompactorConfig#defaults()}. */
     CompactorConfig compactorConfig;
+    /** 🆕 Story #019 — Built-in local tools (Read/Write/Edit/Bash) toggle + byte caps. Null uses {@link ToolsConfig#defaults()}. */
+    ToolsConfig tools;
 
     // ── Nested config records ───────────────────────────────────────────
 
@@ -136,6 +138,61 @@ public class AgentConfig {
     public static class SkillSource {
         String type;
         String location;
+    }
+
+    // ── 🆕 Story #019 — Built-in local tools tunables ───────────────────
+
+    /**
+     * Built-in local Tools toggle + byte caps (Story #019, dsh §6.5 (1) L4427-4452).
+     *
+     * <p>Four built-in {@link ai.lingshu.core.slot.Tool}s (Read / Write / Edit / Bash)
+     * are wired by {@code LocalToolsAutoConfiguration} at startup. Users can disable
+     * the lot via {@code agent.tools.enabled: false} (e.g. when shipping a fully
+     * remote A2A agent that does not need local filesystem access).
+     *
+     * <p>Validated eagerly at {@code AgentFactory.create} time so a typo in
+     * {@code application.yml} surfaces as a {@link LingsConfigException} with code
+     * {@code "C02"} (Story #001) rather than confusing arithmetic behavior mid-turn.
+     */
+    @Value
+    public static class ToolsConfig {
+
+        /** Toggle local tool registration; default {@code true} for zero-config Story #001 AC-01-2. */
+        boolean enabled;
+
+        /** Read file size cap; default {@code 200_000} bytes (200KB). */
+        int maxReadBytes;
+
+        /** Write file size cap; default {@code 1_000_000} bytes (1MB). */
+        int maxWriteBytes;
+
+        /**
+         * Zero-config default — all 4 tools enabled, conservative byte caps.
+         * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
+         */
+        public static ToolsConfig defaults() {
+            return new ToolsConfig(true, 200_000, 1_000_000);
+        }
+
+        /**
+         * Validate byte caps > 0; aggregate all failures into a single
+         * {@link LingsConfigException} so the user sees every problem in one shot.
+         *
+         * @throws LingsConfigException with code {@code "C02"} when any byte cap is &le; 0
+         */
+        public void validate() {
+            List<String> errors = new ArrayList<>();
+            if (maxReadBytes <= 0) {
+                errors.add("agent.tools.max-read-bytes must be > 0 (got " + maxReadBytes + ")");
+            }
+            if (maxWriteBytes <= 0) {
+                errors.add("agent.tools.max-write-bytes must be > 0 (got " + maxWriteBytes + ")");
+            }
+            if (!errors.isEmpty()) {
+                throw new LingsConfigException("C02",
+                    "agent.tools config validation failed:\n  - " + String.join("\n  - ", errors));
+            }
+        }
     }
 
     // ── v1.5.5 business config trio ─────────────────────────────────────
