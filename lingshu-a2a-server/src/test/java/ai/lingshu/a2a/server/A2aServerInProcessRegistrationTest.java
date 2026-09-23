@@ -50,7 +50,7 @@ class A2aServerInProcessRegistrationTest {
             null              // avatar
         );
         server = new A2aServer(configFor(
-            new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5)),
+            new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
             id));
         server.start();
 
@@ -79,7 +79,7 @@ class A2aServerInProcessRegistrationTest {
             Collections.<String>emptyList(), null, null
         );
         server = new A2aServer(configFor(
-            new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5)),
+            new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
             nullNameId));
 
         // null name → LocalAgentCardGenerator.generate throws LINGS-T02 (T02 = identity.name blank)
@@ -104,7 +104,7 @@ class A2aServerInProcessRegistrationTest {
             "alice", "alice-role", "auto",
             Collections.<String>emptyList(), null, null);
         A2aServer s1 = new A2aServer(configFor(
-            new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5)),
+            new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
             id1));
         s1.start();
         try {
@@ -113,7 +113,7 @@ class A2aServerInProcessRegistrationTest {
                 "bob", "bob-role", "auto",
                 Collections.<String>emptyList(), null, null);
             server = new A2aServer(configFor(
-                new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5)),
+                new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
                 id2));
             server.start();
 

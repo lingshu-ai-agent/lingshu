@@ -946,8 +946,8 @@ Story #009 落地了 A2A **服务端**(`LocalAgentCardGenerator` + `GET /.well-k
 |---|---|---|---|---|---|---|
 | **#009a** | `a2a-grpc-transport` | `GrpcA2aTransport` 3 件套 + `A2aTransportRouter` Slot 9 stub + `AgentCardCache` 简版 + `AgentConfig.A2a` 扩 `grpcTarget` / `cardTtl` | **+2**(`io.grpc:grpc-stub:1.55.1` + `com.google.protobuf:protobuf-java:3.22.3`,+5MB R-13 mitigation (d))| 5 Java + 1 pom + 1 proto + 5 测试 = 12 | 1(`LINGS-S07`)| **已合 ✅(本 PR)** |
 | **#009b** | `a2a-in-process-transport` | `InProcessA2aTransport` 3 件套 + `InProcessA2aRegistry` 单例(落地在 `lingshu-core` 打破 Maven cycle)+ 与 `lingshu serve --a2a` 集成(同 JVM 注册 `registerInProcess()` / `unregisterInProcess()` 钩子)| 0 额外依赖(R-13 mitigation (d) 0 binary delta)| 5 Java + 5 测试 = 10 | 1(`LINGS-S08 A2A_INPROCESS_REGISTRY_EMPTY`,与 #009c 区分)| **已合 ✅(PR #21)** |
-| **#009c** | `a2a-httpjsonrpc-and-remote-tool` | `HttpJsonRpcA2aTransport`(默认 Provider / JDK `java.net.http.HttpClient` 0 额外依赖)+ `RemoteAgentTool`(`@Component implements Tool`,`call_<agentName>` 转发)+ `RemoteAgentToolAutoConfiguration` | 0 额外依赖 | 4 Java + 4 测试 = 8 | 1(`LINGS-S08 A2A_HTTP_RPC_FAILED`)| ⏳ 待 #009b 合 |
-| **#009d** | `a2a-remote-schema-builder` | `RemoteAgentSchemaBuilder`(`@Component` 启动期扫 `AgentCard.skills[]` 生成 `ToolSpec` list,按 `(agentName, skillId)` 排序稳定 prompt cache 命中)+ `RemoteAgentTool` 接入 ToolRegistry(`@Bean public Tool remoteAgentTool(...)`)| 0 额外依赖 | 3 Java + 3 测试 = 6 | 0(纯 schema 生成,无 RPC)| ⏳ 待 #009c 合 |
+| **#009c** | `a2a-httpjsonrpc-and-remote-tool` | `HttpJsonRpcA2aTransport`(默认 Provider / JDK `java.net.http.HttpClient` 0 额外依赖)+ `RemoteAgentTool`(`@Component implements Tool`,固定名 `remote_agent` 转发)+ `RemoteAgentToolAutoConfiguration`(单 `AutoConfiguration` 双 Bean)| 0 额外依赖 | 4 Java + 5 测试 = 9 | 1(`LINGS-S08 A2A_HTTP_RPC_FAILED`)| **已合 ✅(本 PR)** |
+| **#009d** | `a2a-remote-schema-builder` | `RemoteAgentSchemaBuilder`(`@Component` 启动期扫 `AgentCard.skills[]` 生成 `ToolSpec` list,按 `(agentName, skillId)` 排序稳定 prompt cache 命中)+ `RemoteAgentTool.description()` 拼 skills 列表(`agent.a2a.remoteAgents[*]` 驱动 `A2aTransport.fetchCard` 启动期枚举 + `descriptionSkillLimit` 截断)+ `RemoteAgentTool` 接入 ToolRegistry(`@Bean public Tool remoteAgentTool(...)`)+ `AgentConfig.A2a` 扩 `remoteAgents` / `descriptionSkillLimit` + `AgentRef` 类型(`lingshu-core`)| 0 额外依赖(R-13 mitigation (d) 0 binary delta) | 2 新 Java(`RemoteAgentSchemaBuilder` + `AgentRef`)+ 1 新测试(`RemoteAgentSchemaBuilderTest` 12 case)+ 4 改 Java(`RemoteAgentTool` / `HttpJsonRpcA2aTransportAutoConfiguration` / `AgentConfig.A2a` / `CliRunner.withPort`)+ 2 改测试(`RemoteAgentToolTest` + `HttpJsonRpcA2aTransportAutoConfigurationTest`)+ 6 改 server/cli 测试构造 A2a ctor 签名 = **15 文件 / 17 新 case** | 0(纯 schema 生成,无 RPC)| **已合 ✅(本 PR)** |
 
 **A2A Provider 共存矩阵**(实施 4 个 Story 后的 `application.yml` 切换路径,§5.5 多 Provider 模式样板):
 
@@ -961,10 +961,10 @@ agent:
     cardTtl: 5m                 # AgentCard cache TTL(Story #009a)
 ```
 
-**启动日志样例**(4 Provider 同存):
+**启动日志样例**(3 Provider 同存,4 选 1 切换):
 
 ```
-[A2aTransport] resolved 4 provider(s) [contract v1.0.0]:
+[A2aTransport] resolved 3 provider(s) [contract v1.0.0]:
   ✓ grpc-1.0.0        v1.0.0 -> GrpcA2aTransportProvider         [priority=10]  ← Story #009a
   ✓ http-jsonrpc-1.0.0 v1.0.0 -> HttpJsonRpcA2aTransportProvider  [priority=10]  ← Story #009c
   ✓ in-process-1.0.0  v1.0.0 -> InProcessA2aTransportProvider     [priority=10]  ← Story #009b

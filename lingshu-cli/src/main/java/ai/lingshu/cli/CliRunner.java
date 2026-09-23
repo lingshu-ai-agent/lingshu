@@ -271,7 +271,11 @@ public class CliRunner implements ApplicationRunner {
     private static AgentConfig withPort(AgentConfig cfg, int newPort) {
         AgentConfig.A2a newA2a = new AgentConfig.A2a(cfg.getA2a().getHost(), newPort,
             cfg.getA2a().getGrpcTarget(),
-            cfg.getA2a().getCardTtl());
+            cfg.getA2a().getCardTtl(),
+            cfg.getA2a().getHttpBaseUrl(),
+            cfg.getA2a().getCallTimeout(),
+            cfg.getA2a().getRemoteAgents(),
+            cfg.getA2a().getDescriptionSkillLimit());
         // AgentConfig has 25 fields (Story #006 added tenants, #009 added a2a,
         // #018 added compactorConfig, #019 added toolsConfig);
         // preserve all 24, swap only a2a (22nd).

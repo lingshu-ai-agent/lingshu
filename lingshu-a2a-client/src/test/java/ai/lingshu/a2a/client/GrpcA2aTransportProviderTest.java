@@ -127,9 +127,13 @@ class GrpcA2aTransportProviderTest {
                 c.getA2a().getHost(),
                 c.getA2a().getPort(),
                 target,
-                c.getA2a().getCardTtl()),
+                c.getA2a().getCardTtl(),
+                c.getA2a().getHttpBaseUrl(),
+                c.getA2a().getCallTimeout(),
+                c.getA2a().getRemoteAgents(),
+                c.getA2a().getDescriptionSkillLimit()),
             c.getCompactorConfig(),
-            c.getTools()
+            c.getTools())
         );
     }
 }

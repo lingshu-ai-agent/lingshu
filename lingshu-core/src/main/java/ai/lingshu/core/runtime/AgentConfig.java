@@ -406,14 +406,29 @@ public class AgentConfig {
         String grpcTarget;
         /** Story #009a: AgentCard cache TTL; default {@code Duration.ofMinutes(5)}. */
         java.time.Duration cardTtl;
+        /** Story #009c: HTTP-JSON-RPC server base URL; default {@code "http://localhost:8080"} (aligns with A2aServer host=0.0.0.0 + port=8080). */
+        String httpBaseUrl;
+        /** Story #009c: HTTP client call timeout; default {@code Duration.ofSeconds(30)}. */
+        java.time.Duration callTimeout;
+        /** Story #009d: configured remote agents whose skills should appear in {@code RemoteAgentTool.description()}; default empty list (single-tool mode). */
+        List<AgentRef> remoteAgents;
+        /** Story #009d: max number of skills to enumerate in {@code RemoteAgentTool.description()} before truncating with "... and N more"; default {@code 10}. */
+        int descriptionSkillLimit;
 
         /**
-         * Zero-config default (dsh §5.6.8 default + Story #009a extension) —
-         * bind on all interfaces port 8080; gRPC localhost:50051; 5-min card cache.
+         * Zero-config default (dsh §5.6.8 default + Story #009a + #009c + #009d extensions) —
+         * bind on all interfaces port 8080; gRPC localhost:50051; 5-min card cache;
+         * http-jsonrpc at {@code http://localhost:8080} with 30s call timeout;
+         * empty {@code remoteAgents} (no skill enumeration by default), skill limit 10.
          * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
          */
         public static A2a defaults() {
-            return new A2a("0.0.0.0", 8080, "localhost:50051", java.time.Duration.ofMinutes(5));
+            return new A2a(
+                "0.0.0.0", 8080,
+                "localhost:50051", java.time.Duration.ofMinutes(5),
+                "http://localhost:8080", java.time.Duration.ofSeconds(30),
+                Collections.<AgentRef>emptyList(), 10
+            );
         }
     }
 }
