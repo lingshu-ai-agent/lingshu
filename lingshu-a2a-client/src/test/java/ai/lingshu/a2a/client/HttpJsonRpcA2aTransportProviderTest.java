@@ -78,7 +78,9 @@ class HttpJsonRpcA2aTransportProviderTest {
             AgentConfig.Memory.defaults(),
             "default",
             null,
-            AgentConfig.A2a.defaults()
+            AgentConfig.A2a.defaults(),
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults()
         );
     }
 
@@ -92,7 +94,9 @@ class HttpJsonRpcA2aTransportProviderTest {
             c.getLlmTimeoutSeconds(), c.getReactMaxSteps(),
             c.getIdentity(), c.getInstructions(), c.getMemory(),
             c.getA2aTransport(), c.getTenants(),
-            a2a
+            a2a,
+            c.getCompactorConfig(),
+            c.getTools()
         );
     }
 }

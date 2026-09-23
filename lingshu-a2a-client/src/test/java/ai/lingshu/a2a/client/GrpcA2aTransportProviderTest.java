@@ -133,7 +133,6 @@ class GrpcA2aTransportProviderTest {
                 c.getA2a().getRemoteAgents(),
                 c.getA2a().getDescriptionSkillLimit()),
             c.getCompactorConfig(),
-            c.getTools())
-        );
+            c.getTools());
     }
 }
