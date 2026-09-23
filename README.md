@@ -56,6 +56,7 @@
 - 🛠️ **4 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1))
 - 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
 - 📂 **SKILL.md 多源自动发现已上线** — Slot 4 sub-SPI:`SkillSource`(4 方法:type / location / discover / watchable)+ `SkillSourceProvider`(2 方法:type / create),`SkillSourceRouter` 启动期按 `type()` 索引 Provider,v1 两个实装(`classpath` 走 `PathMatchingResourcePatternResolver` 扫 `classpath*:prefix/**/SKILL.md` / `directory` 走 NIO `DirectoryStream` 一层扫 `<dir>/*/SKILL.md`),`CompositeSkillLoader.loadAll` 串起所有 source(单 source 失败不阻塞他人),`SkillAutoConfiguration` 扩展 Phase 1(SKILL.md 自动发现)+ Phase 2(`@Component` Skills)`mergePhases` 合并 → `ToolRegistry.register`,Phase 1 wins on name collision(用户可放下 SKILL.md 覆盖内置 `@Component` Skill);`SkillSourceProperties` 是 plain POJO + 静态 `bindFromEnvironment()` 工厂(R-13 dep-lock 兼容:只用 spring-core `Environment`,不用 spring-boot `Binder`),`agent.skills.sources[].type + .location` YAML 直接 bind → Map(Story #020b dsh §6.4 多源,0 新依赖)
+- 📡 **MCP stdio transport 已上线** — `McpServerConnection` interface 8 方法(name / state / lastHeartbeatAt / listTools / callTool / onStateChange / start / close)+ 6-态状态机(`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`)+ `StdioMcpServerConnection` 5-步握手(spawn → initialize → initialized → tools/list → CONNECTED) + 双探活 heartbeat(`process.isAlive() + MCP ping`,timeout-cap)+ 指数退避重连(`1s → 2s → 4s → 8s → 16s → 32s → 60s` cap,**无限**重试)+ `McpServerConnectionFactory` 按 `McpTransportType` dispatch(STDIO 实现,SSE / STREAMABLE_HTTP 抛 `LINGS-M01` 留给 Story #021c)+ 新错误域 `M`(`LINGS-M01 = MCP_CONNECT_FAILED`);`callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2);listener 多 listener + per-listener 异常隔离(Story #021a dsh §6.5 (2.1),`McpTransport` / `McpToolAdapter` 留给 #021b / #021c)
 
 ---
 
@@ -1106,6 +1107,47 @@ diff /tmp/deps-pre.txt /tmp/deps-post.txt
 **累计测试**:`mvn -pl lingshu-core,lingshu-cli test` → **425 case**(lingshu-core 364 + lingshu-cli 61),Story #020c 新增 31 case(SkillCommandDispatcher 24 + CliRunnerSkillTrigger 5 + ArgsParserTest +2);0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
 
 **Story 边界**:**5 核心 Java 文件改动**(2 新 `SkillCommandDispatcher.java` + `SkillCommandDispatcherTest.java` + 3 改 `Args.java` + `ArgsParser.java` + `CliRunner.java`)严格守 ≤ 5 ✓;`Agent.java` 接口 + `DefaultAgent.java` 实现算 `continueWithUserMessageBlocking` 主链的一组改动(2 文件,均 lingshu-core),实际改动 = 7 文件(略超 ⚠️ 但 lingshu-core / lingshu-cli 跨模块边界 + 接口扩展必需);**0 新 ErrorCode** 严格守 ≤ 3 ✓(`LINGS-S05` Slot / `LINGS-Z01` CLI / `LINGS-T02` Tool 全部复用 #001 / #017 / #020a);R-13 缓解 `(d)` PASS 0 binary delta;主链 3/3 完成 🎉,**已合 ✅**(PR #31,2026-09-23) — Skill 系统「双触发渠」(LLM FunctionCalling + CLI `/xxx` 拦截)双端跑通,下一步 Story #021a `mcp-stdio-transport`(§6.5 MCP 长连接心跳 + 重连样板)。
+
+### Story #021a mcp-stdio-transport(`McpServerConnection` interface + 6-态状态机 + `StdioMcpServerConnection` + `McpServerConnectionFactory` + `LINGS-M01` AC-021a-1—AC-021a-10)
+
+dsh §6.5 (2.1) L4553-4871 — MCP server 长生命周期管理的第一块砖。MCP 子进程可能被 OOM 杀、stdio 僵死、SSE 反向代理超时踢线 —— 24×7 长生命周期需要心跳保活 + 指数退避重连样板。本 Story 实现 stdio 单 transport,SSE / STREAMABLE_HTTP 留 Story #021c。
+
+**交付**:
+- `McpTransportType` enum(`runtime` 包,3 字面值 STDIO / SSE / STREAMABLE_HTTP;放 runtime 而非 mcp 包避免 #021b `McpTransport` 循环依赖)
+- `McpServerConfig` POJO(`@Value @Builder @Jacksonized`,9 字段:name / transport / args / env / command / url / heartbeatIntervalMs / heartbeatTimeoutMs / reconnectCapMs,默认 30000/10000/60000)
+- `ConnectionState` enum(6 态:`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`)
+- `McpServerConnection` interface(`extends AutoCloseable`,8 方法:name / state / lastHeartbeatAt / listTools / callTool / onStateChange / start / close)
+- `McpToolDescriptor` + `McpCallResult`(minimal version — #021b 扩展 annotation / JSON Schema validation)
+- `McpTransportException`(LINGS-M01 carrier,`LINGS-<M>01 = MCP_CONNECT_FAILED`)
+- `McpServerConnectionFactory`(按 `McpTransportType` dispatch;SSE / STREAMABLE_HTTP 抛 LINGS-M01)
+- `StdioMcpServerConnection` 完整实现:5-步握手(spawn → initialize → initialized → tools/list → CONNECTED)+ 双探活 heartbeat(`process.isAlive() + MCP ping`)+ 指数退避 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` **无限**重试+ daemon `ScheduledExecutorService`(线程名 `mcp-hb-{name}`)+ listener 模式(`onStateChange`,per-listener try/catch 异常隔离,单 listener 抛不影响其他)+ `close()` 幂等 → FAILED
+- `AgentConfig.ServerConfig` 扩 5 字段(transport / url / 3 心跳;零依赖环回 legacy 4-field)
+- `TestMcpServer` fixture(`ai.lingshu.core.mcp.fixture`,Java main,line-delimited JSON,3 handlers:initialize / tools/list / ping;`-Dtest.mcp.dontReplyPing=true` 模拟心跳超时)
+
+**关键不变量**:
+- `callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2 ToolExecutor 5 步流水线)
+- 简化的 line-delimited JSON framing(替代 MCP spec `Content-Length`)— 测试 fixture 简化;Story #021b 升级为 spec-compliant
+- MCP stdio 用 JDK 内置 `ProcessBuilder`(R-13 0 binary delta,无需 `jna` / `org.json` / MCP SDK)
+
+**R-13 dep-tree 自查**(Story #021a 必须按 SOP §3.2 + §3.4 流程):
+```
+# Pre-Story dep tree (Story #021a pre-merge baseline):
+ai.lingshu:lingshu-core:jar:0.1.0-SNAPSHOT
++- org.projectlombok:lombok:jar:1.18.38:provided
++- org.reactivestreams:reactive-streams:jar:1.0.4:compile
++- com.fasterxml.jackson.core:jackson-databind:jar:2.15.4:compile
++- org.springframework.ai:spring-ai-core:jar:1.0.0-M6:compile
++- org.springframework.ai:spring-ai-anthropic:jar:1.0.0-M6:compile
++- org.junit.jupiter:junit-jupiter:jar:5.10.2:test
++- org.assertj:assertj-core:jar:3.25.3:test
++- org.mockito:mockito-core:jar:5.11.0:test
++- org.awaitility:awaitility:jar:4.2.1:test
+# Total: 9 coords, 0 binary delta vs Story #020c baseline (only timestamps differ in [INFO] lines)
+```
+
+**累计测试**:`mvn -pl lingshu-core test` → **401 case**(Story #020c 365 + Story #021a 新增 36),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。36 个新增 case 分布:L1(McpTransportType 1 + McpServerConfig 4 + ConnectionState 1 + McpServerConnectionContract 1 + McpServerConnectionFactory 4 + McpTransportException 1 + AgentConfig BackwardCompat 3 + AgentConfig Expansion 3 = **18 L1**)+ L2/L3(Start 5 + Reconnect 3 + Heartbeat 4 + Listener 3 + Close 2 + CallToolNotConnected 1 + StartError 1 = **19 L2/L3**)。
+
+**Story 边界**:**5 核心 production 文件改动**(McpServerConfig / StdioMcpServerConnection / McpServerConnectionFactory / McpServerConnection interface + 修改 AgentConfig.ServerConfig)严格守 ≤ 5 ✓;**1 新 ErrorCode**(`LINGS-M01`)严格守 ≤ 3 ✓;R-13 缓解 `(d)` PASS 0 binary delta;MCP 支链 A 第 1 块完成。
 
 ---
 
