@@ -55,6 +55,7 @@
 - 🧹 **TruncatingCompactor 已上线** — `Compactor` SPI Slot 2 v1 默认实现,两步压缩(ToolResult 内容截断 + 滑动窗口收口),`Session.compact(List)` 原子替换 + 与 `append(Message)` 同锁,`@Value AgentConfig.CompactorConfig(maxPromptTokens / maxToolResultBytes / keepRecentTurns)` zero-config 默认 `(100_000 / 50_000 / 20)`(Story #018 dsh §6.2)
 - 🛠️ **4 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1))
 - 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
+- 📂 **SKILL.md 多源自动发现已上线** — Slot 4 sub-SPI:`SkillSource`(4 方法:type / location / discover / watchable)+ `SkillSourceProvider`(2 方法:type / create),`SkillSourceRouter` 启动期按 `type()` 索引 Provider,v1 两个实装(`classpath` 走 `PathMatchingResourcePatternResolver` 扫 `classpath*:prefix/**/SKILL.md` / `directory` 走 NIO `DirectoryStream` 一层扫 `<dir>/*/SKILL.md`),`CompositeSkillLoader.loadAll` 串起所有 source(单 source 失败不阻塞他人),`SkillAutoConfiguration` 扩展 Phase 1(SKILL.md 自动发现)+ Phase 2(`@Component` Skills)`mergePhases` 合并 → `ToolRegistry.register`,Phase 1 wins on name collision(用户可放下 SKILL.md 覆盖内置 `@Component` Skill);`SkillSourceProperties` 是 plain POJO + 静态 `bindFromEnvironment()` 工厂(R-13 dep-lock 兼容:只用 spring-core `Environment`,不用 spring-boot `Binder`),`agent.skills.sources[].type + .location` YAML 直接 bind → Map(Story #020b dsh §6.4 多源,0 新依赖)
 
 ---
 
@@ -1001,6 +1002,57 @@ $ diff /tmp/deps-019-post.txt /tmp/deps-020a-post.txt
 
 ---
 
+### Story #020b skill-source-discovery(`SkillSource` SPI + 2 v1 impls + `CompositeSkillLoader` + `SkillAutoConfiguration` Phase 1 AC-020b-1—AC-020b-7)
+
+dsh §6.4 L4066-4420 Skill 系统第二块砖 —— Story #020a 只交付 `@Component` Skill 注册路径(单源、内置、`putIfAbsent` 决定胜出),Story #020b 落 **SKILL.md 多源自动发现**:用户可在 `application.yml` 写 `agent.skills.sources: [{ type: classpath, location: ... }, { type: directory, location: ./skills/ }]`,Agent 启动期自动扫出所有 `SKILL.md` 文件并注册成 Skill,无需写 `@Component` Java 类。本 Story 同时铺设 Slot 4 sub-SPI(`SkillSource` 4 方法 + `SkillSourceProvider` 2 方法),v1 两个实装(classpath / directory)打通端到端路径,Plugin 作者未来加 `git` / `s3` / `http` 类型只需写新 Provider + Source,**零 core 代码改动**(§5.3.1.0 SPI 模式)。
+
+**新增 SPI 边界**(dsh §6.4 L4088-4097):
+- `SkillSource`(4 方法:`type()` / `location()` / `discover() throws IOException` / `watchable() default false`)— Skill 源头抽象,可来自 classpath / directory / git / s3 / http
+- `SkillSourceProvider`(2 方法:`type()` / `create(String location)`)— `type` 路由键(`"classpath"` / `"directory"` 等),Spring `@Component` 多 Provider 模式,`SkillSourceRouter` 启动期按 `type()` 索引
+
+**v1 实现 + 关键决策**:
+- `ClasspathSkillSource` — `PathMatchingResourcePatternResolver.getResources(prefix + "/**/SKILL.md")`,jar 内 / IDE 展开路径统一处理,`watchable() = false`(jar 不可变)
+- `DirectorySkillSource` — `Files.newDirectoryStream(root)` 一层扫,子目录名 = Skill 名,`watchable() = true`(本地可写,§14.8 future WatchService 钩子)
+- `SkillSourceRouter` — `@Component` + Spring DI `List<SkillSourceProvider>`,按 `type()` 收 `LinkedHashMap`,first-wins 解决冲突(无 `version()` / `priority()` 字段 → 复用 `SlotRouter<P, T>` 不合身,故独立实现,**未引入新抽象**)
+- `CompositeSkillLoader` — `loadAll(props)` 串起所有 source,单 source 失败 try/catch log+skip(R-09 mitigation),返回 `Map<String, Skill>`(让 `SkillAutoConfiguration` 与 Phase 2 `@Component` `Map<String, Skill>` 通过 `mergePhases` 直接 `putIfAbsent` 合并)
+- `SkillSourceProperties` — **plain POJO**(无 `@ConfigurationProperties` 因 spring-boot 不在 lingshu-core classpath,R-13 dep-lock),静态 `bindFromEnvironment(Environment)` 工厂,**只用 spring-core `Environment.getProperty`** —— `agent.skills.enabled` / `agent.skills.hot-reload` / `agent.skills.sources[N].type` / `.location` 4 类 key 直读,索引从 0 遍历直到缺失终止
+
+**Phase 1 + Phase 2 合并顺序**(dsh §6.4 设计意图 + `DefaultToolRegistry` 实际行为):
+- Phase 1 扫出 SKILL.md Skills → `Map<String, Skill>`(LinkedHashMap 保持扫出顺序)
+- Phase 2 Spring DI `Map<String, Skill>`(`@Component` Skills,Story #020a 已铺)
+- `mergePhases` Phase 1 `putAll` 先填,Phase 2 `putIfAbsent` 兜底 → **Phase 1 wins on name collision**
+- 用户**可通过 drop 一份同名 SKILL.md 覆盖内置 `@Component` Skill**(例:`skills/commit/SKILL.md` 覆盖 `CommitSkill`),无需改 Java 代码
+- 这与 `DefaultToolRegistry.register()` 的 `putIfAbsent` first-wins 一致(Phase 1 先 register → 胜出)
+
+**`SkillAutoConfiguration` 扩展**(3 → 4 arg ctor):
+- 新增第 4 参 `CompositeSkillLoader`
+- `afterPropertiesSet()` 改写:Phase 1 `bindFromEnvironment(environment)` → `loader.loadAll(props)` → Phase 2(已有 `Map<String, Skill>`)→ `loader.mergePhases` → 顺序 `toolRegistry.register(skill)`
+- 启动日志升级:`Skills ready — N skill(s) registered (X from sources, Y from @Component): [...]`
+
+**R-13 dep-tree 自查**(Story #020b 必须按 SOP §3.2 + §3.4 流程):
+
+```
+# Pre-Story dep tree (Story #020a merged): 57 行
+git stash
+mvn -pl lingshu-core dependency:tree > /tmp/deps-pre.txt
+git stash pop
+mvn -pl lingshu-core dependency:tree > /tmp/deps-post.txt
+diff /tmp/deps-pre.txt /tmp/deps-post.txt
+# (空 — 0 binary delta)
+```
+
+零新依赖。仅用 `spring-core`(transitive via `spring-ai-core`)+ slf4j-api(transitive)+ JDK 8 NIO `Files.newDirectoryStream` + Spring `PathMatchingResourcePatternResolver`。**完全避开** spring-boot `Binder`(R-13 锁下不可用),通过自写 `bindFromEnvironment` 静态工厂绕开。
+
+**JDK 8 硬约束**:所有代码无 `var` / sealed / records / `List.of` / `InputStream.readAllBytes`(JDK 9+);`ClasspathSkillSource` 用自写 `readAllBytes(InputStream)` byte-buffer loop(JDK 8 兼容)。
+
+**关键不变项**:`Tool` 接口 / `Skill` 接口 / `SkillLoader` 行为 / `ToolRegistry` 注册路径 / `ToolExecutor` 5 步流水线 / §4.7 PermissionPolicy / AuditLogger / Cost 域 **全部不变**。
+
+**累计测试**:`mvn -pl lingshu-core test` → **364 case**(Story #020a 327 + Story #020b 新增 37);`mvn test` 全模块 → **492 case across 6 modules**(lingshu-core 364 + lingshu-a2a-server 22 + lingshu-a2a-client 69 + demo-empty 0 + demo-engineer 2 + demo-local-tools 5 + lingshu-cli 30),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**Story 边界**:**8 核心 Java 文件改动**(7 新 SPI / impl + 1 改 `SkillAutoConfiguration`)严格守 ≤ 5 ⚠️ 边界稍超(Story #020a → #020b 是 Slot 4 sub-SPI 整套铺设);**0 新 ErrorCode** 严格守 ≤ 3 ✓;R-13 缓解 `(d)` PASS 0 binary delta;主链 2/3 完成,**已合 ✅**(PR #29,2026-09-23) — 下一步 Story #020c `cli-skill-trigger`(CLI `/xxx` 拦截 + Skill 列表自动补全)。
+
+---
+
 ### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
@@ -1181,6 +1233,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 - 🖥️ [CLI 入口与 5 子命令(Story #017)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cli.md)
 - 🛠️ [内置 Tool(Read / Write / Edit / Bash)与自动注册(Story #019)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/built-in-tools.md)
 - 🧩 [Skill 系统第一块砖:SkillTool + CommitSkill + ToolRegistry 4 方法(Story #020a)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/skill-foundation.md)
+- 📂 [Skill 系统第二块砖:SkillSource SPI + 2 v1 impls + CompositeSkillLoader(Story #020b)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/skill-source-discovery.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)
