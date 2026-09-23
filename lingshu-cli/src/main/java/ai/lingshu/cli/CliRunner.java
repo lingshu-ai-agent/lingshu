@@ -38,17 +38,26 @@ import java.io.PrintStream;
 public class CliRunner implements ApplicationRunner {
 
     private final AgentFactory factory;
+    /** 🆕 Story #020c — optional; {@code null} = legacy mode (no /xxx interception, no skill banner). */
+    private final SkillCommandDispatcher skillDispatcher;
     private final PrintStream out;
     private final PrintStream err;
 
     @Autowired
-    public CliRunner(AgentFactory factory) {
-        this(factory, System.out, System.err);
+    public CliRunner(AgentFactory factory, SkillCommandDispatcher skillDispatcher) {
+        this(factory, skillDispatcher, System.out, System.err);
     }
 
-    /** Test-only constructor — allows stdout / stderr capture in unit tests. */
+    /** Legacy 3-arg ctor — used by Story #017 handler tests; delegates with null dispatcher. */
     CliRunner(AgentFactory factory, PrintStream out, PrintStream err) {
+        this(factory, null, out, err);
+    }
+
+    /** Test-only 4-arg ctor — used by Story #020c CliRunnerSkillTriggerTest. */
+    CliRunner(AgentFactory factory, SkillCommandDispatcher skillDispatcher,
+              PrintStream out, PrintStream err) {
         this.factory = factory;
+        this.skillDispatcher = skillDispatcher;
         this.out = out;
         this.err = err;
     }
@@ -96,8 +105,26 @@ public class CliRunner implements ApplicationRunner {
     // ── run ─ single turn: loadYaml + create + runBlocking(prompt) ─────────
 
     void doRun(Args args) {
+        // 🆕 Story #020c — `--list-skills` prints the banner and returns BEFORE factory.create.
+        if (skillDispatcher != null && args.isPrintSkills()) {
+            skillDispatcher.printSkillList(out);
+            return;
+        }
         AgentConfig cfg = loadYamlOrThrow(args);
         Agent agent = factory.create(cfg);
+        // 🆕 Story #020c — `/xxx` intercept routes through SkillCommandDispatcher.handleUserInput
+        // (ToolExecutor 5-step pipeline preserved). Falls through to LLM path if dispatcher absent
+        // (legacy Story #017 mode) or the prompt doesn't start with `/`.
+        if (skillDispatcher != null && skillDispatcher.isSkillCommand(args.getPrompt())) {
+            RunResult skillResult = skillDispatcher.handleUserInput(args.getPrompt(), agent);
+            out.println(skillResult.getFinalText());
+            out.println();
+            out.println("[LINGS-Z99] turns=" + skillResult.getTurns()
+                + " usage=" + skillResult.getTotalUsage()
+                + " stopReason=" + skillResult.getStopReason()
+                + " elapsedMs=" + skillResult.getElapsedMillis());
+            return;
+        }
         RunResult result = agent.runBlocking(args.getPrompt());
         out.println(result.getFinalText());
         out.println();
@@ -110,12 +137,28 @@ public class CliRunner implements ApplicationRunner {
     // ── resume: memory-session continuation (Story #014 will replace with file/redis/jdbc) ─
 
     void doResume(Args args) {
+        // 🆕 Story #020c — `--list-skills` on resume prints the banner and returns BEFORE factory.create.
+        if (skillDispatcher != null && args.isPrintSkills()) {
+            skillDispatcher.printSkillList(out);
+            return;
+        }
         AgentConfig cfg = loadYamlOrThrow(args);
         Agent agent = factory.create(cfg);
         // Story #017 scope — memory-only session; --session id is acknowledged but not
         // actually persisted. Story #014 will wire FileSessionStore / Redis / JDBC.
         out.println("[LINGS-Z99] resuming memory session: " + args.getSessionId()
             + " (note: in-memory only — server restart loses history)");
+        // 🆕 Story #020c — `/xxx` intercept routes through SkillCommandDispatcher.handleUserInput.
+        if (skillDispatcher != null && skillDispatcher.isSkillCommand(args.getPrompt())) {
+            RunResult skillResult = skillDispatcher.handleUserInput(args.getPrompt(), agent);
+            out.println(skillResult.getFinalText());
+            out.println();
+            out.println("[LINGS-Z99] turns=" + skillResult.getTurns()
+                + " usage=" + skillResult.getTotalUsage()
+                + " stopReason=" + skillResult.getStopReason()
+                + " elapsedMs=" + skillResult.getElapsedMillis());
+            return;
+        }
         RunResult result = agent.runBlocking(args.getPrompt());
         out.println(result.getFinalText());
         out.println();
@@ -193,6 +236,11 @@ public class CliRunner implements ApplicationRunner {
         }
         out.println();
         out.println("agent ready (turns=" + (agent == null ? 0 : 1) + ")");
+        // 🆕 Story #020c — append Skill commands banner so users can discover /xxx commands.
+        if (skillDispatcher != null) {
+            out.println();
+            skillDispatcher.printSkillList(out);
+        }
     }
 
     // ── config: dump effective AgentConfig as JSON ────────────────────────

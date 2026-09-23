@@ -1053,6 +1053,62 @@ diff /tmp/deps-pre.txt /tmp/deps-post.txt
 
 ---
 
+### Story #020c cli-skill-trigger(`SkillCommandDispatcher` + `Agent.continueWithUserMessageBlocking` 同步版 + `CliRunner` `/xxx` 拦截 + `--list-skills` banner AC-020c-1—AC-020c-10)
+
+dsh §6.4 L4039-4042 + L4266-4267 Skill 系统第三块砖(主链收官)—— Story #020a 落地 `Skill` 接口(`Skill extends Tool`),Story #020b 落 `SkillSource` SPI 让 `SKILL.md` 自动发现,但**双触发渠**(LLM FunctionCalling 自动调 + 用户 `/xxx` 显式触发)中**只有 LLM 自动调通了**;用户没法从 CLI 主动调一个 Skill。本 Story 落 CLI 拦截核心:用户敲 `lingshu run --prompt "/commit fix login"` 时,CLI 不再走 LLM 路径,而是直接路由到对应 Skill,Skill 返回内容作为 User message 注入 Agent,继续 turn 直到 LLM 给最终答复。
+
+**新增核心文件**(`lingshu-cli` 主):
+- `SkillCommandDispatcher`(`@Component`)—— 3 段职责 11 方法:
+  - **识别**:`parse(String) → ParsedCommand(name + args)` + `isSkillCommand(String) → boolean`(slash 前缀 + 注册表 lookup)
+  - **执行**:`handleUserInput(String, Agent) → RunResult`(5 步:parse → Skill lookup → 构造 ToolCall → `toolExecutor.dispatch(call, ctx)` → `agent.continueWithUserMessageBlocking(content)`)
+  - **展示**:`printSkillList(PrintStream)` + `listSkillNames()` + `listSkills()`(`[LINGS-Z99] Available commands (N):` banner,description 截断 80 字符 + ellipsis)
+  - **嵌套类**:`ParsedCommand`(name + args)+ `SkillInfo`(name + description)+ `CliSkillToolExecutionContext`(最小 `ToolExecutionContext` 桩,approval / cancellation / http 全 no-op,标注 MVP 留 follow-up Story 接 `Agent.lendTurnContext()` 钩子)
+
+**关键决策 —— 为何走 `ToolExecutor.dispatch` 而非 `Skill.execute`**:
+- §4.10.1 硬规则 2:任何 Tool / Skill 调用**必须**经 `ToolExecutor.dispatch`(内部串入 5 步流水线 `PermissionPolicy → lookup → TimeoutWrap → SandboxApply → execute → Checkpoint`)
+- 直调 `Skill.execute` = 绕过沙箱 / 权限 / 超时 / 取消,**违反硬规则 2** 是 reject 级别的 bug
+- `ToolExecutor.dispatch(call, ctx)` 是 Skill 与 LLM 路径**唯一**的交汇点,CLI 拦截复用此契约,行为与 LLM FunctionCalling 路径完全一致
+- 输入 schema 固定 `{ "input": args }`(对齐 `SkillTool.FIXED_INPUT_SCHEMA_JSON` / `CommitSkill.inputSchema()`)
+
+**核心 API 扩展**(`lingshu-core`,1 方法):
+- `Agent.continueWithUserMessageBlocking(String content) → RunResult` — 同步版,与 `runBlocking(String)` 镜像实现(内联,不抽 `drainToResult` 共享 helper 以避免影响 Story #001 已测代码)
+- `DefaultAgent` 实现:`continueWithUserMessage(content).subscribe(drain)` + `CountDownLatch` + `AtomicReference<Throwable> err` + `done.await(config.getTurnTimeoutSeconds(), TimeUnit.SECONDS)` 阻塞,事件 drain → `TurnCompleted.reason / usage / turns` 收集 → 返 `RunResult`
+- 注释明确:"Inlining keeps this Story strictly additive — any regression to `runBlocking` tests is impossible by construction."
+
+**`CliRunner` 接入**(3 入口修改):
+- `doRun(Args)`:`if (args.isPrintSkills()) { printSkillList(out); return; }` 在 `loadYamlOrThrow` **前**(banner-only mode 不需要 YAML);`if (skillDispatcher.isSkillCommand(args.getPrompt())) { ... return; }` 在 `factory.create(cfg)` **后** `agent.runBlocking` **前**
+- `doResume(Args)`:同样加 `--list-skills` 短路 + `/xxx` 拦截(`--session` session 续聊场景也允许 Skill 触发)
+- `doDoctor(Args)`:末尾追加 `skillDispatcher.printSkillList(out)`,让用户从 doctor 也能发现 `/xxx` 命令
+- 旧 3-arg ctor `(factory, out, err)` 保留(Story #017 既有 handler test 不回归),新增 4-arg ctor `(factory, skillDispatcher, out, err)`;`skillDispatcher == null` 时视为 legacy mode,**不**做拦截 —— 真正做到了"可选依赖" 模式
+
+**`Args` / `ArgsParser` 新字段**:
+- `Args.printSkills: boolean`(Lombok `@Value` 第 8 字段,**最后**位置避免破坏既有 7 字段 ctor 顺序)
+- `ArgsParser`:`--list-skills` boolean flag,与 `--print-effective` / `--print-schema` 同模式
+- `validate()` 调整:run/resume 在 `--list-skills=true` 时 bypass `--prompt` / `--session` 校验(否则用户没法 `lingshu run --list-skills` 单独跑 banner)
+
+**R-13 dep-tree 自查**(Story #020c 必须按 SOP §3.2 + §3.4 流程):
+
+```
+# Pre-Story dep tree (Story #020b merged): 57 行
+mvn -pl lingshu-cli dependency:tree -DincludeScope=runtime > /tmp/deps-pre.txt
+# Post-Story dep tree (Story #020c pre-merge):
+mvn -pl lingshu-cli dependency:tree -DincludeScope=runtime > /tmp/deps-post.txt
+diff /tmp/deps-pre.txt /tmp/deps-post.txt
+# (空 — 0 binary delta,仅时间戳差异)
+```
+
+零新依赖。复用:`jackson-databind.ObjectMapper`(已锁,JSON `{"input": args}` 构造)+ `org.reactivestreams:reactive-streams:1.0.4`(`Subscriber<AgentEvent>` 模板)+ `Paths` / `FileSystems` JDK 内置 + `LingsCliException`(Story #017 既有)。**完全避开** 任何新坐标。
+
+**JDK 8 硬约束**:所有代码无 `var` / sealed / records / `List.of` / `Files.readAllBytes`;`ObjectMapper` 用 Lombok `@Value`-style 注入(`@Autowired` 双参 ctor + 3-arg 公开 ctor),`CountDownLatch` / `AtomicReference` JDK 8 内置。`LingsCliException("LINGS-Z01", msg, hint)` 构造调用零 record。
+
+**关键不变项**:`Skill` 接口 / `SkillTool.fromMarkdown` / `SkillLoader` / `ToolRegistry` 注册路径 / `ToolExecutor` 5 步流水线 / §4.7 PermissionPolicy / AuditLogger / Cost 域 / `CliRunner` 既有 3-arg ctor / Story #017 既有 handler test 全部不变;`args.validate()` 调整只新增 `--list-skills` bypass 路径,**不**影响原 `--prompt` / `--session` 校验逻辑(LINGS-Z01 仍然 throw)。
+
+**累计测试**:`mvn -pl lingshu-core,lingshu-cli test` → **425 case**(lingshu-core 364 + lingshu-cli 61),Story #020c 新增 31 case(SkillCommandDispatcher 24 + CliRunnerSkillTrigger 5 + ArgsParserTest +2);0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**Story 边界**:**5 核心 Java 文件改动**(2 新 `SkillCommandDispatcher.java` + `SkillCommandDispatcherTest.java` + 3 改 `Args.java` + `ArgsParser.java` + `CliRunner.java`)严格守 ≤ 5 ✓;`Agent.java` 接口 + `DefaultAgent.java` 实现算 `continueWithUserMessageBlocking` 主链的一组改动(2 文件,均 lingshu-core),实际改动 = 7 文件(略超 ⚠️ 但 lingshu-core / lingshu-cli 跨模块边界 + 接口扩展必需);**0 新 ErrorCode** 严格守 ≤ 3 ✓(`LINGS-S05` Slot / `LINGS-Z01` CLI / `LINGS-T02` Tool 全部复用 #001 / #017 / #020a);R-13 缓解 `(d)` PASS 0 binary delta;主链 3/3 完成 🎉,**已合 ✅**(PR #31,2026-09-23) — Skill 系统「双触发渠」(LLM FunctionCalling + CLI `/xxx` 拦截)双端跑通,下一步 Story #021a `mcp-stdio-transport`(§6.5 MCP 长连接心跳 + 重连样板)。
+
+---
+
 ### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
@@ -1234,6 +1290,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 - 🛠️ [内置 Tool(Read / Write / Edit / Bash)与自动注册(Story #019)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/built-in-tools.md)
 - 🧩 [Skill 系统第一块砖:SkillTool + CommitSkill + ToolRegistry 4 方法(Story #020a)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/skill-foundation.md)
 - 📂 [Skill 系统第二块砖:SkillSource SPI + 2 v1 impls + CompositeSkillLoader(Story #020b)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/skill-source-discovery.md)
+- ⚡ [Skill 系统第三块砖:CLI /xxx 拦截 + SkillCommandDispatcher(Story #020c)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cli-skill-trigger.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)

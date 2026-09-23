@@ -44,7 +44,7 @@ class ConfigHandlerTest {
         Path yml = tmp.resolve("app.yml");
         Files.write(yml, "agent:\n  llm:\n    provider: anthropic\n    model: t\n  sandbox:\n    policy: default\n".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.CONFIG, yml, null, null, null, false, false);
+        Args args = new Args(Subcommand.CONFIG, yml, null, null, null, false, false, false);
         runner.doConfig(args);
 
         // Assert against the YAML-loaded cfg, not AgentConfigDefaults — the user wrote
@@ -64,7 +64,7 @@ class ConfigHandlerTest {
     @Test
     void config_withMissingYaml_throwsLingsZ02(@TempDir Path tmp) {
         Path missing = tmp.resolve("nope.yml");
-        Args args = new Args(Subcommand.CONFIG, missing, null, null, null, false, false);
+        Args args = new Args(Subcommand.CONFIG, missing, null, null, null, false, false, false);
 
         assertThatThrownBy(() -> runner.doConfig(args))
             .isInstanceOf(LingsCliException.class)

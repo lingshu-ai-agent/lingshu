@@ -44,7 +44,7 @@ class ServeHandlerTest {
     @Test
     void serve_withMissingYaml_throwsLingsZ02(@TempDir Path tmp) {
         Path missing = tmp.resolve("nope.yml");
-        Args args = new Args(Subcommand.SERVE, missing, null, null, 8080, false, false);
+        Args args = new Args(Subcommand.SERVE, missing, null, null, 8080, false, false, false);
 
         assertThatThrownBy(() -> runner.doServe(args))
             .isInstanceOf(LingsCliException.class)
@@ -61,7 +61,7 @@ class ServeHandlerTest {
         Path yml = tmp.resolve("bad.yml");
         Files.write(yml, "agent:\n  a2a:\n    host: 0.0.0.0\n    port: 99999\n".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.SERVE, yml, null, null, 18080, false, false);
+        Args args = new Args(Subcommand.SERVE, yml, null, null, 18080, false, false, false);
 
         assertThatThrownBy(() -> runner.doServe(args))
             .isInstanceOf(LingsCliException.class)
@@ -79,7 +79,7 @@ class ServeHandlerTest {
         Path yml = tmp.resolve("bad.yml");
         Files.write(yml, "[unterminated bracket".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.SERVE, yml, null, null, 8080, false, false);
+        Args args = new Args(Subcommand.SERVE, yml, null, null, 8080, false, false, false);
 
         assertThatThrownBy(() -> runner.doServe(args))
             .isInstanceOf(LingsCliException.class)
@@ -97,7 +97,7 @@ class ServeHandlerTest {
         Path yml = tmp.resolve("good.yml");
         Files.write(yml, "agent:\n  a2a:\n    host: 127.0.0.1\n    port: 99999\n".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.SERVE, yml, null, null, 18080, false, false);
+        Args args = new Args(Subcommand.SERVE, yml, null, null, 18080, false, false, false);
 
         // The override path (withPort) reconstructs AgentConfig — we just confirm the
         // YAML is loaded and the override doesn't throw LINGS-Z02 (YAML was valid).

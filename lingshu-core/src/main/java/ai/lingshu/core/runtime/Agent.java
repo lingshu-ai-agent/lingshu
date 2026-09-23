@@ -44,4 +44,20 @@ public interface Agent {
      * Used by Skill triggers ({@code /xxx}) to feed results back without opening a new session.
      */
     Publisher<AgentEvent> continueWithUserMessage(String content);
+
+    /**
+     * 🆕 Story #020c — Sync wrapper for {@link #continueWithUserMessage}.
+     *
+     * <p>Subscribes to the reactive {@code Publisher} and collects events to a
+     * {@link RunResult}, blocking the calling thread until the turn completes
+     * (or {@code turnTimeoutSeconds} elapses — see {@code AgentConfig.getTurnTimeoutSeconds()}).
+     *
+     * <p><b>For CLI {@code /xxx} dispatch</b> (dsh §6.4 L4266-4267): the Skill tool
+     * result is wrapped as a synthetic User message, fed to this method, and the
+     * final {@link RunResult} is returned to the CLI caller.
+     *
+     * <p>Implementation mirrors {@link #runBlocking} — same {@code AtomicReference +
+     * CountDownLatch + Subscriber<AgentEvent>} template.
+     */
+    RunResult continueWithUserMessageBlocking(String content);
 }

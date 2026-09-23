@@ -17,11 +17,12 @@ import java.util.Map;
  *                                          [--session <id>]
  *                                          [--print-effective]
  *                                          [--print-schema]
+ *                                          [--list-skills]   🆕 Story #020c
  * </pre>
  *
  * <p>Flags accept both {@code --key value} and {@code --key=value} forms (latter
  * useful for {@code --config=app.yml}). Boolean flags ({@code --print-effective},
- * {@code --print-schema}) take no value.
+ * {@code --print-schema}, {@code --list-skills}) take no value.
  *
  * <p>Validation per subcommand:
  * <ul>
@@ -64,10 +65,12 @@ public final class ArgsParser {
         Integer port = parsePort(flags.get("--port"));
         boolean printEffective = flags.containsKey("--print-effective");
         boolean printSchema = flags.containsKey("--print-schema");
+        // 🆕 Story #020c — boolean flag, dumps the Skill banner and exits without invoking Agent.
+        boolean printSkills = flags.containsKey("--list-skills");
 
-        validate(sub, prompt, sessionId, port);
+        validate(sub, prompt, sessionId, port, printSkills);
 
-        return new Args(sub, configPath, prompt, sessionId, port, printEffective, printSchema);
+        return new Args(sub, configPath, prompt, sessionId, port, printEffective, printSchema, printSkills);
     }
 
     /**
@@ -115,25 +118,30 @@ public final class ArgsParser {
         }
     }
 
-    private static void validate(Subcommand sub, String prompt, String sessionId, Integer port) {
+    private static void validate(Subcommand sub, String prompt, String sessionId,
+                                  Integer port, boolean printSkills) {
         switch (sub) {
             case RUN:
-                if (prompt == null || prompt.trim().isEmpty()) {
+                // 🆕 Story #020c — `--list-skills` bypasses --prompt (banner-only mode).
+                if (!printSkills && (prompt == null || prompt.trim().isEmpty())) {
                     throw new LingsCliException("LINGS-Z01",
                         "run: --prompt <text> is required",
                         "example: lingshu run --config app.yml --prompt 'say hi'");
                 }
                 return;
             case RESUME:
-                if (sessionId == null || sessionId.trim().isEmpty()) {
-                    throw new LingsCliException("LINGS-Z01",
-                        "resume: --session <id> is required",
-                        "example: lingshu resume --session abc123 --prompt 'continue'");
-                }
-                if (prompt == null || prompt.trim().isEmpty()) {
-                    throw new LingsCliException("LINGS-Z01",
-                        "resume: --prompt <text> is required",
-                        "example: lingshu resume --session abc123 --prompt 'continue'");
+                // 🆕 Story #020c — `--list-skills` bypasses --session + --prompt.
+                if (!printSkills) {
+                    if (sessionId == null || sessionId.trim().isEmpty()) {
+                        throw new LingsCliException("LINGS-Z01",
+                            "resume: --session <id> is required",
+                            "example: lingshu resume --session abc123 --prompt 'continue'");
+                    }
+                    if (prompt == null || prompt.trim().isEmpty()) {
+                        throw new LingsCliException("LINGS-Z01",
+                            "resume: --prompt <text> is required",
+                            "example: lingshu resume --session abc123 --prompt 'continue'");
+                    }
                 }
                 return;
             case SERVE:

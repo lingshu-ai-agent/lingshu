@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -151,6 +152,75 @@ public class DefaultAgent implements Agent {
             ((DefaultSession) session).append(new Message.User(content));
         }
         return run(content);
+    }
+
+    /**
+     * 🆕 Story #020c — Sync wrapper for {@link #continueWithUserMessage}.
+     *
+     * <p>Mirrors the {@link #runBlocking} template literally: subscribe to the
+     * reactive path, drain events into a {@code List}, block on a
+     * {@code CountDownLatch} with {@code turnTimeoutSeconds}.
+     *
+     * <p><b>Why a new method vs re-using {@code runBlocking} or extracting a
+     * shared {@code drainToResult} helper:</b> that would refactor existing
+     * tested code (Story #001) for minimal benefit. Inlining keeps this Story
+     * strictly additive — any regression to {@link #runBlocking} tests is impossible
+     * by construction.
+     */
+    @Override
+    public RunResult continueWithUserMessageBlocking(String content) {
+        long t0 = System.currentTimeMillis();
+        List<AgentEvent> captured = new ArrayList<>();
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicReference<Throwable> err = new AtomicReference<>();
+
+        Subscriber<AgentEvent> drain = new Subscriber<AgentEvent>() {
+            @Override public void onSubscribe(Subscription s) { s.request(Long.MAX_VALUE); }
+            @Override public void onNext(AgentEvent e) { captured.add(e); }
+            @Override public void onError(Throwable t) { err.set(t); done.countDown(); }
+            @Override public void onComplete() { done.countDown(); }
+        };
+
+        try {
+            continueWithUserMessage(content).subscribe(drain);
+        } catch (Throwable t) {
+            err.set(t);
+        } finally {
+            done.countDown();
+        }
+
+        try {
+            done.await(config.getTurnTimeoutSeconds(), TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        if (err.get() != null) {
+            throw new RuntimeException("Agent run failed", err.get());
+        }
+
+        String finalText = "";
+        StopReason reason = StopReason.END_TURN;
+        Usage usage = Usage.zero();
+        int turns = 0;
+        for (AgentEvent e : captured) {
+            if (e instanceof AgentEvent.TextDelta) {
+                finalText += ((AgentEvent.TextDelta) e).getText();
+            } else if (e instanceof AgentEvent.TurnCompleted) {
+                AgentEvent.TurnCompleted tc = (AgentEvent.TurnCompleted) e;
+                reason = tc.getReason();
+                usage = tc.getUsage();
+                turns++;
+            } else if (e instanceof AgentEvent.ErrorEvent) {
+                AgentEvent.ErrorEvent ee = (AgentEvent.ErrorEvent) e;
+                throw new RuntimeException("Agent emitted ErrorEvent: " + ee.getError().getMessage(), ee.getError());
+            }
+        }
+
+        long elapsed = System.currentTimeMillis() - t0;
+        LOG.info("DefaultAgent.continueWithUserMessageBlocking done in {}ms, finalText.len={}, turns={}, reason={}",
+            elapsed, finalText.length(), turns, reason);
+        return new RunResult(finalText, turns, usage, reason, elapsed);
     }
 
     private TurnContext buildContext(String userInput) {

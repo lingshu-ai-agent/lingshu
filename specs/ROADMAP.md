@@ -5,14 +5,14 @@
 > **与 constitution.md 关系**:本文件是工程 tracker(可修改);`constitution.md` 是法律(不可改,改须走 RFC)。
 > **与 dsh_agent_design.md 关系**:dsh 是设计真理(只读);本文件是「哪些 dsh 章节已落地 / 哪些待 Story」的实施映射。
 > **创建日期**:2026-09-22 — Story #009d a2a-remote-schema-builder 已合入,扫 §6 关键实现发现 5 大块空白。
-> **更新日期**:2026-09-23 — Story #020b skill-source-discovery 已合入(PR #29),主链 2/3 完成,下一步 #020c cli-skill-trigger。
+> **更新日期**:2026-09-23 — Story #020c cli-skill-trigger 已合入(PR #31),主链 3/3 完成 🎉,下一步 #021a mcp-stdio-transport(§6.5 MCP 长连接样板)。
 > **下次 review**:每个 Story 合入后更新「已完成」段。
 
 ---
 
-## ✅ 已完成(Story #001—#009 + #009a/b/c/d + #017 + #018 + #019 + #020a + #020b)
+## ✅ 已完成(Story #001—#009 + #009a/b/c/d + #017 + #018 + #019 + #020a + #020b + #020c)
 
-详见 `README.md` 「Story 路线图」段 + `dsh_agent_design.md §13` changelog。共 18 个 PR 合入:
+详见 `README.md` 「Story 路线图」段 + `dsh_agent_design.md §13` changelog。共 19 个 PR 合入:
 
 | Story | slug | 状态 |
 |---|---|---|
@@ -34,6 +34,7 @@
 | #019 | built-in-tools | ✅ 合 |
 | #020a | skill-foundation | ✅ 合(2026-09-23,PR #28) |
 | #020b | skill-source-discovery | ✅ 合(2026-09-23,PR #29) |
+| #020c | cli-skill-trigger | ✅ 合(2026-09-23,PR #31) |
 
 ---
 
@@ -53,18 +54,18 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 |---:|---|---|---|---|---:|---|---|
 | 1 | ~~**#020a**~~ | ~~`skill-foundation`~~ | §6.4 核心 | ~~`SkillTool` + `fromMarkdown` 静态工厂 + `@Component CommitSkill` + `ToolRegistry`(modelVisibleSpecs / findSkill / skillNames / findByName)~~ | ~~5~~ | ~~0~~ | **✅ 已合**(PR #28,2026-09-23) |
 | 2 | ~~**#020b**~~ | ~~`skill-source-discovery`~~ | ~~§6.4 多源~~ | ~~`SkillSource` + `SkillSourceProvider` 接口 + `ClasspathSkillSource` + `DirectorySkillSource` + `CompositeSkillLoader`(putIfAbsent)+ `SkillSourceRouter` + `SkillSourceProperties`(R-13 兼容 Environment 静态工厂)~~ | ~~8~~ | ~~0~~ | **✅ 已合**(PR #29,2026-09-23) |
-| 3 | **#020c** | `cli-skill-trigger` | §6.4 CLI | CLI `/xxx` 拦截 + `handleUserInput` + Skill 列表自动补全 + 启动日志 dump skills | 4 | 0 | 依赖 #020a + #020b(已就位)|
+| 3 | ~~**#020c**~~ | ~~`cli-skill-trigger`~~ | ~~§6.4 CLI~~ | ~~`SkillCommandDispatcher`(@Component)+ `Agent.continueWithUserMessageBlocking` 同步版 + `CliRunner.doRun`/`doResume` 前置 `/xxx` 拦截 + `--list-skills` 启动 banner + `CliRunner.doDoctor` 末尾追加 banner + `Args.isPrintSkills` + `ArgsParser --list-skills` flag~~ | ~~5 + 2(core Agent 扩展)~~ | ~~0~~ | **✅ 已合**(PR #31,2026-09-23,主链 3/3 完成 🎉) |
 | 4 | **#021a** | `mcp-stdio-transport` | §6.5 (2.1) | `McpServerConnection` interface + `ConnectionState` enum 6 态 + `McpServerConnectionFactory` + `StdioMcpServerConnection`(daemon 心跳 + 1s→60s 指数退避 + 无限重试)+ `McpServerConfig` | 5 | LINGS-M01 (connect failed)| — |
 | 5 | **#021b** | `mcp-tool-adapter` | §6.5 (2) | `McpTransport`(listener 模式)+ `McpToolDescriptor` + `McpCallResult` + `McpToolAdapter` + register/unregister 钩子 | 5 | LINGS-M02 (tools/call failed) | 依赖 #021a |
 | 6 | **#022** | `spring-ai-annotation-tool` | §6.5 (3) | `@AgentTool` 注解(复用 spring-ai `@Tool` 因 spring-ai-bom 已锁)+ `SpringAiToolAdapter` + `AgentToolScanner`(`ApplicationContextAware`)+ `JsonArgsConverter` | 5 | LINGS-T02 (反射调用失败) | 依赖 spring-ai-bom |
 | 7 | **#023** | `delegate-sub-agent` | §6.6 + §6.6.1 | `SubAgentType` enum + `DelegateTool` + `DelegateProps` + `TypeConfig` + §6.6.1 字段级继承(`AgentConfig.toBuilder()` 合并 identity / instructions / memory) | 5–6 | LINGS-D01 (sub-agent 配置缺失) | 依赖 AgentFactory + Agent 已就位 |
 
-**统计**:7 个 Story / 2 已合(#020a + #020b)/ 5 待补 / ~33 个新文件 / ~6 个新 ErrorCode / 预计 +400–600 个测试 case。
+**统计**:7 个 Story / 3 已合(#020a + #020b + #020c)/ 4 待补 / ~36 个新文件 / ~6 个新 ErrorCode / 预计 +400–600 个测试 case。
 
 ### 实施顺序建议(支持并行)
 
 ```
-主链(必须顺序): ✅ #020a → ✅ #020b → #020c   (Skill 3 件套,主链下一步 = #020c cli-skill-trigger)
+主链(必须顺序): ✅ #020a → ✅ #020b → ✅ #020c   (Skill 3 件套 ✅ 主链收官,下一步 = #021a mcp-stdio-transport)
 并行支链(与主链无依赖):
   支链 A: #021a → #021b     (MCP,可与 #020 系列并行)
   支链 B: #022               (Spring AI,可与 #020 / #021 并行)
@@ -128,6 +129,6 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 ## 🎯 实施节奏建议
 
 1. **本周(2026-09-22 周)**:Story #009d + Story #018 文档同步已完成(本文件 + 配套 4 件套 dsync)
-2. **2026-09-23 起**:Story #019 + #020a + #020b 已合(PR #26/#27/#28/#29),继续按主链顺序 #020c 推进;并行启动 #021a / #022 / #023 各自 spec.md
+2. **2026-09-23 起**:Story #019 + #020a + #020b + #020c 已合(PR #26/#27/#28/#29/#31),Skill 系统主链收官,继续按 MCP 路径 #021a → #021b → #022 → #023 推进;并行启动 #021a / #022 / #023 各自 spec.md
 3. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
 4. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整
