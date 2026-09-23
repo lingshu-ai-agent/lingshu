@@ -5,7 +5,7 @@
 > **与 constitution.md 关系**:本文件是工程 tracker(可修改);`constitution.md` 是法律(不可改,改须走 RFC)。
 > **与 dsh_agent_design.md 关系**:dsh 是设计真理(只读);本文件是「哪些 dsh 章节已落地 / 哪些待 Story」的实施映射。
 > **创建日期**:2026-09-22 — Story #009d a2a-remote-schema-builder 已合入,扫 §6 关键实现发现 5 大块空白。
-> **更新日期**:2026-09-23 — Story #021b mcp-tool-adapter 已合(440 tests 0 fail / R-13 0 binary delta / +LINGS-M02),MCP 支链 A 2/3 完成 🎉;下一步 #021c mcp-sse-and-http-transport(SseMcpServerConnection + StreamableHttpMcpServerConnection + factory dispatch 全实现)。
+> **更新日期**:2026-09-23 — Story #021c mcp-sse-and-http-transport 已合(481 tests 0 fail / R-13 0 binary delta / +LINGS-M03),MCP 支链 A 3/3 完成 🎉;下一步 #022 / #023 并行支链(Spring AI `@Tool` + Sub-agent delegate)。
 > **下次 review**:每个 Story 合入后更新「已完成」段。
 
 ---
@@ -37,6 +37,7 @@
 | #020c | cli-skill-trigger | ✅ 合(2026-09-23,PR #31) |
 | #021a | mcp-stdio-transport | ✅ 合(2026-09-23) |
 | #021b | mcp-tool-adapter | ✅ 合(2026-09-23,440 pass / 0 fail / R-13 0 binary delta / +LINGS-M02) |
+| #021c | mcp-sse-and-http-transport | ✅ 合(2026-09-23,481 pass / 0 fail / R-13 0 binary delta / +LINGS-M03) |
 
 ---
 
@@ -59,18 +60,18 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 | 3 | ~~**#020c**~~ | ~~`cli-skill-trigger`~~ | ~~§6.4 CLI~~ | ~~`SkillCommandDispatcher`(@Component)+ `Agent.continueWithUserMessageBlocking` 同步版 + `CliRunner.doRun`/`doResume` 前置 `/xxx` 拦截 + `--list-skills` 启动 banner + `CliRunner.doDoctor` 末尾追加 banner + `Args.isPrintSkills` + `ArgsParser --list-skills` flag~~ | ~~5 + 2(core Agent 扩展)~~ | ~~0~~ | **✅ 已合**(PR #31,2026-09-23,主链 3/3 完成 🎉) |
 | 4 | ~~**#021a**~~ | ~~`mcp-stdio-transport`~~ | ~~§6.5 (2.1)~~ | ~~`McpServerConnection` interface + `ConnectionState` enum 6 态 + `McpServerConnectionFactory`(仅 stdio 分支,SSE/HTTP 抛 LINGS-M01)+ `StdioMcpServerConnection`(daemon 心跳 + 1s→60s 指数退避 + 无限重试)+ `McpServerConfig`~~ | ~~7~~ | ~~0~~ | **✅ 已合**(2026-09-23,36 tests 0 fail / R-13 0 binary delta) |
 | 5 | ~~**#021b**~~ | ~~`mcp-tool-adapter`~~ | ~~§6.5 (2)~~ | ~~`McpTransport`(listener 模式)+ `McpToolDescriptor` + `McpCallResult` + `McpToolAdapter` + register/unregister 钩子 + `ToolRegistry.unregister()` SPI 扩展 + SmartLifecycle 启动期 wireup~~ | ~~5 + 3(ToolRegistry SPI 修改 + DefaultToolRegistry 实现 + McpTestSupport sysprop 转发)~~ | ~~LINGS-M02 (tools/call failed)~~ | **✅ 已合**(2026-09-23,440 tests 0 fail / R-13 0 binary delta) |
-| 6 | **#021c** | `mcp-sse-and-http-transport` | §6.5 (2.1) | `SseMcpServerConnection`(`HttpClient` + `EventSource` 长连接 + `GET /health` 心跳 + 重建 HttpClient 重连)+ `StreamableHttpMcpServerConnection`(无状态 HTTP POST `tools/call`)+ `McpServerConnectionFactory` 改 factory dispatch(移除 LINGS-M01 抛点,3 分支全实现) | 5 | LINGS-M03 (HTTP upgrade / SSE event format) | 依赖 #021a |
+| 6 | ~~**#021c**~~ | ~~`mcp-sse-and-http-transport`~~ | ~~§6.5 (2.1)~~ | ~~`McpHttpSupport` utility(HTTP / JSON-RPC 样板)+ `SseMcpServerConnection`(JDK HttpURLConnection 长连接 + 手写 SSE parser + `GET /health` 心跳 + 重建 HttpURLConnection 重连)+ `StreamableHttpMcpServerConnection`(无状态 HTTP POST tools/* + `GET /health` 心跳)+ `McpServerConnectionFactory` factory dispatch 改写(移除 LINGS-M01 抛点,3 分支全实现)+ `McpErrorCodes` 扩 `LINGS_M03` + `TestMcpHttpServer` / `TestMcpSseServer` fixtures(sysprop 控制 push/close/malformed)~~ | ~~5 + 5(2 新 fixtures)~~ | ~~LINGS-M03 (HTTP upgrade / SSE event format)~~ | **✅ 已合**(2026-09-23,481 tests 0 fail / R-13 0 binary delta) |
 | 7 | **#022** | `spring-ai-annotation-tool` | §6.5 (3) | `@AgentTool` 注解(复用 spring-ai `@Tool` 因 spring-ai-bom 已锁)+ `SpringAiToolAdapter` + `AgentToolScanner`(`ApplicationContextAware`)+ `JsonArgsConverter` | 5 | LINGS-T02 (反射调用失败) | 依赖 spring-ai-bom |
 | 8 | **#023** | `delegate-sub-agent` | §6.6 + §6.6.1 | `SubAgentType` enum + `DelegateTool` + `DelegateProps` + `TypeConfig` + §6.6.1 字段级继承(`AgentConfig.toBuilder()` 合并 identity / instructions / memory) | 5–6 | LINGS-D01 (sub-agent 配置缺失) | 依赖 AgentFactory + Agent 已就位 |
 
-**统计**:8 个 Story / 5 已合(#020a + #020b + #020c + #021a + #021b)/ 3 待补 / ~41 个新文件 / ~7 个新 ErrorCode / 实际 +450 测试 case(401 → 440 → 476 累加)。
+**统计**:8 个 Story / 6 已合(#020a + #020b + #020c + #021a + #021b + #021c)/ 2 待补 / ~46 个新文件 / ~7 个新 ErrorCode / 实际 +531 测试 case(401 → 440 → 481 累加,+80 新 case 由 #021c 贡献)。
 
 ### 实施顺序建议(支持并行)
 
 ```
 主链(必须顺序): ✅ #020a → ✅ #020b → ✅ #020c   (Skill 3 件套 ✅ 主链收官)
 并行支链(与主链无依赖):
-  支链 A: ✅ #021a → ✅ #021b → #021c   (MCP,#021a/#021b 已合,#021c 走 SSE + streamable HTTP + factory dispatch 全实现)
+  支链 A: ✅ #021a → ✅ #021b → ✅ #021c   (MCP,3 件全合 🎉 — stdio / tool-adapter / SSE+HTTP 全上线)
   支链 B: #022                       (Spring AI,可与 #020 / #021 并行)
   支链 C: #023                       (Sub-agent,可与 #020 / #021 / #022 并行)
 ```
@@ -132,6 +133,6 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 ## 🎯 实施节奏建议
 
 1. **本周(2026-09-22 周)**:Story #009d + Story #018 文档同步已完成(本文件 + 配套 4 件套 dsync)
-2. **2026-09-23 起**:Story #019 + #020a + #020b + #020c + #021a + #021b 已合(PR #26/#27/#28/#29/#31),Skill 系统主链收官,MCP 支链 A 2/3 完成;继续按 MCP 路径 #021c → #022 → #023 推进;并行启动 #022 / #023 各自 spec.md
+2. **2026-09-23 起**:Story #019 + #020a + #020b + #020c + #021a + #021b + #021c 已合,Skill 系统主链收官,MCP 支链 A 3/3 完成 🎉;继续按 #022 / #023 推进;并行启动 #022 / #023 各自 spec.md
 3. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
 4. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整
