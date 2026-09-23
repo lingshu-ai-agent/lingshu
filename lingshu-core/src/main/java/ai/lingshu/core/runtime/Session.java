@@ -28,4 +28,22 @@ public interface Session {
 
     /** Take a snapshot suitable for {@link ai.lingshu.core.slot.SessionStore#save}. */
     Checkpoint checkpoint();
+
+    /**
+     * 🆕 Story #018 — Atomically replace the conversation history with the given compacted
+     * list. Used by {@code TruncatingCompactor} to apply sliding-window cuts and tool-result
+     * truncation. Implementations must serialize concurrent calls (e.g. via the same
+     * internal lock that guards {@link #history()} mutations).
+     *
+     * <p>The default implementation throws {@link UnsupportedOperationException} for sessions
+     * that don't support compaction (e.g. read-only / store-backed implementations).
+     *
+     * @param newHistory the new history list; caller-owned, Session takes ownership after call;
+     *                   must not be {@code null}
+     * @throws UnsupportedOperationException if this session doesn't support compaction
+     */
+    default void compact(List<Message> newHistory) {
+        throw new UnsupportedOperationException(
+            "Session " + getClass().getSimpleName() + " does not support compaction");
+    }
 }

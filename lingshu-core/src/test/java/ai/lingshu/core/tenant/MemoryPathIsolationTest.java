@@ -51,7 +51,8 @@ class MemoryPathIsolationTest {
                 Collections.<String>emptyList()),
             null,                                       // a2aTransport
             null,                                       // tenants
-            AgentConfig.A2a.defaults());                // a2a (Story #009)
+            AgentConfig.A2a.defaults(),                 // a2a (Story #009)
+            AgentConfig.CompactorConfig.defaults());     // compactorConfig (Story #018)
     }
 
     @Test
