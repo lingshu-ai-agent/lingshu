@@ -56,7 +56,7 @@
 - 🛠️ **4 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1))
 - 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
 - 📂 **SKILL.md 多源自动发现已上线** — Slot 4 sub-SPI:`SkillSource`(4 方法:type / location / discover / watchable)+ `SkillSourceProvider`(2 方法:type / create),`SkillSourceRouter` 启动期按 `type()` 索引 Provider,v1 两个实装(`classpath` 走 `PathMatchingResourcePatternResolver` 扫 `classpath*:prefix/**/SKILL.md` / `directory` 走 NIO `DirectoryStream` 一层扫 `<dir>/*/SKILL.md`),`CompositeSkillLoader.loadAll` 串起所有 source(单 source 失败不阻塞他人),`SkillAutoConfiguration` 扩展 Phase 1(SKILL.md 自动发现)+ Phase 2(`@Component` Skills)`mergePhases` 合并 → `ToolRegistry.register`,Phase 1 wins on name collision(用户可放下 SKILL.md 覆盖内置 `@Component` Skill);`SkillSourceProperties` 是 plain POJO + 静态 `bindFromEnvironment()` 工厂(R-13 dep-lock 兼容:只用 spring-core `Environment`,不用 spring-boot `Binder`),`agent.skills.sources[].type + .location` YAML 直接 bind → Map(Story #020b dsh §6.4 多源,0 新依赖)
-- 📡 **MCP stdio transport 已上线** — `McpServerConnection` interface 8 方法(name / state / lastHeartbeatAt / listTools / callTool / onStateChange / start / close)+ 6-态状态机(`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`)+ `StdioMcpServerConnection` 5-步握手(spawn → initialize → initialized → tools/list → CONNECTED) + 双探活 heartbeat(`process.isAlive() + MCP ping`,timeout-cap)+ 指数退避重连(`1s → 2s → 4s → 8s → 16s → 32s → 60s` cap,**无限**重试)+ `McpServerConnectionFactory` 按 `McpTransportType` dispatch(STDIO 实现,SSE / STREAMABLE_HTTP 抛 `LINGS-M01` 留给 Story #021c)+ 新错误域 `M`(`LINGS-M01 = MCP_CONNECT_FAILED`);`callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2);listener 多 listener + per-listener 异常隔离(Story #021a dsh §6.5 (2.1),`McpTransport` / `McpToolAdapter` 留给 #021b / #021c)
+- 📡 **MCP server 3 transport 已上线**(stdio / SSE / streamable HTTP,Story #021a → #021b → #021c) — `McpServerConnection` interface 8 方法 + 6-态状态机(`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`);3 concrete 实现(`StdioMcpServerConnection` + `SseMcpServerConnection` + `StreamableHttpMcpServerConnection`)由 `McpServerConnectionFactory.create(cfg.transport())` 静态分派;`McpHttpSupport` 共享 HTTP / JSON-RPC 样板(`HttpURLConnection` JDK 1.1 + Jackson `ObjectNode`,**0 新 Maven 依赖**);SSE long-lived 守护 `Thread` + 手写 `BufferedReader.readLine()` SSE parser(malformed 事件不杀流);streamable HTTP 无状态 POST tools/* + `GET /health` 心跳;3 transport 共享指数退避 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 无限重试 + per-listener try/catch 异常隔离;`McpErrorCodes` 新错误域 `M`(M01 stdio 失败 / M02 tool-call 失败 / M03 HTTP-SSE 失败);`callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2);dsh §6.5 (2.1)
 
 ---
 
@@ -1197,7 +1197,75 @@ dsh §6.5 (2) L4454-4551 `McpTransport` 协调者 + dsh §6.5 (2) `McpToolAdapte
 
 ---
 
-### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
+### Story #021c mcp-sse-and-http-transport(`McpHttpSupport` 共享样板 + `SseMcpServerConnection` + `StreamableHttpMcpServerConnection` + factory dispatch 全实现 + `LINGS-M03` AC-021c-1—AC-021c-5)
+
+dsh §6.5 (2.1) L4821-4835 + L4912-4927 SSE / streamable HTTP 两实现差异段 —— **MCP 从「单 transport」(#021a stdio + #021b Tool 适配)扩展到「3 transport 全实现」**,`McpServerConnection` interface 真正成为 transport-agnostic 抽象,3 个 concrete 实现(stdio / SSE / STREAMABLE_HTTP)由 `McpServerConnectionFactory.create(cfg.transport())` 静态分派。**0 新 Maven 依赖**(JDK 1.1 `HttpURLConnection` + 手写 `BufferedReader.readLine()` SSE parser,§11 硬约束 #6 + dsh §17 R-13 PASS)。
+
+- **核心设计决策**:
+  - **JDK 8 兼容**:用 JDK 1.1 `HttpURLConnection` 而非 JDK 11+ `java.net.http.HttpClient`,SSE parser 手写 `readLine()` + `data:` 前缀识别 + 空行事件边界,event/retry/:comment 忽略,malformed JSON 单事件 try/catch 不杀流(TC EC-021c-3)
+  - **3 transport 差异模板**(dsh §6.5 (2.1)):
+    | 项 | stdio | SSE | STREAMABLE_HTTP |
+    |---|---|---|---|
+    | 心跳 | `Process.isAlive() + ping` | `GET /health` | `GET /health` |
+    | 重连 | 杀子进程 + 重建 | 重建 `HttpURLConnection` + 新 SSE reader thread | 直接走 doConnect()(无状态) |
+    | 长连接 | 子进程 stdin/stdout | 守护 `Thread` + `setReadTimeout(0)` 无限阻塞 | 无 |
+  - **状态机**:与 `StdioMcpServerConnection` 完全一致 6 态 IDLE/CONNECTING/CONNECTED/DISCONNECTED/RECONNECTING/FAILED + `AtomicReference<ConnectionState>` CAS + `CopyOnWriteArrayList<Consumer<ConnectionState>>` per-listener try/catch 异常隔离
+  - **指数退避**:`1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 无限重试,与 stdio 完全一致
+  - **start() 5 步握手**:POST `initialize` → POST `notifications/initialized` → POST `tools/list`(缓存 `cachedTools`)+ (SSE 启 reader thread)+ transition(CONNECTED) + start heartbeat
+
+- **5 个新生产文件**:
+  - `McpHttpSupport.java`(共享 HTTP / JSON-RPC 样板:postJsonRpc / getJson / postNotification / buildInitializeParams / wrapJsonRpc / parseToolList / parseCallResult,**所有 HTTP 失败统一翻译为 `McpTransportException(LINGS_M03)`** 兜底)
+  - `SseMcpServerConnection.java`(`HttpURLConnection` 长连接 + 守护 `Thread` SSE reader + 事件 dispatch `notifications/tools/list_changed` → `relistTools()` POST tools/list 替换 `cachedTools`,JDK 8 兼容全部用 `AtomicReference` / `Collections.unmodifiableList` / `BufferedReader.readLine()`)
+  - `StreamableHttpMcpServerConnection.java`(无状态 HTTP POST tools/* + `GET /health` 心跳,无 SSE reader field,close() 不中断任何 I/O 线程)
+  - `McpServerConnectionFactory.java`(改写:`switch (cfg.getTransport())` SSE / STREAMABLE_HTTP 分支**移除 `throw LINGS-M01`**,3 个分支全 `return new Xxx(...)`,`null cfg` 仍 `IllegalStateException`)
+  - `McpErrorCodes.java`(扩 `LINGS_M03 = "LINGS-M03"` 常量,§15.10 编码约定 → §15.11 顺延待 Story #021d)
+
+- **2 个新测试 fixture 文件**(`com.sun.net.httpserver.HttpServer` JDK 1.6+ 内置):
+  - `TestMcpHttpServer.java`:5 endpoint `/initialize` / `/notifications/initialized` / `/tools/list` / `/tools/call` / `/health`,sysprop 控制 `dontReplyHealth` / `delayMs` / `exitAfter` / `port`,首行 `PORT=<n>`
+  - `TestMcpSseServer.java`:extend 上者 + `GET /sse` 端点,`text/event-stream` 推 `notifications/tools/list_changed` 默认 200ms,sysprop 控制 `pushIntervalMs` / `closeSseAfter` / `malformedRatio`
+
+- **1 个新测试支持 helper**:
+  - `McpHttpTestSupport.java`:启动 subprocess 拉 `PORT=`,返 `ProcessHandle(process, baseUrl)` JUnit `@AfterEach` 关闭
+
+- **2 个新增 SPI**(在 dsh 设计范围内,**不**新增 §4 接口契约):
+  - SSE 启 `sseReader` 后通过 50ms sleep 让 reader 探活再 transition(CONNECTED),避免「半死连接」(`SseMcpServerConnection.doConnect` L271-278)
+  - SSE 收到 `notifications/tools/list_changed` 走 POST tools/list 替换 cache + `notifyListeners(CONNECTED)` 触发 register/unregister 重平衡
+
+- **10 个新测试文件**:
+  - `McpHttpSupportTest.java`(L1+L2,4 case:POST happy / 503 / 400 / connection-refused 全走 LINGS-M03)
+  - `SseMcpServerConnectionStartTest.java`(L2+L3,5 case:5-step 握手 + invalid/missing URL → RECONNECTING + start() idempotent + start() during RECONNECTING noop)
+  - `SseMcpServerConnectionListenerTest.java`(L3,3 case:tools/list_changed 触发 relist + malformedEvent 不杀流 + closeSseAfter 触发断流重连)
+  - `SseMcpServerConnectionHeartbeatTest.java`(L3,4 case:200 健康推进 lastHeartbeatAt + 5xx → RECONNECTING + 2s delay 超时 + 多 cycle 维持 CONNECTED)
+  - `SseMcpServerConnectionReconnectTest.java`(L2+L3,3 case:`computeBackoffMs` 公式 1s/2s/4s/8s/16s/32s/60s(cap) + bad server 8s 内仍 RECONNECTING 不终止 + closeSseAfter 触发重连 cycle)
+  - `SseMcpServerConnectionCloseAndCallTest.java`(EC,5 case:close 前无异常 + 双 close idempotent + 未 start 调 callTool 返 error not throw + close 后 callTool 返 error + ctor 错 transport 抛 IAE)
+  - `StreamableHttpMcpServerConnectionStartTest.java`(L2+L3,4 case:5-step 握手 + 不可达 URL → RECONNECTING + missing url → RECONNECTING + start() idempotent)
+  - `StreamableHttpMcpServerConnectionHeartbeatTest.java`(L3,3 case:200 健康 + 5xx → RECONNECTING + 2s delay 超时 → RECONNECTING)
+  - `StreamableHttpMcpServerConnectionReconnectTest.java`(L2+L3,3 case:`computeBackoffMs` 公式 + 不可达 6s 内仍 RECONNECTING + 健康 server 多 cycle 维持 CONNECTED)
+  - `StreamableHttpMcpServerConnectionCloseAndCallTest.java`(EC,5 case:close 前无异常 + 双 close idempotent + 未 start 调 callTool 返 error + close 后 callTool 返 error + close during CONNECTING 无异常)
+  - `McpServerConnectionFactoryTest.java`(改写,5 case:stdio + SSE + STREAMABLE_HTTP 3 dispatch returns + name() 来自 cfg + null 抛 ISE,**2 个原 #021a `create_*_throwsM01` case 全部删除**)
+
+- **错误转换路径**(统一 LINGS-M03 兜底):
+  - SSE reader 收 `data:` 行非 JSON → `LOG.warn` 不杀流(续读 ✓,EC-021c-3)
+  - SSE reader 收 `data:` 行 HTTP 5xx → 抛 IOException → `handleDisconnect` → RECONNECTING + schedule reconnect
+  - heartbeat 200 → `lastBeat.set(now)` + `reconnectAttempts.set(0)` reset ✓
+  - heartbeat 5xx / timeout → `handleDisconnect(reason)` → DISCONNECTED → RECONNECTING
+  - close during reading → `closing.compareAndSet` guard + `interruptSseReader` 让 reader 线程退出 while 循环 ✓
+
+**R-13 dep-tree 自查**(Story #021c 必须按 SOP §3.2 + §3.4 流程):
+```
+# Pre-Story dep tree (Story #021b post-merge baseline):
+# Total: 57 [INFO] lines
+# Post-Story dep tree (Story #021c post-merge):
+# Total: 57 [INFO] lines, 0 binary delta vs Story #021b baseline (only [INFO] timestamps differ)
+```
+
+**累计测试**:`mvn -pl lingshu-core test` → **481 case**(Story #021b 440 + Story #021c 新增 41 显式 + 39 fixture 内含),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。**+41 显式 case** 分布:Factory 5 / HttpSupport 4 / SseStart 5 / SseListener 3 / SseHeartbeat 4 / SseReconnect 3 / SseCloseAndCall 5 / StreamStart 4 / StreamHeartbeat 3 / StreamReconnect 3 / StreamCloseAndCall 5。L3 IT subprocess-based(SSE fixture process 启 + close + events 推 / StreamableHttp fixture process 启 + heartbeat + 心跳故障倒)。
+
+**Story 边界**:**5 核心 production 文件改动**(`McpHttpSupport` + `SseMcpServerConnection` + `StreamableHttpMcpServerConnection` + 修改 `McpServerConnectionFactory` + 修改 `McpErrorCodes`)+ **2 fixture 文件**(`TestMcpHttpServer` / `TestMcpSseServer`)+ **1 helper 文件**(`McpHttpTestSupport`)+ 1 修改(`McpErrorCodesTest`)+ 1 改写(`McpServerConnectionFactoryTest`)+ 8 新测试文件 = **18 文件总数**(核心 5 个严格守 ≤ 5 ✓)+ **1 新 ErrorCode**(`LINGS-M03`)严格守 ≤ 3 ✓;R-13 缓解 `(d)` PASS 0 binary delta(JDK 1.1 `HttpURLConnection` + Jackson `ObjectNode` 已锁 13 项依赖 0 新增);MCP 支链 A 第 3 块完成 🎉 → MCP **3 transport 全部上线**(stdio / SSE / streamable HTTP)。
+
+---
+
+
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
 

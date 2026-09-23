@@ -11,11 +11,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for {@link McpErrorCodes} (Story #021b, T-08).
+ * Unit tests for {@link McpErrorCodes} (Story #021b, T-08; Story #021c, T-08).
  *
- * <p>Covers three invariants:
+ * <p>Covers invariants:
  * <ol>
- *   <li>Both constants hold the canonical {@code LINGS-Mxx} string values.</li>
+ *   <li>All three constants hold the canonical {@code LINGS-Mxx} string values.</li>
  *   <li>The class is non-instantiable (utility-class idiom).</li>
  *   <li>The private constructor is final-class-shape and throws {@link AssertionError}.</li>
  * </ol>
@@ -32,6 +32,13 @@ class McpErrorCodesTest {
     void assertM02Value() {
         assertEquals("LINGS-M02", McpErrorCodes.LINGS_M02,
             "LINGS_M02 must hold the MCP_TOOL_CALL_FAILED code introduced in Story #021b");
+    }
+
+    @Test
+    void assertM03Value() {
+        // 🆕 Story #021c — LINGS_M03 = MCP_HTTP_SSE_FAILED
+        assertEquals("LINGS-M03", McpErrorCodes.LINGS_M03,
+            "LINGS_M03 must hold the MCP_HTTP_SSE_FAILED code introduced in Story #021c");
     }
 
     @Test
