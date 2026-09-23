@@ -131,4 +131,36 @@ public interface ToolRegistry {
      * @throws IllegalArgumentException if no tool is registered under {@code name}
      */
     Tool findByName(String name);
+
+    /**
+     * 🆕 Story #021b — Unregister a previously-registered tool by name.
+     *
+     * <p>Used by {@code McpTransport#onConnectionStateChange} when a connection goes
+     * {@link ai.lingshu.core.mcp.ConnectionState#DISCONNECTED} /
+     * {@link ai.lingshu.core.mcp.ConnectionState#FAILED} — stale MCP tools must be removed
+     * so {@link ToolExecutor#dispatch} does not route to a dead {@code McpToolAdapter}
+     * (dsh §6.5 (2) L4536-4539).
+     *
+     * <p><b>Symmetric contract</b> with {@link #register(Tool)}: a name registered via
+     * {@code register} must be removable via {@code unregister} with the same key.
+     *
+     * <p><b>No-op semantics</b>: removing a name that was never registered (or already
+     * removed) is a silent no-op (returns {@code false}). This avoids forcing the MCP
+     * state-machine listener to track prior registration state across reconnects
+     * (Story #021a dsh §6.5 (2.1) L4536).
+     *
+     * <p><b>Thread-safe</b> — implementations MUST support concurrent calls from
+     * {@code McpTransport}'s listener thread + the Tool dispatch threads.
+     *
+     * <p><b>Skill dual-index</b> — if the unregistered tool was also a {@link Skill},
+     * the parallel skill index must be cleared in lock-step (mirrors
+     * {@link #register(Tool)}).
+     *
+     * @param name the tool's {@link Tool#name()} (with namespace, e.g.
+     *             {@code "github:search_repos"})
+     * @return {@code true} if a tool was removed; {@code false} if the name was not
+     *         registered, or {@code name} was {@code null}
+     * @since 1.0.0
+     */
+    boolean unregister(String name);
 }

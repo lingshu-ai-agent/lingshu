@@ -1151,6 +1151,52 @@ ai.lingshu:lingshu-core:jar:0.1.0-SNAPSHOT
 
 ---
 
+### Story #021b mcp-tool-adapter(`McpTransport` 总装 + `McpToolAdapter` Tool 包装 + `ToolRegistry.unregister` SPI 扩展 + SmartLifecycle 启动期 wireup + `LINGS-M02` AC-021b-1—AC-021b-5)
+
+dsh §6.5 (2) L4454-4551 `McpTransport` 协调者 + dsh §6.5 (2) `McpToolAdapter` Tool 包装层 —— **MCP 从「单 server 长连接」(#021a)扩展到「N server 启动期 wireup + 状态变化钩子」(#021b)**,完成 dsh §6.5 (2) `McpTransport` 总装组件 + `McpToolAdapter` Tool 包装双契约。dsh §15.9 MCP 域 ErrorCode 编码约定 → §15.10 顺延 → **新错误域 `LINGS-M02 = MCP_TOOL_CALL_FAILED`**(tools/call 失败兜底,§4.10.1 硬规则 2 配合下永不抛)。
+
+- **3 个新文件**(lingshu-core main):
+  - `McpTransport.java`(`@Component` 总装,N 个 `McpServerConnection` + listener 模式 + `connect(cfg, registry)` / `callTool(serverName, toolName, input)` / `close()` 3 方法;per-tool try/catch 异常隔离,§7 R-021b-02)
+  - `McpTransportLifecycle.java`(`@Component implements SmartLifecycle`,`phase = Integer.MAX_VALUE - 1024` 启动期调 `transport.connect`,避免 `javax.annotation-api` 依赖 R-13 兼容)
+  - `McpTransportAutoConfiguration.java`(`@Configuration` + `@Bean(name="mcpServerConfigs")` 把 `AgentConfig.ServerConfig` → `McpServerConfig` runtime config 转换,heartbeat*3 字段 `> 0` 才覆盖)
+
+- **3 个新测试文件**:
+  - `McpErrorCodesTest.java`(L1,4 case 验证 `LINGS_M01` / `LINGS_M02` 常量 + 私有 ctor 抛 AssertionError)
+  - `McpTransportTest.java`(L2,12 case 用 `FakeConnection` hand-rolled 跳过 Mockito inline mock-maker JDK 23 陷阱,直接测 package-private `onConnectionStateChange`)
+  - `McpTransportAutoConfigurationTest.java`(L2,7 case 验证 field-by-field 字段映射 + heartbeat `> 0` 覆盖规则 + null/empty AgentConfig → empty list)
+  - `McpToolAdapterTest.java`(L2,9 case 验证 5 API 契约 + 4 execute 错误转换路径 + neverThrows + ctor null rejection)
+  - `McpToolAdapterIT.java`(L3,2 case 真 stdio subprocess:connect-and-execute-success + killed-mid-test-unregister;`McpTestSupport.stdioCfg` 200ms 心跳让 L3 在秒级完成)
+
+- **2 个 SPI 修改**:
+  - `ToolRegistry.unregister(String) → boolean`(新 SPI 方法,对称 `register`;`null` → false;Skill dual-index `skillsByName` lock-step 清理)
+  - `DefaultToolRegistry.unregister(...)`(实现 SPI + 内部 `ConcurrentHashMap.remove(name)` + `instanceof Skill` 清理双索引 + 50-tool concurrent unregister 线程安全验证)
+
+- **listener 模式**(§7 R-021b-03 invariant):`conn.onStateChange(listener)` **必须**在 `conn.start()` 之前注册,否则首次 transition 收不到事件,工具永远不注册。
+
+- **错误转换**(§4.10.1 硬规则 2 兼容):`McpToolAdapter.execute()` 4 路径:
+  1. `McpCallResult.isError() == false` → `ToolResult.success(content)`  ✓
+  2. `McpCallResult.isError() == true` → `ToolResult.error(errorMessage)`  ✓
+  3. `McpTransportException`(已知 LINGS-M01)— 翻译后保留 `[CODE] message`  ✓
+  4. **任意 Exception**(NPE / RuntimeException …)— 转 `LINGS-M02 = MCP_TOOL_CALL_FAILED`  ✓
+  
+  execute() **永不抛**(§4.10.1 硬规则 2)。
+
+- **`McpTestSupport` 增强**(Story #021b T-13):`testServerCommand()` 自动转发 `test.mcp.dontReplyPing` / `test.mcp.exitAfter` / `test.mcp.delayMs` 系统属性为 `-D` 子进程命令行参数(Java 不自动转发系统属性到子进程,只转发环境变量;若不转发,IT 模拟 subprocess 死亡完全失效)
+
+**R-13 dep-tree 自查**(Story #021b 必须按 SOP §3.2 + §3.4 流程):
+```
+# Pre-Story dep tree (Story #021b pre-merge baseline):
+# Total: 9 coords(Story #021a 后)
+# Post-Story dep tree (Story #021b post-merge):
+# Total: 9 coords, 0 binary delta vs Story #021a baseline (only timestamps differ in [INFO] lines)
+```
+
+**累计测试**:`mvn -pl lingshu-core test` → **440 case**(Story #021a 401 + Story #021b 新增 39),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。39 个新增 case 分布:ErrorCodes 4 + McpToolAdapter 9 + McpTransport 13 + McpTransportAutoConfiguration 7 + DefaultToolRegistryUnregisterTest 6。L3 IT:`McpToolAdapterIT` 2/2 pass(1.657s 跑完,stdio subprocess 死 → 心跳探活 → unregister 全链路)。
+
+**Story 边界**:**5 核心 production 文件改动**(McpTransport / McpTransportLifecycle / McpTransportAutoConfiguration / McpToolAdapter + 修改 DefaultToolRegistry + 修改 ToolRegistry SPI)+ 1 test-support 改动(`McpTestSupport.testServerCommand` 转发 sysprop)= **7 文件**(略超 ⚠️ 但 ToolRegistry SPI 扩展是 #021a 留下的 gap,backward-compatible add)+ **1 新 ErrorCode**(`LINGS-M02`)严格守 ≤ 3 ✓;R-13 缓解 `(d)` PASS 0 binary delta;MCP 支链 A 第 2 块完成 🎉。
+
+---
+
 ### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。

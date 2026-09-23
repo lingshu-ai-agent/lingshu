@@ -134,6 +134,42 @@ public class DefaultToolRegistry implements ToolRegistry {
         return t;
     }
 
+    /**
+     * 🆕 Story #021b — Remove a tool by name; mirrors {@link #register(Tool)}.
+     *
+     * <p><b>No-op semantics</b> — removing a name that was never registered returns
+     * {@code false} without throwing. This keeps the MCP {@code onConnectionStateChange}
+     * listener body simple (plan §7 R-021b-02): it does not need to track prior
+     * registration state across reconnects.
+     *
+     * <p><b>Skill dual-index cleanup</b> — if the removed tool was a {@link Skill},
+     * the parallel {@code skillsByName} map is also cleared so {@link #findSkill}
+     * returns {@code null} after this call.
+     *
+     * <p><b>Thread-safe</b> — {@link ConcurrentHashMap#remove(Object)} is atomic;
+     * the {@code instanceof Skill} check is best-effort race-free: a concurrent
+     * {@code register(Skill)} between {@code registry.remove} and
+     * {@code skillsByName.remove} is acceptable — the registration will win and
+     * {@code findSkill} will return the new tool. {@link #register} uses
+     * {@code putIfAbsent} so first-write-wins (Story #020a semantics).
+     */
+    @Override
+    public boolean unregister(String name) {
+        if (name == null) {
+            return false;
+        }
+        Tool removed = registry.remove(name);
+        if (removed == null) {
+            return false;
+        }
+        if (removed instanceof Skill) {
+            skillsByName.remove(name);
+        }
+        LOG.info("Unregistered tool: name={} class={}",
+            name, removed.getClass().getSimpleName());
+        return true;
+    }
+
     // ── test-only access ─────────────────────────────────────────────────
 
     /**

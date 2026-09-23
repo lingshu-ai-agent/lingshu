@@ -28,6 +28,14 @@ final class McpTestSupport {
      * @return a {@code List<String>} suitable for
      *         {@link ProcessBuilder#command(List)}. Index 0 is the
      *         {@code java} executable; the rest is classpath + main class.
+     *
+     * <p><b>Subprocess system-property forwarding (Story #021b, T-13)</b> —
+     * Java does not automatically forward the parent JVM's system properties
+     * to child processes (only the environment), so the {@code test.mcp.*}
+     * switches the fake server reads at startup must be added as {@code -D}
+     * flags on the command line. This lets tests control the fake subprocess
+     * (e.g. simulate death via {@code test.mcp.exitAfter}) without forking
+     * helper classes.
      */
     static List<String> testServerCommand() {
         String javaHome = System.getProperty("java.home");
@@ -37,6 +45,15 @@ final class McpTestSupport {
         cmd.add(javaBin);
         cmd.add("-cp");
         cmd.add(cp);
+        // Forward test.mcp.* switches that the fake server reads at startup.
+        for (String key : new String[]{"test.mcp.dontReplyPing",
+                                       "test.mcp.exitAfter",
+                                       "test.mcp.delayMs"}) {
+            String v = System.getProperty(key);
+            if (v != null) {
+                cmd.add("-D" + key + "=" + v);
+            }
+        }
         cmd.add("ai.lingshu.core.mcp.fixture.TestMcpServer");
         return Collections.unmodifiableList(cmd);
     }
