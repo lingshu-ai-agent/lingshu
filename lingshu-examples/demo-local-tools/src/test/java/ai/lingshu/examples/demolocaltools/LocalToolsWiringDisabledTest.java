@@ -55,13 +55,15 @@ class LocalToolsWiringDisabledTest {
     }
 
     @Test
-    @DisplayName("ToolRegistry is empty when wiring is disabled")
+    @DisplayName("Tool registry has zero local Tools when wiring is disabled (Skills may still be registered)")
     void toolRegistry_isEmpty() {
-        // Engine dispatcher would translate null lookups into
-        // ToolException.ToolNotFoundException. The ToolResult error path is
-        // exercised in lingshu-core unit tests; here we only assert the
-        // public SPI contract.
-        assertThat(toolRegistry.names()).isEmpty();
+        // 🆕 Story #020b — agent.tools.enabled=false disables LocalToolsAutoConfiguration only.
+        // SkillAutoConfiguration (separate, governs Skills) is unaffected and may still register
+        // @Component-typed Skills (e.g. CommitSkill). We assert the 4-Tool side is empty
+        // and rely on skillNames() to expose Skills separately.
+        java.util.Set<String> toolsOnly = new java.util.HashSet<>(toolRegistry.names());
+        toolsOnly.removeAll(toolRegistry.skillNames());
+        assertThat(toolsOnly).isEmpty();
         assertThat(toolRegistry.lookup("Bash")).isNull();
         assertThat(toolRegistry.lookup("Read")).isNull();
         assertThat(toolRegistry.lookup("Edit")).isNull();
