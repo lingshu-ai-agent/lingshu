@@ -34,7 +34,9 @@ class LocalAgentCardGeneratorTest {
             AgentConfig.Memory.defaults(),
             "default",                        // a2aTransport
             null,                              // tenants
-            AgentConfig.A2a.defaults());       // a2a
+            AgentConfig.A2a.defaults(),       // a2a
+            AgentConfig.CompactorConfig.defaults(),  // 🆕 Story #018
+            AgentConfig.ToolsConfig.defaults());     // 🆕 Story #019
     }
 
     @Test

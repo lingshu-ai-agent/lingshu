@@ -9,6 +9,7 @@ import ai.lingshu.core.impl.runtime.AgentFactory;
 import ai.lingshu.core.impl.runtime.DefaultSession;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.ToolCall;
@@ -69,11 +70,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MaxStepsGuardTest {
 
     private DefaultToolExecutor toolExecutor;
+    private DefaultToolRegistry toolRegistry;
     private ExecutorService pool;
 
     @BeforeEach
     void setUp() {
-        toolExecutor = new DefaultToolExecutor(new AllowAllPermissionPolicy());
+        toolRegistry = new DefaultToolRegistry();
+        toolExecutor = new DefaultToolExecutor(new AllowAllPermissionPolicy(), toolRegistry);
         pool = Executors.newFixedThreadPool(4, r -> {
             Thread t = new Thread(r, "lingshu-maxsteps-" + System.nanoTime());
             t.setDaemon(true);
@@ -214,7 +217,7 @@ class MaxStepsGuardTest {
         // 3 tool-call responses — engine enters for-loop 3 times, each iteration ends with
         // ObservationAppended, then loop hits the bound at step=3 (no break, last has tool calls)
         // → MaxStepsExceeded + TurnCompleted(END_TURN)
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         EchoLlmProvider llm = toolCallLlm(3);
         AgentConfig cfg = configWithMaxSteps(1, 5, 3);
         TurnContext ctx = newTurn(cfg);
@@ -254,7 +257,7 @@ class MaxStepsGuardTest {
         // 3 tool-call + 1 END_TURN — engine enters for-loop 3 times, after 3rd ObservationAppended
         // the LLM returns END_TURN → break at L162-165 → maxStepsHit=false → no MaxStepsExceeded.
         // Total events: 3×(RS+TC+OA) + 1 TurnCompleted(END_TURN) = 10
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         EchoLlmProvider llm = toolCallThenEndTurn(3);
         AgentConfig cfg = configWithMaxSteps(1, 5, 5);
         TurnContext ctx = newTurn(cfg);
@@ -280,7 +283,7 @@ class MaxStepsGuardTest {
         // reactMaxSteps=1 — engine enters for-loop once, executes 1 tool call, ObservationAppended,
         // then for-loop bound (step==maxSteps==1) → MaxStepsExceeded(1) → TurnCompleted(END_TURN)
         // Total events: 1×(RS+TC+OA) + 1 MaxStepsExceeded + 1 TurnCompleted = 5
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         EchoLlmProvider llm = toolCallLlm(1);
         AgentConfig cfg = configWithMaxSteps(1, 5, 1);
         TurnContext ctx = newTurn(cfg);
@@ -329,7 +332,7 @@ class MaxStepsGuardTest {
     void maxSteps2_llmThrowsFirstStep_errorPathNoMaxStepsExceeded() {
         // LLM throws RuntimeException on first stream() call → catch at L184 emits ErrorEvent
         // + TurnCompleted(ERROR). No MaxStepsExceeded because exception path beats max-steps guard.
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         // Subclass EchoLlmProvider to throw on first stream() call.
         EchoLlmProvider llm = new EchoLlmProvider(Collections.singletonList(
             new LlmResponse("", Collections.singletonList(call("c1", "noop")),
@@ -371,7 +374,7 @@ class MaxStepsGuardTest {
         // Tool throws RuntimeException → ToolExecutor translates to ToolResult.error
         // (per LinearTurnEngine.runTurn Javadoc invariant) → engine continues to next step.
         // After 3 tool-call steps with tool error → MaxStepsExceeded(3) at end.
-        toolExecutor.register(new ThrowTool());
+        toolRegistry.register(new ThrowTool());
         EchoLlmProvider llm = toolCallLlm(3);
         AgentConfig cfg = configWithMaxSteps(1, 5, 3);
         TurnContext ctx = newTurn(cfg);
@@ -452,7 +455,7 @@ class MaxStepsGuardTest {
     void maxSteps3_eventOrder_maxStepsBeforeTurnCompleted_usageRefSame() {
         // Verify the 5th invariant (FR-005): MaxStepsExceeded is emitted BEFORE TurnCompleted
         // AND totalUsage is the SAME object reference (NFR-002 — 0 memory allocation).
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         EchoLlmProvider llm = toolCallLlm(3);
         AgentConfig cfg = configWithMaxSteps(1, 5, 3);
         TurnContext ctx = newTurn(cfg);
@@ -480,7 +483,7 @@ class MaxStepsGuardTest {
     void maxSteps10_cancellationMidPath_noMaxStepsExceeded() throws Exception {
         // Cancel BEFORE runTurn — engine emits TurnCompleted(CANCELLED) on first iteration head
         // check. No MaxStepsExceeded (cancellation beats max-steps guard).
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         EchoLlmProvider llm = toolCallLlm(10);   // never reached
         AgentConfig cfg = configWithMaxSteps(1, 5, 10);
         TurnContext ctx = newTurn(cfg);
@@ -505,7 +508,7 @@ class MaxStepsGuardTest {
         // runs BEFORE the step==maxSteps guard at L184 → maxStepsHit stays false.
         // Script: [toolCall, toolCall, endTurn] — step 3 returns END_TURN (no tool calls).
         // Expected: 2×(RS+TC+OA) + 1 RS(3,3) + 1 TurnCompleted(END_TURN) = 8 events
-        toolExecutor.register(new NoopTool());
+        toolRegistry.register(new NoopTool());
         EchoLlmProvider llm = new EchoLlmProvider(Arrays.asList(
             new LlmResponse("", Collections.singletonList(call("c1", "noop")),
                 StopReason.TOOL_USE, Usage.zero()),

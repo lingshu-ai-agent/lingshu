@@ -2,6 +2,7 @@ package ai.lingshu.core.impl.tool.local;
 
 import ai.lingshu.core.decision.Decision;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.slot.PermissionPolicy;
@@ -81,8 +82,9 @@ class BashToolTest {
         t.setProcessRunner(throwingRunner(new ToolException.PermissionDeniedException(
             "command 'rm' not in tenant whitelist")));
 
-        DefaultToolExecutor exec = new DefaultToolExecutor(allowAllPolicy());
-        exec.register(t);
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        DefaultToolExecutor exec = new DefaultToolExecutor(allowAllPolicy(), registry);
+        registry.register(t);
 
         ToolResult r = exec.dispatch(bashCall("Bash", "c1", "rm"), ctx(30));
 

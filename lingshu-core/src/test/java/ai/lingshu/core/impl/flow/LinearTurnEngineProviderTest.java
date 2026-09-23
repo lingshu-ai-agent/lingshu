@@ -61,7 +61,8 @@ class LinearTurnEngineProviderTest {
             @Override public String version() { return "1.0.0"; }
             @Override public ToolExecutor create(AgentConfig cfg) {
                 return new ai.lingshu.core.impl.tool.DefaultToolExecutor(
-                    new ai.lingshu.core.impl.permission.AllowAllPermissionPolicy());
+                    new ai.lingshu.core.impl.permission.AllowAllPermissionPolicy(),
+                    new ai.lingshu.core.impl.tool.DefaultToolRegistry());
             }
         };
     }

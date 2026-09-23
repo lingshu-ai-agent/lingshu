@@ -9,6 +9,7 @@ import ai.lingshu.core.impl.permission.AllowAllPermissionPolicy;
 import ai.lingshu.core.impl.runtime.DefaultSession;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.ToolCall;
@@ -62,8 +63,9 @@ class LocalToolsE2ETest {
         Files.write(file, content.getBytes(StandardCharsets.UTF_8));
 
         // 2. Default executor with a real ReadTool
-        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy());
-        toolExec.register(new ReadTool(new LocalToolProps(200_000, 1_000_000)));
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy(), registry);
+        registry.register(new ReadTool(new LocalToolProps(200_000, 1_000_000)));
 
         // 3. Scripted LLM: first call emits Read tool call, second emits END_TURN
         ObjectNode input = MAPPER.createObjectNode();

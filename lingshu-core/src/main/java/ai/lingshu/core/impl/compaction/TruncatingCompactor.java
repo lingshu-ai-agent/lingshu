@@ -7,7 +7,6 @@ import ai.lingshu.core.runtime.Session;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.slot.Compactor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -34,8 +33,16 @@ import java.util.List;
  * via {@link Session#compact(List)} which acquires the same internal lock as
  * {@link Session#history()} / {@code append(Message)} — a concurrent tool-result append
  * cannot interleave with a compactor swap.
+ *
+ * <p><b>Why not {@code @Component}:</b> {@code TruncatingCompactor} needs
+ * {@link CompactorProps} which is derived from {@link ai.lingshu.core.runtime.AgentConfig}
+ * — there is no per-process singleton {@code CompactorProps} bean. The {@link TruncatingCompactorProvider}
+ * is the sole construction site (via {@code Provider.create(config)}), so this class
+ * stays a plain Java class with no Spring annotation. Without this constraint,
+ * any Spring context that scans {@code ai.lingshu.core.impl.compaction} (e.g.
+ * {@code lingshu-examples/demo-engineer}) fails to start with
+ * {@code NoSuchBeanDefinitionException: CompactorProps}.
  */
-@Component
 @Slf4j
 public class TruncatingCompactor implements Compactor {
 

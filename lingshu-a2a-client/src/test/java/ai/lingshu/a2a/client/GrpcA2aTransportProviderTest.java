@@ -107,7 +107,9 @@ class GrpcA2aTransportProviderTest {
             AgentConfig.Memory.defaults(),
             "default",
             null,
-            AgentConfig.A2a.defaults()
+            AgentConfig.A2a.defaults(),
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults()
         );
     }
 
@@ -125,7 +127,9 @@ class GrpcA2aTransportProviderTest {
                 c.getA2a().getHost(),
                 c.getA2a().getPort(),
                 target,
-                c.getA2a().getCardTtl())
+                c.getA2a().getCardTtl()),
+            c.getCompactorConfig(),
+            c.getTools()
         );
     }
 }

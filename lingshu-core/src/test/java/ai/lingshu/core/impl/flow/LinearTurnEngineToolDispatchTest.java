@@ -9,6 +9,7 @@ import ai.lingshu.core.impl.permission.AllowAllPermissionPolicy;
 import ai.lingshu.core.impl.runtime.DefaultSession;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.ToolCall;
@@ -50,11 +51,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LinearTurnEngineToolDispatchTest {
 
     private DefaultToolExecutor toolExecutor;
+    private DefaultToolRegistry toolRegistry;
     private ExecutorService pool;
 
     @BeforeEach
     void setUp() {
-        toolExecutor = new DefaultToolExecutor(new AllowAllPermissionPolicy());
+        toolRegistry = new DefaultToolRegistry();
+        toolExecutor = new DefaultToolExecutor(new AllowAllPermissionPolicy(), toolRegistry);
         pool = Executors.newFixedThreadPool(8, r -> {
             Thread t = new Thread(r, "lingshu-test-" + System.nanoTime());
             t.setDaemon(true);
@@ -102,7 +105,7 @@ class LinearTurnEngineToolDispatchTest {
     @DisplayName("L2-001: engine_runsActionStep_executesToolCalls_endsWithTurnCompleted (regression US1)")
     void engine_runsActionStep_executesToolCalls_endsWithTurnCompleted() {
         // Register one tool, have LLM emit exactly 1 tool call then END_TURN
-        toolExecutor.register(new SleepTool("read_file", 10));
+        toolRegistry.register(new SleepTool("read_file", 10));
         LlmResponse toolCallResponse = new LlmResponse(
             "",                                  // text
             Arrays.asList(call("c1", "read_file")), // toolCalls
@@ -137,10 +140,10 @@ class LinearTurnEngineToolDispatchTest {
     void dispatchParallel_parallelism4_4toolsRunConcurrently() {
         // 4 tools each sleeping 200ms; serial would take ~800ms,
         // parallel=4 should take ~200-300ms (well under 800ms).
-        toolExecutor.register(new SleepTool("t1", 200));
-        toolExecutor.register(new SleepTool("t2", 200));
-        toolExecutor.register(new SleepTool("t3", 200));
-        toolExecutor.register(new SleepTool("t4", 200));
+        toolRegistry.register(new SleepTool("t1", 200));
+        toolRegistry.register(new SleepTool("t2", 200));
+        toolRegistry.register(new SleepTool("t3", 200));
+        toolRegistry.register(new SleepTool("t4", 200));
 
         LlmResponse fourCalls = new LlmResponse(
             "",
@@ -172,9 +175,9 @@ class LinearTurnEngineToolDispatchTest {
     @Test
     @DisplayName("L2-003: dispatchParallel_parallelism1_runsSerially")
     void dispatchParallel_parallelism1_runsSerially() {
-        toolExecutor.register(new SleepTool("t1", 100));
-        toolExecutor.register(new SleepTool("t2", 100));
-        toolExecutor.register(new SleepTool("t3", 100));
+        toolRegistry.register(new SleepTool("t1", 100));
+        toolRegistry.register(new SleepTool("t2", 100));
+        toolRegistry.register(new SleepTool("t3", 100));
 
         LlmResponse threeCalls = new LlmResponse(
             "",
@@ -207,9 +210,9 @@ class LinearTurnEngineToolDispatchTest {
         // dispatchParallel must return [t1-result, t2-result, t3-result] in LLM-return order.
         // We verify this indirectly: ToolResult[1] (t2) must be the slow one's content even though it
         // completes after ToolResult[2] (t3).
-        toolExecutor.register(new SleepTool("fast", 50));
-        toolExecutor.register(new SleepTool("slow", 300));
-        toolExecutor.register(new SleepTool("medium", 150));
+        toolRegistry.register(new SleepTool("fast", 50));
+        toolRegistry.register(new SleepTool("slow", 300));
+        toolRegistry.register(new SleepTool("medium", 150));
 
         LlmResponse threeCalls = new LlmResponse(
             "",
