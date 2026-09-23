@@ -5,7 +5,7 @@
 > **与 constitution.md 关系**:本文件是工程 tracker(可修改);`constitution.md` 是法律(不可改,改须走 RFC)。
 > **与 dsh_agent_design.md 关系**:dsh 是设计真理(只读);本文件是「哪些 dsh 章节已落地 / 哪些待 Story」的实施映射。
 > **创建日期**:2026-09-22 — Story #009d a2a-remote-schema-builder 已合入,扫 §6 关键实现发现 5 大块空白。
-> **更新日期**:2026-09-23 — Story #021c mcp-sse-and-http-transport 已合(481 tests 0 fail / R-13 0 binary delta / +LINGS-M03),MCP 支链 A 3/3 完成 🎉;下一步 #022 / #023 并行支链(Spring AI `@Tool` + Sub-agent delegate)。
+> **更新日期**:2026-09-24 — Roadmap 加 #009e a2a-remote-tool-wiring 单独 doc 改动(预 #022 / #023 之前):RemoteAgentTool 当前只在 `HttpJsonRpcA2aTransportAutoConfiguration` 暴露 + ToolRegistry 注册路径是隐式的(`LocalToolsAutoConfiguration.afterPropertiesSet()` 顺手 `@Lazy Map<String, Tool>` 捞),grpc / in-process transport 下 LLM 视角下根本没有 `remote_agent` Tool,违反 dsh §5.6.2 L2366「§6.5 同款注册路径」契约;**下一步 = #009e → #022 / #023 并行**。
 > **下次 review**:每个 Story 合入后更新「已完成」段。
 
 ---
@@ -48,10 +48,11 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 ### 编号约定
 
 - 复用 #NNN 编号空间,**不**新开子序列
-- #018—#023 为本批新增;后续 §6 待补若需更多 Story,顺延 #024—
+- #018—#023 为本批新增;A2A Client 系列 #009a—#009d 已合,#009e 是 dsh §5.6.2 实施期发现的 wiring gap(**实测发现,不是设计意图**,2026-09-24 加)
+- 后续 §6 待补若需更多 Story,顺延 #024—
 - 编号规则:`#NNN-<slug>` 与现有 Story 路径(`specs/001-zero-config-bootstrap/` 等)对齐
 
-### 提议 Story 列表(8 个,按依赖顺序)
+### 提议 Story 列表(9 个,按依赖顺序)
 
 | 序 | Story # | slug | dsh § | 范围 | 文件数 | ErrorCode | 依赖 |
 |---:|---|---|---|---|---:|---|---|
@@ -61,10 +62,11 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 | 4 | ~~**#021a**~~ | ~~`mcp-stdio-transport`~~ | ~~§6.5 (2.1)~~ | ~~`McpServerConnection` interface + `ConnectionState` enum 6 态 + `McpServerConnectionFactory`(仅 stdio 分支,SSE/HTTP 抛 LINGS-M01)+ `StdioMcpServerConnection`(daemon 心跳 + 1s→60s 指数退避 + 无限重试)+ `McpServerConfig`~~ | ~~7~~ | ~~0~~ | **✅ 已合**(2026-09-23,36 tests 0 fail / R-13 0 binary delta) |
 | 5 | ~~**#021b**~~ | ~~`mcp-tool-adapter`~~ | ~~§6.5 (2)~~ | ~~`McpTransport`(listener 模式)+ `McpToolDescriptor` + `McpCallResult` + `McpToolAdapter` + register/unregister 钩子 + `ToolRegistry.unregister()` SPI 扩展 + SmartLifecycle 启动期 wireup~~ | ~~5 + 3(ToolRegistry SPI 修改 + DefaultToolRegistry 实现 + McpTestSupport sysprop 转发)~~ | ~~LINGS-M02 (tools/call failed)~~ | **✅ 已合**(2026-09-23,440 tests 0 fail / R-13 0 binary delta) |
 | 6 | ~~**#021c**~~ | ~~`mcp-sse-and-http-transport`~~ | ~~§6.5 (2.1)~~ | ~~`McpHttpSupport` utility(HTTP / JSON-RPC 样板)+ `SseMcpServerConnection`(JDK HttpURLConnection 长连接 + 手写 SSE parser + `GET /health` 心跳 + 重建 HttpURLConnection 重连)+ `StreamableHttpMcpServerConnection`(无状态 HTTP POST tools/* + `GET /health` 心跳)+ `McpServerConnectionFactory` factory dispatch 改写(移除 LINGS-M01 抛点,3 分支全实现)+ `McpErrorCodes` 扩 `LINGS_M03` + `TestMcpHttpServer` / `TestMcpSseServer` fixtures(sysprop 控制 push/close/malformed)~~ | ~~5 + 5(2 新 fixtures)~~ | ~~LINGS-M03 (HTTP upgrade / SSE event format)~~ | **✅ 已合**(2026-09-23,481 tests 0 fail / R-13 0 binary delta) |
+| 6.5 | **#009e** | `a2a-remote-tool-wiring` | §5.6.2 wiring(实测发现,2026-09-24) | (1) 抽 `RemoteAgentToolAutoConfiguration` 独立于 transport(从 `HttpJsonRpcA2aTransportAutoConfiguration` 拆出 `remoteAgentTool` + `remoteAgentSchemaBuilder` 两个 Bean)(2) 加 `RemoteAgentToolLifecycle implements SmartLifecycle` 显式 `toolRegistry.register(remoteAgentTool)` + `stop` 时 `toolRegistry.unregister`(3) 3 transport AutoConfig 各自只保留 `a2aTransportProvider_<name>`,**不再**各自暴露 `remoteAgentTool`(4) 加 1 L3 IT 覆盖 3 transport × register/dispatch/unregister 全链路 | 5 | 0 | 依赖 #009d(避免 #023 delegate-sub-agent 内部再写 patch 绕 RemoteAgentTool 的 bug) |
 | 7 | **#022** | `spring-ai-annotation-tool` | §6.5 (3) | `@AgentTool` 注解(复用 spring-ai `@Tool` 因 spring-ai-bom 已锁)+ `SpringAiToolAdapter` + `AgentToolScanner`(`ApplicationContextAware`)+ `JsonArgsConverter` | 5 | LINGS-T02 (反射调用失败) | 依赖 spring-ai-bom |
-| 8 | **#023** | `delegate-sub-agent` | §6.6 + §6.6.1 | `SubAgentType` enum + `DelegateTool` + `DelegateProps` + `TypeConfig` + §6.6.1 字段级继承(`AgentConfig.toBuilder()` 合并 identity / instructions / memory) | 5–6 | LINGS-D01 (sub-agent 配置缺失) | 依赖 AgentFactory + Agent 已就位 |
+| 8 | **#023** | `delegate-sub-agent` | §6.6 + §6.6.1 | `SubAgentType` enum + `DelegateTool` + `DelegateProps` + `TypeConfig` + §6.6.1 字段级继承(`AgentConfig.toBuilder()` 合并 identity / instructions / memory) | 5–6 | LINGS-D01 (sub-agent 配置缺失) | 依赖 AgentFactory + Agent 已就位 + **#009e 先打平 RemoteAgentTool 的 wiring** |
 
-**统计**:8 个 Story / 6 已合(#020a + #020b + #020c + #021a + #021b + #021c)/ 2 待补 / ~46 个新文件 / ~7 个新 ErrorCode / 实际 +531 测试 case(401 → 440 → 481 累加,+80 新 case 由 #021c 贡献)。
+**统计**:9 个 Story / 6 已合(#020a + #020b + #020c + #021a + #021b + #021c)/ 3 待补(#009e + #022 + #023)/ ~51 个新文件 / ~7 个新 ErrorCode / 实际 +531 测试 case(401 → 440 → 481 累加,+80 新 case 由 #021c 贡献);#009e 预计贡献 +5~8 cases(LifecycleTest 3 + IT 1 + 3 transport AutoConfig Test 各 +1)。
 
 ### 实施顺序建议(支持并行)
 
@@ -72,8 +74,12 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 主链(必须顺序): ✅ #020a → ✅ #020b → ✅ #020c   (Skill 3 件套 ✅ 主链收官)
 并行支链(与主链无依赖):
   支链 A: ✅ #021a → ✅ #021b → ✅ #021c   (MCP,3 件全合 🎉 — stdio / tool-adapter / SSE+HTTP 全上线)
-  支链 B: #022                       (Spring AI,可与 #020 / #021 并行)
-  支链 C: #023                       (Sub-agent,可与 #020 / #021 / #022 并行)
+  支链 A0(2026-09-24 增): #009e → #022 → #023
+    ├ #009e a2a-remote-tool-wiring  ── 必须先打平(wiring 修复,#023 内部依赖)
+    ├ #022 spring-ai-annotation-tool  ── 可与 #009e 并行(无依赖)
+    └ #023 delegate-sub-agent          ── 依赖 #009e(避免内部 patch 绕 RemoteAgentTool)
+  支链 B: #022                       (Spring AI,可与 #020 / #021 / #009e 并行)
+  支链 C: #023                       (Sub-agent,依赖 #009e)
 ```
 
 **R-13 mitigation (d) 假设**:复用 Spring AI `@Tool`(已在 13 项依赖表内)+ 复用 JDK 17+ `java.net.http.HttpClient`(SSE/HTTP)/ JDK 8 `ProcessBuilder`(stdio)/ 复用 Jackson + Lombok(已锁)。**预计 0 新依赖**(MCP stdio 用 JDK 内置 `ProcessBuilder` 即可,无需 `jackson-module-jsonSchema` 等额外包)。
@@ -133,6 +139,6 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 ## 🎯 实施节奏建议
 
 1. **本周(2026-09-22 周)**:Story #009d + Story #018 文档同步已完成(本文件 + 配套 4 件套 dsync)
-2. **2026-09-23 起**:Story #019 + #020a + #020b + #020c + #021a + #021b + #021c 已合,Skill 系统主链收官,MCP 支链 A 3/3 完成 🎉;继续按 #022 / #023 推进;并行启动 #022 / #023 各自 spec.md
+2. **2026-09-23 起**:Story #019 + #020a + #020b + #020c + #021a + #021b + #021c 已合,Skill 系统主链收官,MCP 支链 A 3/3 完成 🎉;2026-09-24 加 #009e a2a-remote-tool-wiring 进 Roadmap(实测发现 RemoteAgentTool wiring gap,**在 #023 之前**),下一步 **#009e → #022 / #023 并行**
 3. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
 4. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整
