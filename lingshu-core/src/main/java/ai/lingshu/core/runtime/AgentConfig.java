@@ -126,6 +126,16 @@ public class AgentConfig {
         String command;
         List<String> args;
         Map<String, String> env;
+        /** 🆕 Story #021a — transport flavor (STDIO / SSE / STREAMABLE_HTTP); defaults to {@link McpTransportType#STDIO}. */
+        McpTransportType transport;
+        /** 🆕 Story #021a — HTTP endpoint (SSE / STREAMABLE_HTTP); null for stdio. */
+        String url;
+        /** 🆕 Story #021a — heartbeat probe interval (ms); default {@code 30000}. */
+        long heartbeatIntervalMs;
+        /** 🆕 Story #021a — heartbeat probe timeout (ms); default {@code 10000}. */
+        long heartbeatTimeoutMs;
+        /** 🆕 Story #021a — exponential backoff cap (ms); default {@code 60000}. */
+        long reconnectCapMs;
     }
 
     @Value
