@@ -8,13 +8,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Story #017 — {@link ArgsParser} unit tests. 8 cases covering:
+ * Story #017 — {@link ArgsParser} unit tests. 9 cases covering:
  * <ul>
  *   <li>happy path: each of 5 subcommands parses a representative flag set</li>
  *   <li>missing required flag → {@link LingsCliException}</li>
  *   <li>empty argv → {@link LingsCliException}</li>
  *   <li>unknown subcommand → {@link LingsCliException}</li>
  *   <li>both {@code --key value} and {@code --key=value} forms supported</li>
+ *   <li>🆕 Story #020c — {@code --list-skills} flag parses cleanly and bypasses
+ *       {@code --prompt}/{@code --session} requirements for {@code run}/{@code resume}</li>
  * </ul>
  *
  * <p>All assertions verify errorCode is {@code LINGS-Z01} (per dsh §15) and the exit code
@@ -36,6 +38,7 @@ class ArgsParserTest {
         assertThat(args.getPort()).isEqualTo(ArgsParser.DEFAULT_PORT);
         assertThat(args.isPrintEffective()).isFalse();
         assertThat(args.isPrintSchema()).isFalse();
+        assertThat(args.isPrintSkills()).isFalse();
     }
 
     @Test
@@ -107,5 +110,30 @@ class ArgsParserTest {
                 assertThat(lce.getErrorCode()).isEqualTo("LINGS-Z01");
                 assertThat(lce.getMessage()).contains("--session");
             });
+    }
+
+    // ── 🆕 Story #020c: --list-skills flag ──────────────────────────────
+
+    @Test
+    void parse_withListSkillsFlag_parsesAndBypassesPromptRequirement() {
+        // 🆕 AC-020c-AC: `lingshu run --list-skills` (no --prompt) must parse cleanly
+        // so the Skill banner can be printed without invoking the Agent.
+        Args args = ArgsParser.parse(new String[]{"run", "--list-skills"});
+
+        assertThat(args.getSubcommand()).isEqualTo(Subcommand.RUN);
+        assertThat(args.isPrintSkills()).isTrue();
+        assertThat(args.getPrompt()).isNull();
+    }
+
+    @Test
+    void parse_resumeWithListSkillsFlag_bypassesSessionAndPromptRequirement() {
+        // 🆕 AC-020c-AC: `lingshu resume --list-skills` (no --session, no --prompt)
+        // also parses cleanly.
+        Args args = ArgsParser.parse(new String[]{"resume", "--list-skills"});
+
+        assertThat(args.getSubcommand()).isEqualTo(Subcommand.RESUME);
+        assertThat(args.isPrintSkills()).isTrue();
+        assertThat(args.getSessionId()).isNull();
+        assertThat(args.getPrompt()).isNull();
     }
 }

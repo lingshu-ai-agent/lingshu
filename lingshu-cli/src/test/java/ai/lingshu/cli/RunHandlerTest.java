@@ -44,7 +44,7 @@ class RunHandlerTest {
         Path yml = tmp.resolve("app.yml");
         Files.write(yml, "agent:\n  llm:\n    provider: anthropic\n    model: test\n  sandbox:\n    policy: default\n".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.RUN, yml, "say hi", null, null, false, false);
+        Args args = new Args(Subcommand.RUN, yml, "say hi", null, null, false, false, false);
         runner.doRun(args);
 
         String stdout = outBuf.toString("UTF-8");
@@ -59,7 +59,7 @@ class RunHandlerTest {
     @Test
     void run_withMissingYaml_throwsLingsZ02(@TempDir Path tmp) {
         Path missing = tmp.resolve("does-not-exist.yml");
-        Args args = new Args(Subcommand.RUN, missing, "hi", null, null, false, false);
+        Args args = new Args(Subcommand.RUN, missing, "hi", null, null, false, false, false);
 
         assertThatThrownBy(() -> runner.doRun(args))
             .isInstanceOf(LingsCliException.class)
@@ -75,7 +75,7 @@ class RunHandlerTest {
     void run_withInvalidYaml_throwsLingsZ02(@TempDir Path tmp) throws IOException {
         Path yml = tmp.resolve("bad.yml");
         Files.write(yml, "[unterminated bracket".getBytes("UTF-8"));
-        Args args = new Args(Subcommand.RUN, yml, "hi", null, null, false, false);
+        Args args = new Args(Subcommand.RUN, yml, "hi", null, null, false, false, false);
 
         assertThatThrownBy(() -> runner.doRun(args))
             .isInstanceOf(LingsCliException.class)

@@ -41,7 +41,7 @@ class ResumeHandlerTest {
         Path yml = tmp.resolve("app.yml");
         Files.write(yml, "agent:\n  llm:\n    provider: anthropic\n    model: t\n  sandbox:\n    policy: default\n".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.RESUME, yml, "continue", "sess-abc", null, false, false);
+        Args args = new Args(Subcommand.RESUME, yml, "continue", "sess-abc", null, false, false, false);
         runner.doResume(args);
 
         String stdout = outBuf.toString("UTF-8");
@@ -54,7 +54,7 @@ class ResumeHandlerTest {
     @Test
     void resume_withMissingYaml_throwsLingsZ02(@TempDir Path tmp) {
         Path missing = tmp.resolve("nope.yml");
-        Args args = new Args(Subcommand.RESUME, missing, "x", "s1", null, false, false);
+        Args args = new Args(Subcommand.RESUME, missing, "x", "s1", null, false, false, false);
 
         assertThatThrownBy(() -> runner.doResume(args))
             .isInstanceOf(LingsCliException.class)

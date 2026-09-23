@@ -43,7 +43,7 @@ class DoctorHandlerTest {
         Path yml = tmp.resolve("app.yml");
         Files.write(yml, "agent:\n  llm:\n    provider: anthropic\n    model: t\n  sandbox:\n    policy: default\n".getBytes("UTF-8"));
 
-        Args args = new Args(Subcommand.DOCTOR, yml, null, null, null, false, false);
+        Args args = new Args(Subcommand.DOCTOR, yml, null, null, null, false, false, false);
         runner.doDoctor(args);
 
         String stdout = outBuf.toString("UTF-8");
@@ -57,7 +57,7 @@ class DoctorHandlerTest {
     @Test
     void doctor_withMissingYaml_throwsLingsZ02(@TempDir Path tmp) {
         Path missing = tmp.resolve("nope.yml");
-        Args args = new Args(Subcommand.DOCTOR, missing, null, null, null, false, false);
+        Args args = new Args(Subcommand.DOCTOR, missing, null, null, null, false, false, false);
 
         assertThatThrownBy(() -> runner.doDoctor(args))
             .isInstanceOf(LingsCliException.class)
