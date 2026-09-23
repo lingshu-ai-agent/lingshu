@@ -1,14 +1,20 @@
 package ai.lingshu.core.impl.tool;
 
+import ai.lingshu.core.message.ToolSpec;
+import ai.lingshu.core.slot.Skill;
 import ai.lingshu.core.slot.Tool;
 import ai.lingshu.core.slot.ToolRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -21,16 +27,32 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Spring registration: {@code @Component} (auto-scanned). The single instance
  * is shared across:
  * <ul>
- *   <li>{@link LocalToolsAutoConfiguration} — registers the four built-in
- *       Tools (Read / Write / Edit / Bash) at startup.</li>
+ *   <li>{@link ai.lingshu.core.impl.tool.local.LocalToolsAutoConfiguration} — registers the
+ *       four built-in Tools (Read / Write / Edit / Bash) at startup.</li>
+ *   <li>{@link ai.lingshu.core.impl.skill.SkillAutoConfiguration} (🆕 Story #020a) —
+ *       registers {@code @Component}-typed Skills (e.g. {@code CommitSkill}) at startup.</li>
  *   <li>{@link DefaultToolExecutorProvider} — reads from it when constructing
  *       per-turn {@link DefaultToolExecutor} instances.</li>
  *   <li>Future MCP / Spring AI Tool adapters — also register here.</li>
  * </ul>
  *
+ * <p><b>🆕 Story #020a — Skill double-index:</b> every {@code register} call now
+ * writes to TWO maps in lock-step:
+ * <ul>
+ *   <li>{@code registry} — all Tools, indexed by name; consumed by {@link #lookup},
+ *       {@link #findByName}, {@link #names}.</li>
+ *   <li>{@code skillsByName} — only {@link Skill}-typed Tools, indexed by name; consumed
+ *       by {@link #findSkill}, {@link #skillNames}, and indirectly by {@link #modelVisibleSpecs}
+ *       (which iterates the full {@code registry} but the Skills show up identically).</li>
+ * </ul>
+ *
+ * <p>Both indices use {@code putIfAbsent} so that first-registration wins (Story #020b's
+ * {@code CompositeSkillLoader} relies on the same first-wins semantic for {@code @Component}
+ * Skills vs SKILL.md Skills with the same name).
+ *
  * <p>Why {@code @Component} (not {@code @Bean} via AutoConfiguration): the
  * registry is the lowest-level Slot 2 helper and is referenced from multiple
- * packages ({@code impl.tool}, {@code impl.tool.local}, future
+ * packages ({@code impl.tool}, {@code impl.tool.local}, {@code impl.skill}, future
  * {@code impl.mcp}). Plain {@code @Component} keeps it discoverable without
  * a dedicated {@code @AutoConfiguration} class.
  */
@@ -40,6 +62,8 @@ public class DefaultToolRegistry implements ToolRegistry {
     private static final Logger LOG = LoggerFactory.getLogger(DefaultToolRegistry.class);
 
     private final Map<String, Tool> registry = new ConcurrentHashMap<>();
+    // 🆕 Story #020a — parallel Skill index; written lock-step with `registry`
+    private final Map<String, Skill> skillsByName = new ConcurrentHashMap<>();
 
     @Override
     public void register(Tool tool) {
@@ -51,6 +75,15 @@ public class DefaultToolRegistry implements ToolRegistry {
             LOG.warn("Duplicate tool registration: name={} prior={} new={}",
                 tool.name(), prior.getClass().getSimpleName(), tool.getClass().getSimpleName());
         }
+        // 🆕 Story #020a — Skill分流:同步双写skillsByName,保持first-wins语义
+        if (tool instanceof Skill) {
+            Skill skill = (Skill) tool;
+            Skill priorSkill = skillsByName.putIfAbsent(skill.name(), skill);
+            if (priorSkill != null && priorSkill != skill) {
+                LOG.warn("Duplicate skill registration: name={} prior={} new={}",
+                    skill.name(), priorSkill.getClass().getSimpleName(), skill.getClass().getSimpleName());
+            }
+        }
     }
 
     @Override
@@ -61,6 +94,44 @@ public class DefaultToolRegistry implements ToolRegistry {
     @Override
     public Collection<String> names() {
         return Collections.unmodifiableCollection(registry.keySet());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  🆕 Story #020a — Skill-aware extensions
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Override
+    public List<ToolSpec> modelVisibleSpecs() {
+        List<ToolSpec> specs = new ArrayList<>(registry.size());
+        for (Tool t : registry.values()) {
+            specs.add(new ToolSpec(t.name(), t.description(), t.inputSchema()));
+        }
+        // 字典序排序 —— 稳定输出便于 PromptBuilder prompt cache 命中(对齐 #009d 设计哲学)
+        Collections.sort(specs, new Comparator<ToolSpec>() {
+            @Override public int compare(ToolSpec a, ToolSpec b) {
+                return a.getName().compareTo(b.getName());
+            }
+        });
+        return specs;
+    }
+
+    @Override
+    public Skill findSkill(String name) {
+        return skillsByName.get(name);
+    }
+
+    @Override
+    public Set<String> skillNames() {
+        return Collections.unmodifiableSet(skillsByName.keySet());
+    }
+
+    @Override
+    public Tool findByName(String name) {
+        Tool t = registry.get(name);
+        if (t == null) {
+            throw new IllegalArgumentException("Unknown tool: " + name);
+        }
+        return t;
     }
 
     // ── test-only access ─────────────────────────────────────────────────
