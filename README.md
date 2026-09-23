@@ -1319,6 +1319,45 @@ agent:
 
 ---
 
+### Story #009e a2a-remote-tool-wiring(`RemoteAgentToolAutoConfiguration` 独立 + `RemoteAgentToolLifecycle` SmartLifecycle + 3 transport 共享 wiring)
+
+> **问题**:Story #009c 实施期为守 CLAUDE.md §11 #4 「核心文件 ≤5」,把 `RemoteAgentToolAutoConfiguration`(双 `@Bean`: `remoteAgentTool` + `RemoteAgentSchemaBuilder`)**合并**到 `HttpJsonRpcA2aTransportAutoConfiguration` 里;`GrpcA2aTransportAutoConfiguration`(#009a)+ `InProcessA2aTransportAutoConfiguration`(#009b)**不暴露**任何 RemoteAgentTool wiring —— 直接破坏 dsh §5.6.2 L2366 "§6.5 同款注册路径" + §5.6.3.2 L3185 "复用 `RemoteAgentTool` 注册路径" 契约:**用户配 `agent.a2aTransport: grpc-1.0.0` 或 `in-process-1.0.0` 时,LLM 工具列表中**没有 `remote_agent`**,A2A 整个客户端 wiring 静默失效**。Story #009d 测试时实测发现,必须**预** Story #022 / #023 之前修复,避免后续 patcharound。
+
+**根因**:§11 #4 「≤5 核心文件」边界是 per-Story 约束,#009c 单 Story 视角守住了,但跨 Story 累积后 #009a/#009b/#009d 各 AutoConfiguration 与 #009c 不对称,System-level 看 RemoteAgentTool 仅在 1/3 transport 下 wiring 完整。
+
+**补丁** (1) **`RemoteAgentToolAutoConfiguration`** 抽离为独立 `@AutoConfiguration`(从 `HttpJsonRpcA2aTransportAutoConfiguration` 删 2 `@Bean` 方法搬过来),只暴露 `remoteAgentTool` + `remoteAgentSchemaBuilder` 2 Bean;(2) **`HttpJsonRpcA2aTransportAutoConfiguration` 简化** —— 删 `remoteAgentTool` + `remoteAgentSchemaBuilder` 2 `@Bean` + 对应 imports,只保留 `a2aTransportProvider_http-jsonrpc-1.0.0` 1 个 Bean;(3) **`GrpcA2aTransportAutoConfiguration` 不变** —— grpc transport Bean 仍单 `a2aTransportProvider_grpc-1.0.0`,RemoteAgentTool 由独立 `RemoteAgentToolAutoConfiguration` 跨 transport 共享;(4) **`InProcessA2aTransportAutoConfiguration` 不变** —— 同理;(5) **`RemoteAgentToolLifecycle`** 新增 —— `@Component implements SmartLifecycle`,照搬 dsh §6.5 (2.1) `McpTransportLifecycle` 样板;`start()` 调 `toolRegistry.register(remoteAgentTool)`(`running` flag 幂等保护),`stop()` 调 `toolRegistry.unregister("remote_agent")`;`isAutoStartup() = true` + `getPhase() = Integer.MAX_VALUE - 1024`(SmartLifecycle 默认 phase,与 `McpTransportLifecycle` 同 phase;同 phase 内部按 bean name 字典序 `mcpTransportLifecycle` < `remoteAgentToolLifecycle` 决顺序,**不阻塞** MCP 缺 tool 不影响 remote_agent);**为什么不直接用 `@PostConstruct`** —— 沿用 Story #019 `LocalToolsAutoConfiguration` 同款 R-13 mitigation philosophy(MCP SmartLifecycle 注释 L21-26):避免 `javax.annotation-api` 依赖(JDK 8 需单独引入);`@SmartLifecycle` 同时给 start / stop / isRunning / isAutoStartup / getPhase,`spring-context` transitive 已锁,**0 新 Maven 依赖**;(6) **SPI 加载顺序** `META-INF/spring/...imports` —— `RemoteAgentToolAutoConfiguration` 行**放第一**(transport 三行之前),保证 Router 解析时 transport Bean 已就位。
+
+**关键不变项** —— `RemoteAgentTool` 类**不**改(2/3/5 参构造器**全部**保留,#009c/#009d 测试 0 regression)/ `RemoteAgentSchemaBuilder` 类**不**改(#009d 已落地)/ `A2aTransportRouter` 行为**不**改(#009a 已落地)/ `A2aTransport` 5 方法契约**不**改/ `ToolRegistry` SPI **不**改(#020a 已落地)/ `ToolExecutor` 5 步流水线**不**改(dsh §4.10.1 硬规则 2)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容;**向后兼容** —— `HttpJsonRpcA2aTransportAutoConfigurationTest` 删 `testRemoteAgentSchemaBuilderBeanWiring` + `testRemoteAgentToolBeanWiring` 2 case(迁到 `RemoteAgentToolAutoConfigurationTest`),保留 transport provider Bean + 4 Provider Bean 名 distinct + imports 验证 3 case。
+
+**测试覆盖** 14 case 跨 5 文件 —— `RemoteAgentToolAutoConfigurationTest`(5 L1:Bean wiring × 2 + transport resolve default "http-jsonrpc-1.0.0" + remoteAgents 透传 + imports 文件包含)+ `RemoteAgentToolLifecycleTest`(4 L2:start register / stop unregister / start 幂等 / isRunning 状态)+ `RemoteAgentTransportWiringIT`(5 L3 IT:3 transport × register / dispatch / unregister 端到端)+ `HttpJsonRpcA2aTransportAutoConfigurationTest` 保留 3 case(删 2 迁走)+ 直接 wiring 不走 `@SpringBootTest`(规避 Mockito 5.x + JDK 23 inline mockmaker 兼容 issue,沿用 Story #007 pattern)。
+
+**EC** —— EC-1 lifecycle 幂等保护 + EC-2 `cfg.transport() == null` fallback "http-jsonrpc-1.0.0" + EC-3 stop 后 LLM 工具列表不再含 `remote_agent`。
+
+**风险** R-19 (分值 9) RemoteAgentTool wiring gap 本 Story **全部缓解** —— 拆独立 AutoConfig + SmartLifecycle 显式 register 把 grpc / in-process 路径补齐;R-20 (分值 4) 同 phase 时序竞争,MCP 缺 tool 不影响 remote_agent,**不阻塞**;R-21 (分值 3) ToolRegistry.register 重复注册抛 `IllegalStateException` 影响启动,`running` flag 幂等保护**缓解**。
+
+**R-13 dep-tree 自查**:
+```
+# Pre-Story dep tree (Story #009d post-merge baseline):
+# Total: 57 [INFO] lines
+# Post-Story dep tree (Story #009e post-merge):
+# Total: 57 [INFO] lines, 0 binary delta vs Story #009d baseline (only [INFO] timestamps differ)
+```
+
+**累计测试**:`mvn -pl lingshu-a2a-client,lingshu-a2a-server,lingshu-core test` → **333 case**(Story #009d 321 + Story #009e 新增 14 - 2 删 HttpJsonRpc 旧 case = 333),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。**+12 净新 case** 分布:L1 `RemoteAgentToolAutoConfigurationTest` 5 / L2 `RemoteAgentToolLifecycleTest` 4 / L3 `RemoteAgentTransportWiringIT` 5 - L1 `HttpJsonRpcA2aTransportAutoConfigurationTest` 删 2。
+
+**Story 边界**:**3 核心 Java 源文件新增**(`RemoteAgentToolAutoConfiguration` + `RemoteAgentToolLifecycle` + 修改 imports)+ **2 modify**(`HttpJsonRpcA2aTransportAutoConfiguration` 删 2 Bean + 测试删 2 case + imports 文件 +1 行)= **5 等效文件改动**;**严格 ≤5 边界内** ✓;**0 新 ErrorCode** 严格守 ≤ 3 ✓;R-13 缓解 `(d)` PASS 0 binary delta(`SmartLifecycle` 来自 `spring-context` transitive 已锁 + `RemoteAgentTool` / `RemoteAgentSchemaBuilder` / `A2aTransportRouter` / `ToolRegistry` 全部已存在 —— **0 新 Maven 依赖**);**关键不变项** —— `RemoteAgentTool` 类**不**改 / `RemoteAgentSchemaBuilder` 类**不**改 / `A2aTransportRouter` 行为**不**改 / `A2aTransport` 5 方法契约**不**改 / `ToolExecutor` 5 步流水线**不**改 / §4.10.1 硬规则 2 兼容 / JDK 8 only(`AtomicReference` / `volatile boolean` + `Collections.emptyList()`,不用 `var` / sealed / records)。
+
+**扳机条件**(重新评估):
+- Story #009c L2425 实施期决策(把 `RemoteAgentToolAutoConfiguration` 合并到 `HttpJsonRpcA2aTransportAutoConfiguration`)已**撤销**,回归 §5.5 plugin 非 Slot 类型 Bean 样板(`@Component` + `@AutoConfiguration` + `@Bean`)
+- 后续 Story #022 spring-ai-annotation-tool / #023 delegate-sub-agent 可**安全**依赖 RemoteAgentTool 3 transport wiring 一致
+- dsh §5.6.2 L2366 + §5.6.3.2 L3185 「3 transport 共享 `RemoteAgentTool`」契约**重新生效**
+
+---
+
+
+
+---
+
 ### Story #017 cli-entrypoint(`lingshu-cli/` 5 子命令 + Spring Boot bootstrap + dsh §10.3 全落地)
 
 dsh §10.3 锚定 5 个 CLI 子命令(`run / resume / serve / doctor / config`),Story #001 实施期 `lingshu-cli/` 模块只搭了 Maven 骨架,实际从未交付;Story #017 把 §10.3 全部 5 个子命令一次性补齐 —— **首个**用户能直接 `mvn spring-boot:run --args='run ...'` 跑通端到端的入口。
