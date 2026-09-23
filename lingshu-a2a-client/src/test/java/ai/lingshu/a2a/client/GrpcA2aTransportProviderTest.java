@@ -107,7 +107,9 @@ class GrpcA2aTransportProviderTest {
             AgentConfig.Memory.defaults(),
             "default",
             null,
-            AgentConfig.A2a.defaults()
+            AgentConfig.A2a.defaults(),
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults()
         );
     }
 
@@ -129,7 +131,8 @@ class GrpcA2aTransportProviderTest {
                 c.getA2a().getHttpBaseUrl(),
                 c.getA2a().getCallTimeout(),
                 c.getA2a().getRemoteAgents(),
-                c.getA2a().getDescriptionSkillLimit())
-        );
+                c.getA2a().getDescriptionSkillLimit()),
+            c.getCompactorConfig(),
+            c.getTools());
     }
 }

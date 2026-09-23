@@ -61,7 +61,8 @@ class LinearTurnEngineProviderTest {
             @Override public String version() { return "1.0.0"; }
             @Override public ToolExecutor create(AgentConfig cfg) {
                 return new ai.lingshu.core.impl.tool.DefaultToolExecutor(
-                    new ai.lingshu.core.impl.permission.AllowAllPermissionPolicy());
+                    new ai.lingshu.core.impl.permission.AllowAllPermissionPolicy(),
+                    new ai.lingshu.core.impl.tool.DefaultToolRegistry());
             }
         };
     }
@@ -100,7 +101,8 @@ class LinearTurnEngineProviderTest {
             null,               // a2aTransport
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
     }
 
     @Test
@@ -177,7 +179,8 @@ class LinearTurnEngineProviderTest {
             null,               // a2aTransport
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.create(bad))
             .isInstanceOf(IllegalArgumentException.class)

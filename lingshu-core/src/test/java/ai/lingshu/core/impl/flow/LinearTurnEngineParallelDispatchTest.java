@@ -9,6 +9,7 @@ import ai.lingshu.core.impl.permission.AllowAllPermissionPolicy;
 import ai.lingshu.core.impl.runtime.DefaultSession;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.ToolCall;
@@ -64,7 +65,8 @@ class LinearTurnEngineParallelDispatchTest {
             null,               // a2aTransport
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
     }
 
     private static ToolCall call(String id, String toolName) {
@@ -78,11 +80,12 @@ class LinearTurnEngineParallelDispatchTest {
         // threads could finish scheduling serially even with parallelism=4.
         CountDownLatch startGate = new CountDownLatch(1);
 
-        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy());
-        toolExec.register(new SleepTool("tool_a", ONE_SECOND_MS, startGate));
-        toolExec.register(new SleepTool("tool_b", ONE_SECOND_MS, startGate));
-        toolExec.register(new SleepTool("tool_c", ONE_SECOND_MS, startGate));
-        toolExec.register(new SleepTool("tool_d", ONE_SECOND_MS, startGate));
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy(), registry);
+        registry.register(new SleepTool("tool_a", ONE_SECOND_MS, startGate));
+        registry.register(new SleepTool("tool_b", ONE_SECOND_MS, startGate));
+        registry.register(new SleepTool("tool_c", ONE_SECOND_MS, startGate));
+        registry.register(new SleepTool("tool_d", ONE_SECOND_MS, startGate));
 
         LlmResponse fourCalls = new LlmResponse(
             "",
@@ -158,11 +161,12 @@ class LinearTurnEngineParallelDispatchTest {
         // Companion test to AC-03 black-box: confirms that parallelism=1 takes ~4× longer
         // than the parallel path, validating that the speedup ratio calculation has a real
         // serial baseline to compare against (rather than a degenerate always-fast path).
-        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy());
-        toolExec.register(new SleepTool("tool_a", 200));
-        toolExec.register(new SleepTool("tool_b", 200));
-        toolExec.register(new SleepTool("tool_c", 200));
-        toolExec.register(new SleepTool("tool_d", 200));
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy(), registry);
+        registry.register(new SleepTool("tool_a", 200));
+        registry.register(new SleepTool("tool_b", 200));
+        registry.register(new SleepTool("tool_c", 200));
+        registry.register(new SleepTool("tool_d", 200));
 
         LlmResponse fourCalls = new LlmResponse(
             "",

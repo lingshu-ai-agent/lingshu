@@ -1,0 +1,33 @@
+# Story #019 — demo-local-tools black-box wiring verification
+#
+# AC-19 contract:
+#   1. Spring Boot boots with `agent.tools.enabled: true` (default).
+#   2. LocalToolsAutoConfiguration.afterPropertiesSet() wires 4 @Component
+#      Tool beans (Read/Write/Edit/Bash) into the shared `ToolRegistry` SPI bean.
+#   3. BashTool.processRunner is set from RuntimeSandbox.process() before any
+#      turn begins.
+#
+# This yml exercises the canonical "4 tools wired" path; the disable-toggle
+# variant is set via @TestPropertySource in
+# LocalToolsWiringTest#disabled_registersZeroLocalTools.
+spring:
+  main:
+    banner-mode: off
+    log-startup-info: false
+  application:
+    name: lsh-demo-local-tools
+
+agent:
+  # LocalTools wiring is ON by default — set `false` to keep the 4 Tools as
+  # orphan @Components (still directly callable in tests) but skip registration
+  # with the engine dispatcher.
+  tools:
+    enabled: true
+  llm:
+    provider: anthropic
+    model: claude-3-5-sonnet-latest
+
+logging:
+  level:
+    root: INFO
+    ai.lingshu: INFO

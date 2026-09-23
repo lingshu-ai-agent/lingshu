@@ -51,7 +51,9 @@ class A2aServerRpcEndpointTest {
             null,
             new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051",
                 java.time.Duration.ofMinutes(5), "http://localhost:8080",
-                java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10));
+                java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults());
     }
 
     /** Send a JSON-RPC 2.0 POST and return the body + status code. */

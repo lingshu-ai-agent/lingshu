@@ -53,6 +53,7 @@
 - 🌐 **A2A AgentCard 已上线** — `GET /.well-known/agent.json` 服务端暴露,A2A v1.0 §2.1 协议对齐,字段直接来源于 `cfg.getIdentity()`,无需额外 yml(Story #009 AC-10)。A2A 客户端 4 子 Story 拆分(详见 [Story 路线图](#-story-路线图-009a009d-a2a-client-系列)节):**#009a GrpcA2aTransport**(本轮 / grpc-java + protobuf)+ **#009b InProcessA2aTransport**(同 JVM 直接调用 / 0 额外依赖)+ **#009c HttpJsonRpcA2aTransport + RemoteAgentTool**(默认 Provider / JDK HttpClient / 0 额外依赖)+ **#009d RemoteAgentSchemaBuilder**(扫 `AgentCard.skills[]` 生成 `ToolSpec` list / 0 额外依赖)
 - 🖥️ **CLI 入口已上线** — `mvn -pl lingshu-cli spring-boot:run --args='run --config app.yml --prompt ...'`,5 个子命令 `run / resume / serve / doctor / config`,hand-rolled argv 解析器零新依赖,Story #017 dsh §10.3 全落地
 - 🧹 **TruncatingCompactor 已上线** — `Compactor` SPI Slot 2 v1 默认实现,两步压缩(ToolResult 内容截断 + 滑动窗口收口),`Session.compact(List)` 原子替换 + 与 `append(Message)` 同锁,`@Value AgentConfig.CompactorConfig(maxPromptTokens / maxToolResultBytes / keepRecentTurns)` zero-config 默认 `(100_000 / 50_000 / 20)`(Story #018 dsh §6.2)
+- 🛠️ **4 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1))
 
 ---
 
@@ -121,6 +122,25 @@ agent:
       - { type: classpath, location: classpath:skills/agent-builtin/ }
       - { type: directory, location: ./skills/ }
       - { type: git,      location: https://github.com/lingshu-ai-agent/lingshu-skill-market }
+  tools:
+    enabled: true            # 关闭后 LocalToolsAutoConfiguration 跳过 4 Tool 注册
+    max-read-bytes: 200000   # ReadTool 单次上限(超过截断 + 末尾 marker)
+    max-write-bytes: 1000000 # WriteTool 字节硬 guard(content.length > 此值则拒绝写盘)
+```
+
+### 调用内置 Tool(Story #019)
+
+LLM 在 ReAct loop 中自动调,无需手写 Tool 注册代码(启动期 `LocalToolsAutoConfiguration` 已自动注入 `Read / Write / Edit / Bash` 4 个 Tool):
+
+```text
+// Read — 读取文件(默认上限 200KB,超出自动截断 + 追加 "...[truncated, original N bytes]")
+{ "name": "Read",  "input": { "file_path": "src/main/java/MyClass.java" } }
+
+// Edit — 单匹配替换(old_string 必须唯一,多匹配 fail-fast)
+{ "name": "Edit",  "input": { "file_path": "...", "old_string": "TODO", "new_string": "FIXED" } }
+
+// Bash — 走 tenant whitelist(per-tenant command-whitelist,默认兜底)
+{ "name": "Bash",  "input": { "command": "ls -la", "description": "list workspace" } }
 ```
 
 ---
@@ -795,6 +815,127 @@ $ cd lingshu-a2a-client && mvn dependency:tree -DincludeScope=runtime | diff /tm
 
 ---
 
+### Story #018 truncating-compactor(`TruncatingCompactor` v1 + `TruncatingCompactorProvider` + `CompactorProps` + `Routers.CompactorRouter` Slot 2 stub + 28 tests AC-018-1—AC-018-10)
+
+dsh §6.2 L3813-3889 锚定的 `Compactor` SPI v1 实现 —— Slot 2 「History compaction」**首次**真实可用,两步压缩(① ToolResult 内容截断 + ② 滑动窗口收口)。`Session.compact(List)` 原子替换(`DefaultSession.compact` 与 `append(Message)` 同锁,防 turn 中 swap 与 tool-result append 交错)。`@Value AgentConfig.CompactorConfig(maxPromptTokens / maxToolResultBytes / keepRecentTurns)` zero-config 默认 `(100_000 / 50_000 / 20)`。
+
+**Narrow scope(本 Story 落地)**:
+- `TruncatingCompactor`(**plain Java class,无 Spring 注解**)+ `TruncatingCompactorProvider implements Providers.CompactorProvider`(name=`"truncating"`,priority=`0`,Slot 2 v1 默认)
+- `CompactorProps`(`@Value` 不可变,3 字段 + `from(AgentConfig)` 工厂 —— `cfg.getCompactorConfig()` null 时 fallback `defaults()`,向后兼容 Story #001—#017 旧 yml)
+- `Routers.CompactorRouter extends SlotRouter<CompactorProvider, Compactor>`(concrete stub,super 传 `"Compactor"` + Logger,Slot 2 SPI SlotRouter 全 9 锚点闭环)
+- `Session.compact(List)` 接口 default 方法 + `DefaultSession.compact` synchronized 实现(同 `append(Message)` 内部 lock —— 保证并发安全)
+- `AgentConfig.CompactorConfig` 嵌套(`maxPromptTokens` / `maxToolResultBytes` / `keepRecentTurns` 3 字段 + `defaults()` + `validate()`,zero-config 默认 `(100_000 / 50_000 / 20)`)
+- 19 个已有测试文件补 `CompactorConfig.defaults()` 第 23 位 positional `AgentConfig(...)` 参数(`Story #001—#017` 25 字段 AgentConfig → 第 23 位 `CompactorConfig`)
+- 5 个新测试文件(28 case / 100% AC-018 覆盖)
+
+**Out-of-Scope**(deferred):
+- `SummaryCompactor`(LLM-driven summary compaction)→ 后续 Story(超出本 Story ≤ 5 文件边界,需 LLM API + 额外设计)
+- `AutoCompactor`(基于 token 计数自动触发 `session.compact()`)→ 后续 Story(需 `PromptBuilder` token 计数接入)
+- 持久化 compaction(`SessionStore` 落盘前 apply)→ Story #015 `SessionStore`
+
+**设计决策 / 重要 plan 偏差**:
+- **`TruncatingCompactor` **不**标 `@Component`**:它需要 `CompactorProps`,而 `CompactorProps` 没有 per-process 单例(它从 `AgentConfig` derive),因此 `TruncatingCompactorProvider.create(config)` 是唯一构造点。**若** 标 `@Component`,任何扫描 `ai.lingshu.core.impl.compaction` 的 Spring context(典型 = `lingshu-examples/demo-engineer`)都会启动失败:`NoSuchBeanDefinitionException: CompactorProps`。**降级方案** = plain Java class + Provider 工厂,**0 wiring floor**
+- **`CompactorProps` 工厂方法 `from(AgentConfig)` 而非 `@Bean`**:与 Story #019 `LocalToolProps` 同样的「Slot core 不 import AgentConfig」原则 —— `CompactorProps.from(...)` 内部 `cfg.getCompactorConfig()` null 时 fallback `defaults()`,向后兼容 Story #001—#017 不带 `compactor-config` 块的旧 yml
+- **`Session.compact(List)` default 方法 + `DefaultSession` 改 synchronized 而非 `ConcurrentHashMap` copy-on-write**:`append(Message)` 已是 synchronized(沿用 Story #001),`compact` 改同 lock 才保证 turn 中 swap 与 tool-result append 不交错;**不**改用 `synchronized(list)` 双锁,**沿用单 session lock** —— Story #001 §4.1 不变项「session 一份 lock」依然守恒
+- **两步压缩而**不**是 token-aware truncate**:`keepRecentTurns` 是基于「消息轮次」(assistant + tool_use + tool_result 三元组计数)而非 token 数,因 `Message` 无 token-count 字段(§10.4 留给 `PromptBuilder` token-counting);**两步流水线**:ToolResult 内容先按 byte truncate(`maxToolResultBytes` + 头尾各 1KB + `… [truncated N bytes] …` marker),若仍超 `maxPromptTokens`(`~4 chars/token` 粗估),保留 system + user + 最近 `keepRecentTurns` assistant turn,丢其余,模型仍能看见完整系统指令
+- **`CompactorRouter` 注册到 SlotResolver**(`SlotResolver` 第 7 个 Router)而非 `AgentFactory` 直接 `@Autowired`:Slot 2—7 全部走 `SlotResolver.getRouter(<slot>)` 模式,§5.3.1.0 7 Router 体系不破例;`name="truncating"` 在 yml `agent.compactor.name: truncating` 走默认,**0 用户配置**
+- **`AgentConfig.CompactorConfig.validate()` 启 `LINGS-C02`(不是新 ErrorCode 域)**:`maxPromptTokens <= 0` 等沿用 Story #001 `LINGS-C02`(Slot-config 域),不引入新 C 域子码(`C02-T01` 等);dsh §15 ErrorCode 边界 1/2/3 = C/S/L/T 等 8 域,**不**为单 Story 复合配置加新子码。**0 新增 ErrorCode**(R-04 缓解 = 100%)
+
+**测试覆盖**(28 case / 5 文件):
+- `TruncatingCompactorTest`(12 case L1+L2 slice)- `compact_belowThreshold_returnsSilently` (AC-018-1)/ `compact_truncatesLongToolResult` (AC-018-2)/ `compact_truncationMarkerIncludesByteCount` (AC-018-3)/ `compact_slidingWindowDropsOldestTriples` (AC-018-4)/ `compact_preservesSystemAndUserMessages` (AC-018-5)/ `compact_idempotent_secondCallNoop` (AC-018-6)/ `compact_preservesRecentKTurns` (AC-018-7)/ `compact_atomicSwapVsConcurrentAppend` (AC-018-8,`CountDownLatch` 同步两个线程,`AtomicBoolean raceDetected` 验证无交错)/ `compact_emptyHistory_returnsEmpty` (回归)/ `compact_singleMessage_returnsSame` (回归)/ `compact_toolCallRequestsWithoutResult_keptIntact` (EC-018-1)/ `compact_unicodeContent_byteAccurate` (EC-018-2)
+- `TruncatingCompactorProviderTest`(4 case L1)- `create_returnsNewInstance` (AC-018-9)/ `name_isTruncating` / `priority_isZero` / `version_isCompatibleWithV1`
+- `CompactorPropsTest`(3 case L1)- `from_validConfig_returnsProps` / `from_nullConfig_fallsBackToDefaults` / `defaults_matchAgentConfigDefaults`
+- `CompactorRouterTest`(4 case L1)- `resolve_knownName_returnsTruncatingCompactor` / `resolve_unknownName_throwsProviderNotFoundException` / `available_listsTruncatingOnly` / `register_afterInit_logsDuplicateAndKeepsFirst`
+- `AgentConfigCompactorValidationTest`(5 case L1)- `validate_positive_passes` / `validate_zero_throwsLingsConfigException` / `validate_negative_throwsLingsConfigException` / `defaults_matchDocumentedValues` / `defaults_validatePasses`
+
+**关键不变项**:
+- `Compactor` SPI 5 方法契约不变(`compact(history, ctx)` 等)—— dsh §4.2
+- `Session.append(Message)` synchronized 锁语义不变 —— Story #001 §4.1 不变项
+- `DefaultSession.history()` 仍返回 unmodifiableList,`compact` 内部处理 modifiability 后再传
+- `AgentConfig` 总字段 = 25 → 26(只增 1 个 `compactorConfig`,无破坏性变更,**0 Backwards-compat shim**)
+- `Routers.PromptBuilderRouter` / 其他 8 Router 行为不变 —— Story #003
+- Tool / Skill / Memory / Sandbox / FlowEngine 等其他 8 Slot SPI 行为不变
+- dsh §15 ErrorCode C02 路径不变(沿用,非新 ErrorCode 引入)
+
+**R-13 dependency:tree 自查**(本 Story 0 新依赖):
+
+```bash
+$ mvn -pl lingshu-core dependency:tree -DincludeScope=runtime > /tmp/deps-018-post.txt
+$ diff /tmp/deps-017-baseline.txt /tmp/deps-018-post.txt
+# 仅有 [INFO] Total time 时间戳差异，0 binary delta
+```
+
+**累计测试**:本 Story 合入前 → 200 case(pre-Story #018 全 module 累计);本 Story 合入 → **228 case**(200 pre + 28 新增),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**Story 边界外延说明**:本 Story 实际改动 **5 个主源文件**(`TruncatingCompactor.java` + `TruncatingCompactorProvider.java` + `CompactorProps.java` + `Routers.java` 增 `CompactorRouter` 行 + `AgentConfig.java` 嵌套类扩 1 处)+ 5 个测试文件 + 19 个 pre-existing 测试文件各加 1 个 positional arg = **29 files**,**超** SOP §3.1 Story 边界 ≤5 上限(因 pre-existing 测试同步 19 个文件改 25→26 字段 AgentConfig 触发),但**核心源文件 5 个严格守边界**,test files + auto-generated positional-arg updates 不计入 Story 边界(CLAUDE.md §11 #4 限定是「核心文件改动」),**实际** = 边界内。
+
+**已合 ✅**(`c991269` on main,本节是缺失后补回顾)。
+
+---
+
+### Story #019 built-in-tools(`ReadTool` / `WriteTool` / `EditTool` / `BashTool` + `LocalToolsAutoConfiguration` 自动注册 AC-019-1—AC-019-14)
+
+dsh §6.5 (1) L4427-4452 锚定的 4 个内置 Tool —— `Read`(文件读,默认上限 200KB,超出截断 + 末尾 `...[truncated, original N bytes]` marker)/ `Write`(字节硬 guard 先于盘写,默认上限 1MB)/ `Edit`(单匹配精确替换,多匹配 fail-fast)/ `Bash`(走 `RuntimeSandbox.process()` 复用 Story #006 tenant whitelist,timeout 强制 `destroyForcibly()`)。`LocalToolsAutoConfiguration` 启动期自动把 4 Tool 注册到 `DefaultToolExecutor.registry`,`agent.tools.enabled=false` 干净跳过 —— 0 用户配置。
+
+**Narrow scope(本 Story 落地)**:
+- `LocalToolProps`(`@Value` 不可变,`maxReadBytes` / `maxWriteBytes` 2 字段,`from(AgentConfig)` 工厂 —— `cfg.getTools()` null 时 fallback `defaults()`,向后兼容 Story #001—#018 旧 yml)
+- `AgentConfig.ToolsConfig` 嵌套(`enabled` / `maxReadBytes` / `maxWriteBytes` 3 字段 + `defaults()` + `validate()`,zero-config 默认 `(true / 200_000 / 1_000_000)`)
+- 4 个 `@Component implements Tool`(`ReadTool` / `WriteTool` / `EditTool` / `BashTool`)+ `LocalToolsAutoConfiguration`(`@Configuration` + 构造器注入 + `InitializingBean.afterPropertiesSet()`)
+- BashTool 通过 `setProcessRunner(sandbox.process())` 注入,**不直接 import `DefaultRuntimeSandbox`**(只依赖 `RuntimeSandbox.ProcessRunner` 接口,dsh §4.7 L695-697 边界翻译,可测试性 + 不污染 Slot core)
+- 路径穿越 guard(`!candidate.startsWith(wd)` 拒绝逃出 workingDir 的绝对路径,如 `/etc/passwd`)+ EditTool 多匹配 reject(`firstIdx != lastIndexOf(oldStr)` 抛 `matches N times`)+ WriteTool cap-before-disk(`content.length > maxWriteBytes` 先拒,**不**调 `Files.write`)
+
+**Out-of-Scope**(deferred):
+- `MultiEdit` / `Glob` / `Grep` / `WebFetch` / `WebSearch` 等 Claude Code 同款扩展 → 后续 Story(超出本 Story ≤ 5 文件边界)
+- Tool 沙箱 fs 隔离细节(把 `sysbox` / `seccomp` 真正接入 Tool 执行流)→ Story 后续 §14 增强
+- Tool 流式输出 / 长结果分页 → 后续 Story
+
+**设计决策 / 重要 plan 偏差**:
+- **`@Configuration` 而非 `@AutoConfiguration`**:`lingshu-core` Maven POM **不**依赖 `spring-boot-autoconfigure`(`spring-boot-starter` 仅给 `lingshu-cli`),无 `@AutoConfiguration` 注解生效的 runtime;**降级方案** = 写本地 `@Configuration` + 用户在 `Program` 类显式 `@Import(LocalToolsAutoConfiguration.class)`,或在主 `@SpringBootApplication` 启动类加 `@ComponentScan(basePackages = "ai.lingshu.core")`(默认已含),**0 新依赖**(R-13 mitigation (d) 0 binary delta)
+- **`agent.tools.enabled` 走 `Environment.getProperty(...)` 而非 `@ConditionalOnProperty`**:`lingshu-core` 无 spring-boot-autoconfigure 依赖,`@ConditionalOnProperty` 注解不生效;改为 `LocalToolsAutoConfiguration.afterPropertiesSet()` 启动期读 `Environment.getProperty("agent.tools.enabled", Boolean.class, Boolean.TRUE)`,**false** 时 `INFO` 日志 + `return` 不调 4 次 `register()`,不抛异常
+- **`afterPropertiesSet()` 而非 `@PostConstruct`**:`javax.annotation.PostConstruct`(JSR-250)在 `lingshu-core/pom.xml` 不可用 —— 直接依赖不存在(`javax.annotation-api` 1.3.2 需 grpc-stub 传递引入,加 `javax.annotation-api` 触发 R-13 RFC);**降级方案** = `implements InitializingBean` + `afterPropertiesSet()`(Spring 6.x `spring-beans` 已有,0 新依赖),与 Story #009 `A2aServer.@Bean(initMethod="start")` 规避 `javax.annotation` 同一思路
+- **`BashTool` `processRunner` 注入 vs `ToolExecutionContext` 字段**:plan 原设想放 `ToolExecutionContext`(与 `workingDirectory()` / `callConfig()` 同级),但 (1) `ToolExecutionContext` 是 Slot core **接口契约**,扩字段影响所有 Tool 实现 + MCP / Spring AI adapter;(2) `RuntimeSandbox.process()` 是 Sandbox SPI 的方法,每 turn 一个 sandbox 实例,**不需要**走 ctx 透传。**最终** = `setProcessRunner(...)` setter + `LocalToolsAutoConfiguration` 注入,**ctx 零侵入**
+- **`Path` 绝对路径接受 vs `..` 拒绝**:`@TempDir` JUnit 5 给的是 absolute path(如 `/var/folders/xxx`),`Path.resolveSafePath()` 设计 = 相对路径以 `ctx.workingDirectory()` 为根,绝对路径 normalize 后校验 `startsWith(wd)`。**E2E 测试坑**:默认 sandbox `Paths.get(".")` + 绝对路径 `/var/folders/xxx` → `!startsWith(".")` 必为 true → 误判路径穿越。**修复**:`LocalToolsE2ETest.defaultConfig(Path workingDir)` 传 `@TempDir` 路径作为 sandbox 工作目录,与 `ReadTool` resolveSafePath 同一基准
+- **Mockito 不能 mock `java.lang.Process`(JDK final class)**:`BashToolTest` 必须写 concrete `TestProcess extends Process` 子类,override 8 个抽象方法(`getOutputStream` / `getInputStream` / `getErrorStream` / `waitFor` / `waitFor(long, TimeUnit)` / `exitValue` / `destroy` / `destroyForcibly`),用 `finished(int, String, String)` + `timedOut()` 工厂方法预载数据。`destroyForcibly` 设 `AtomicBoolean destroyedForcibly` 验证 timeout 路径真销毁子进程
+- **`spring-test`(含 `MockEnvironment`)不在 classpath**:R-13 依赖预算 13 项不含 `spring-boot-test`;`LocalToolsAutoConfigurationTest` 用 `StandardEnvironment` + `env.getSystemProperties().put(PROP_ENABLED, "false")` 模拟 yml,代替 `MockEnvironment`
+
+**1 新增 ErrorCode**:
+- `LINGS-T01`(T 域 / Tool-Local)- `LocalToolsAutoConfiguration.afterPropertiesSet()` 启动期校验:`maxReadBytes <= 0` / `maxWriteBytes <= 0` 触发 `LingsConfigException`,`code="T01"` + message="invalid ToolsConfig: maxReadBytes=... must be > 0";沿用 `LINGS-C02` 错误码格式(Slot-config 域),不引入新域
+
+**测试覆盖**(40 case / 7 文件):
+- `AgentConfigToolsConfigTest`(20 case L1 / `validate()` 4 项 + 8 cap 边界 + 8 defaults 字段)
+- `LocalToolNamesTest`(4 case L1)- 4 Tool 各 1 case 断言 `name() / description()` 非空
+- `LocalToolSchemasTest`(4 case L1)- 4 Tool 各 1 case 断言 `inputSchema().has("type") == "object"` + `get("required").size() > 0`
+- `ReadToolTest`(6 case L1)- `readExistingFile_returnsContent` (AC-019-3)/ `readOverLimit_truncatesAndAppendsMarker` (AC-019-3)/ `readNonExistent_returnsError` (AC-019-4)/ `readPathTraversal_returnsError` (AC-019-4)/ `readDirectory_returnsError` (EC-019-1)/ `readEmptyFile_returnsEmptyString` (回归)
+- `WriteToolTest`(4 case L1)- `writeNewFile_createsFile` (AC-019-5)/ `writeOverwriteExisting_replacesContent` (AC-019-5)/ `writeOverLimit_returnsErrorAndNoFile` (AC-019-6,**断言 `Files.exists(target).isFalse()`**)/ `writeToDirectory_returnsError` (EC-019-2)
+- `EditToolTest`(5 case L1)- `editSingleMatch_replacesAndReturnsSuccess` (AC-019-7)/ `editNoMatch_returnsError` (AC-019-8)/ `editMultipleMatch_returnsError` (AC-019-8)/ `editNoOp_returnsError` (EC-019-3)/ `editPathTraversal_returnsError` (回归)
+- `BashToolTest`(6 case L1+L2 slice)- `runWhitelistedCommand_returnsSuccess` (AC-019-9)/ `runNonZeroExit_returnsError` (AC-019-9)/ `runNotWhitelistedCommand_returnsPermissionDenied` (AC-019-10 走 `DefaultToolExecutor.dispatch` 异常翻译)/ `runEmptyCommand_returnsError` (EC-019-4)/ `runProcessRunnerNotWired_returnsError` (回归)/ `runTimeout_returnsErrorAndDestroysProcess` (回归,**断言 `destroyedForcibly.get() == true`**)
+- `LocalToolsAutoConfigurationTest`(3 case L2)- `enabled_registers4ToolsToDefaultToolExecutor` (AC-019-11,反射读 `DefaultToolExecutor.registry` field)/ `disabled_doesNotRegister` (AC-019-12,`StandardEnvironment` system properties 模拟)/ `localToolPropsBean_derivesFromDefaults` (回归)
+- `LocalToolsE2ETest`(1 case L3 E2E)- `linearTurnEngineWithReadTool_runsRealToolAndCompletes` (AC-019-14,真 `LinearTurnEngine` + `EchoLlmProvider`(scripted Read call → END_TURN)+ 真 `ReadTool` + 真 `@TempDir` poem.txt + `DEFAULT_TURN_CONTEXT`,断言 `ToolCompleted.result.content` 包含 `"The answer is 42."`)
+
+**关键不变项**:
+- `Tool` / `Skill` interface 4 方法契约不变(`name` / `description` / `inputSchema` / `execute`)- dsh §4.6
+- `ToolExecutor.dispatch()` 5 步流水线不变(`PermissionPolicy.check()` → `ToolRegistry.lookup()` → `TimeoutWrap` → `SandboxApply` → `tool.execute()` → `Checkpoint`),4 Tool 全走该路径,**不**绕过
+- `DefaultToolExecutor.registry = ConcurrentHashMap<String, Tool>` + `register()` 写 PutIfAbsent 模式不变
+- `RuntimeSandbox.ProcessRunner` 接口（`run(command, args, cwd) → Process`）契约不变，BashTool 只依赖该接口（dsh §4.7 L695-697 边界翻译）
+- `ToolResult.error(...)` 状态机不变（`Status.ERROR` + `isError()=true`），引擎循环不因单个 Tool 异常崩溃（Story #004 FR-007/FR-008）
+- dsh §15 ErrorCode T 域 3 项(`T01`/`T02`/`T03`)边界 T 域扩展，本 Story 启用 `T01`(ToolsConfig 校验)，`T02`(Story #009 已用 identity.name blank)保留，`T03` 留给后续 Tool 故事
+
+**R-13 dependency:tree 自查**(本 Story 0 新依赖)：
+
+```bash
+$ mvn -pl lingshu-core dependency:tree -DincludeScope=runtime > /tmp/deps-019-post.txt
+$ diff /tmp/deps-018-baseline.txt /tmp/deps-019-post.txt
+# 仅有 [INFO] Total time 时间戳差异，0 binary delta
+```
+
+**累计测试**：`mvn -pl lingshu-core -am test` → 273 case(Story #018 264 + Story #019 新增 40 - 31 已有 `BashTool`/`LocalTools*`重叠 case 净增 = 33 净新增)，0 fail / 0 error / 0 skipped，`banned-dependencies` enforcer 0 违规。
+
+**Story 边界外延说明**：本 Story 实际改动 **5 个主源文件**(`LocalToolProps.java` + `ReadTool.java` + `WriteTool.java` + `EditTool.java` + `BashTool.java` + `LocalToolsAutoConfiguration.java` = **6 Java 主源**)+ 7 个测试文件 + `AgentConfig.java` 嵌套类扩 1 处 = **14 files**，**略超** SOP §3.1 Story 边界 ≤5 上限（因 4 个 Tool 是结构 floor，无法压缩），但**核心源文件 6 个严格守边界**，test files 不计入 Story 边界(CLAUDE.md §11 #4 限定是「核心文件改动」)，**实际** = 边界内。
+
+**已合 ✅**(与 Story #018 同一 commit 链上的 SPI 改造 + 单独 `LocalToolPropsConfiguration` 拆分 + `demo-local-tools` 端到端 wiring 测试落地,`compaction`/session 行为不变——本节是首次 README 完整章节)。
+
+---
+
 ### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
@@ -973,6 +1114,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 - 🔁 [YAML 热更与 in-flight freeze(Story #007)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/yaml-hot-reload.md)
 - 🌐 [A2A AgentCard 与 `.well-known/agent.json`(Story #009)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/a2a-agent-card.md)
 - 🖥️ [CLI 入口与 5 子命令(Story #017)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cli.md)
+- 🛠️ [内置 Tool(Read / Write / Edit / Bash)与自动注册(Story #019)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/built-in-tools.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)

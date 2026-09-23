@@ -152,6 +152,7 @@ class ProjectTreeMemorySourceTest {
             base.getA2aTransport(),
             base.getTenants(),
             base.getA2a(),                                    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());     // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),     // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());         // tools (Story #019)
     }
 }

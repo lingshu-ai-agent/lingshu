@@ -72,6 +72,8 @@ class CompactorPropsTest {
             base.getA2aTransport(),
             base.getTenants(),
             base.getA2a(),
-            cc);
+            cc,
+            base.getTools()  // tools (Story #019) — pass-through
+        );
     }
 }

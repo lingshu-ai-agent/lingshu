@@ -4,6 +4,7 @@ import ai.lingshu.core.impl.config.ToolExecutorConfig;
 import ai.lingshu.core.impl.permission.AllowAllPermissionPolicyProvider;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
 import ai.lingshu.core.impl.tool.DefaultToolExecutorProvider;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
 import org.junit.jupiter.api.AfterAll;
@@ -109,7 +110,8 @@ class LinearTurnEngineE2ESmokeTest {
             null,               // a2aTransport
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
     }
 
     /**
@@ -186,6 +188,26 @@ class LinearTurnEngineE2ESmokeTest {
             return new ai.lingshu.core.impl.router.Routers.ToolExecutorRouter(
                 Collections.<ai.lingshu.core.spi.Providers.ToolExecutorProvider>singletonList(
                     defaultToolExecutorProvider));
+        }
+
+        /**
+         * Story #019 — Explicit {@link ai.lingshu.core.slot.ToolRegistry} bean.
+         *
+         * <p>Why this lives here (not the {@code @Component}-scanned
+         * {@link DefaultToolRegistry}): the smoke test boots an
+         * {@link AnnotationConfigApplicationContext} from this {@link Configuration}
+         * directly, with no {@code @ComponentScan} active. Without this bean,
+         * {@link DefaultToolExecutorProvider}'s {@code @Autowired} constructor
+         * parameter has no resolver and the context fails to refresh.
+         *
+         * <p>In production, Spring Boot's component scan picks the
+         * {@code @Component}-annotated {@link DefaultToolRegistry} up automatically;
+         * the local declaration here only fills the gap for the smoke test's
+         * minimal-context boot.
+         */
+        @Bean
+        ai.lingshu.core.slot.ToolRegistry toolRegistry() {
+            return new DefaultToolRegistry();
         }
     }
 }

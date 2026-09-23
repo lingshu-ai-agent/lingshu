@@ -8,11 +8,9 @@ import ai.lingshu.core.slot.Tool;
 import ai.lingshu.core.slot.ToolException;
 import ai.lingshu.core.slot.ToolExecutionContext;
 import ai.lingshu.core.slot.ToolExecutor;
+import ai.lingshu.core.slot.ToolRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Story #001 default {@link ToolExecutor} — registry-backed dispatch with the 5-step pipeline.
@@ -24,13 +22,19 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>🆕 Story #004 — translates {@link ToolException} (and any other {@link RuntimeException})
  *       into {@link ToolResult#error} so the engine loop can continue past failures
  *       (dsh §4.10.1 硬规则 2 + FR-007/FR-008).</li>
+ *   <li>🆕 Story #019 — tool registry lifted out of the executor into a
+ *       dedicated {@link ToolRegistry} SPI (Singleton Bean); the executor now
+ *       only knows how to dispatch, not how to register. Tools (Read / Write /
+ *       Edit / Bash) are registered into the shared {@code ToolRegistry} by
+ *       {@code LocalToolsAutoConfiguration}; {@link DefaultToolExecutorProvider}
+ *       passes the same singleton into the per-turn executor instance.</li>
  * </ul>
  *
  * <p>The 5-step pipeline (dsh §4.6):
  * <ol>
  *   <li>{@link PermissionPolicy#check} — gated here so the same code path works whether
  *       the policy is {@code allow-all} (demo) or {@code strict} (production).</li>
- *   <li>Registry lookup by name — throws {@link ToolException.ToolNotFoundException}
+ *   <li>{@link ToolRegistry#lookup} — throws {@link ToolException.ToolNotFoundException}
  *       (now translated to {@code ToolResult.error} by the outer wrapper).</li>
  *   <li>Timeout wrap — TODO Story #011.</li>
  *   <li>Sandbox application — TODO Story #016.</li>
@@ -42,20 +46,27 @@ public class DefaultToolExecutor implements ToolExecutor {
 
     private static final Logger LOG = LoggerFactory.getLogger(DefaultToolExecutor.class);
 
-    private final Map<String, Tool> registry = new ConcurrentHashMap<>();
     private final PermissionPolicy permissionPolicy;
+    private final ToolRegistry toolRegistry;
 
-    public DefaultToolExecutor(PermissionPolicy permissionPolicy) {
-        this.permissionPolicy = permissionPolicy;
-    }
-
-    /** Register a tool; typically called by Spring's auto-discovery of {@code @Component Tool} beans. */
-    public void register(Tool tool) {
-        Tool prior = registry.putIfAbsent(tool.name(), tool);
-        if (prior != null && prior != tool) {
-            LOG.warn("Duplicate tool registration: name={} prior={} new={}",
-                tool.name(), prior.getClass().getSimpleName(), tool.getClass().getSimpleName());
+    /**
+     * @param permissionPolicy  gates {@code dispatch} step 1 (dsh §4.7)
+     * @param toolRegistry      shared singleton; consulted at step 2 to resolve
+     *                          the {@link Tool} for a given name. Required
+     *                          non-null — caller (typically
+     *                          {@link DefaultToolExecutorProvider#create(AgentConfig)})
+     *                          obtains it via {@code @Autowired} on the
+     *                          Provider's Spring container.
+     */
+    public DefaultToolExecutor(PermissionPolicy permissionPolicy, ToolRegistry toolRegistry) {
+        if (permissionPolicy == null) {
+            throw new IllegalArgumentException("permissionPolicy must not be null");
         }
+        if (toolRegistry == null) {
+            throw new IllegalArgumentException("toolRegistry must not be null");
+        }
+        this.permissionPolicy = permissionPolicy;
+        this.toolRegistry = toolRegistry;
     }
 
     @Override
@@ -103,8 +114,8 @@ public class DefaultToolExecutor implements ToolExecutor {
                 "AskUser approval flow is wired in Story #005 follow-up");
         }
 
-        // Step 2: Registry lookup
-        Tool tool = registry.get(call.getName());
+        // Step 2: Registry lookup — consults the shared ToolRegistry bean
+        Tool tool = toolRegistry.lookup(call.getName());
         if (tool == null) {
             throw new ToolException.ToolNotFoundException(call.getName());
         }

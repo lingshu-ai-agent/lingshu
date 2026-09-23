@@ -9,6 +9,7 @@ import ai.lingshu.core.impl.permission.AllowAllPermissionPolicy;
 import ai.lingshu.core.impl.runtime.DefaultSession;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.TurnContext;
@@ -59,7 +60,8 @@ class LinearTurnEngineCancellationIT {
             null,               // a2aTransport
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
-            AgentConfig.CompactorConfig.defaults());  // compactorConfig (Story #018)
+            AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
+            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
     }
 
     @Test
@@ -68,7 +70,7 @@ class LinearTurnEngineCancellationIT {
         // Slow LLM — future is only completed when cancellation fires (or 30s safety net).
         SlowLlmProvider llm = new SlowLlmProvider("partial response text", 30_000L);
 
-        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy());
+        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy(), new DefaultToolRegistry());
         ExecutorService pool = Executors.newFixedThreadPool(4, r -> {
             Thread t = new Thread(r, "lingshu-ac04-" + System.nanoTime());
             t.setDaemon(true);
@@ -136,7 +138,7 @@ class LinearTurnEngineCancellationIT {
     @DisplayName("cancel_beforeFirstStep_emitsCancelledImmediately")
     void cancel_beforeFirstStep_emitsCancelledImmediately() throws Exception {
         SlowLlmProvider llm = new SlowLlmProvider("ignored", 30_000L);
-        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy());
+        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy(), new DefaultToolRegistry());
         ExecutorService pool = Executors.newFixedThreadPool(2, r -> {
             Thread t = new Thread(r, "lingshu-cancel-pre-" + System.nanoTime());
             t.setDaemon(true);
@@ -174,12 +176,13 @@ class LinearTurnEngineCancellationIT {
         // mid-dispatch we cancel — each in-flight future is cancelled and we
         // observe "cancelled before tool dispatch" / "tool cancelled" ToolResults.
         CountDownLatch toolStartGate = new CountDownLatch(1);
-        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy());
+        DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+        DefaultToolExecutor toolExec = new DefaultToolExecutor(new AllowAllPermissionPolicy(), toolRegistry);
         // 4 sleep tools, each holds for 2 seconds unless interrupted
-        toolExec.register(new SleepTool("slow_a", 2_000L, toolStartGate));
-        toolExec.register(new SleepTool("slow_b", 2_000L, toolStartGate));
-        toolExec.register(new SleepTool("slow_c", 2_000L, toolStartGate));
-        toolExec.register(new SleepTool("slow_d", 2_000L, toolStartGate));
+        toolRegistry.register(new SleepTool("slow_a", 2_000L, toolStartGate));
+        toolRegistry.register(new SleepTool("slow_b", 2_000L, toolStartGate));
+        toolRegistry.register(new SleepTool("slow_c", 2_000L, toolStartGate));
+        toolRegistry.register(new SleepTool("slow_d", 2_000L, toolStartGate));
 
         // LLM: first call returns 4 tool calls, second call is CANCELLED (won't be reached)
         ai.lingshu.core.impl.flow.support.EchoLlmProvider llm =

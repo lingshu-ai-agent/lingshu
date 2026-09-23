@@ -30,6 +30,7 @@ import static org.mockito.Mockito.when;
 class DefaultToolExecutorTest {
 
     private DefaultToolExecutor executor;
+    private DefaultToolRegistry registry;
     private PermissionPolicy policy;
     private ToolExecutionContext ctx;
     private ObjectMapper mapper;
@@ -37,7 +38,8 @@ class DefaultToolExecutorTest {
     @BeforeEach
     void setUp() {
         policy = mock(PermissionPolicy.class);
-        executor = new DefaultToolExecutor(policy);
+        registry = new DefaultToolRegistry();
+        executor = new DefaultToolExecutor(policy, registry);
         ctx = mock(ToolExecutionContext.class);
         mapper = new ObjectMapper();
     }
@@ -79,7 +81,7 @@ class DefaultToolExecutorTest {
     @Test
     @DisplayName("L1-004: dispatch_success_returnsOriginalResult (regression)")
     void dispatch_success_returnsOriginalResult() {
-        executor.register(successTool("read_file", "contents-of-file"));
+        registry.register(successTool("read_file", "contents-of-file"));
         when(policy.check(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
             .thenReturn(new Decision.Allow("test"));
 
@@ -136,7 +138,7 @@ class DefaultToolExecutorTest {
     @Test
     @DisplayName("L1-003: dispatch_unexpectedException_returnsErrorResult (FR-008)")
     void dispatch_unexpectedException_returnsErrorResult() {
-        executor.register(throwingTool("buggy_tool", new NullPointerException("NPE inside tool")));
+        registry.register(throwingTool("buggy_tool", new NullPointerException("NPE inside tool")));
         when(policy.check(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
             .thenReturn(new Decision.Allow("test"));
 
@@ -154,8 +156,8 @@ class DefaultToolExecutorTest {
     void register_duplicateSecondWarnsAndKeepsFirst() {
         Tool first = successTool("read_file", "first");
         Tool second = successTool("read_file", "second");
-        executor.register(first);
-        executor.register(second);
+        registry.register(first);
+        registry.register(second);
 
         // Second register call should warn + keep first tool
         when(policy.check(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))

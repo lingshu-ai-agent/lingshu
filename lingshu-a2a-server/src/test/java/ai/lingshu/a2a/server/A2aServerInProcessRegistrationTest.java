@@ -144,6 +144,8 @@ class A2aServerInProcessRegistrationTest {
             AgentConfig.Memory.defaults(),
             "default",
             null,
-            a2a);
+            a2a,
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults());
     }
 }
