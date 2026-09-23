@@ -1,5 +1,6 @@
 package ai.lingshu.core.impl.skill;
 
+import ai.lingshu.core.impl.skill.source.CompositeSkillLoader;
 import ai.lingshu.core.slot.Skill;
 import ai.lingshu.core.slot.ToolRegistry;
 import org.slf4j.Logger;
@@ -16,24 +17,35 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Story #020a — Wire the {@code @Component}-typed {@link Skill} beans into the
- * {@link ToolRegistry} (dsh §6.4).
+ * Story #020a → #020b — Wire both {@code @Component}-typed {@link Skill} beans
+ * <b>and</b> Phase-1 SKILL.md-derived Skills into the {@link ToolRegistry} (dsh §6.4).
+ *
+ * <p><b>Two-phase registration order</b> (dsh §6.4 + §10 R-09 mitigation philosophy):
+ * <ol>
+ *   <li><b>Phase 1</b> — {@link CompositeSkillLoader#loadAll} scans every configured
+ *       {@link SkillSource} (classpath / directory / future {@code git}/{@code s3}) and
+ *       produces a {@code Map<String, Skill>}.</li>
+ *   <li><b>Phase 2</b> — Spring-injected {@code Map<String, Skill>} of {@code @Component}
+ *       beans is layered on top via {@link CompositeSkillLoader#mergePhases}. Phase 2 wins
+ *       on name collision (hardcoded {@code @Component} Skills override file-based
+ *       {@code SKILL.md} entries — Story #020a design intent).</li>
+ *   <li><b>Registration</b> — iterate the merged map in order, register each with the
+ *       shared {@link ToolRegistry}. The registry's {@code register} method handles the
+ *       {@code instanceof Skill} check internally (Story #020a T-04) and updates both
+ *       {@code registry} and {@code skillsByName} indices.</li>
+ * </ol>
  *
  * <p><b>Why this class exists separately from
  * {@link ai.lingshu.core.impl.tool.local.LocalToolsAutoConfiguration}:</b> that
  * configuration auto-wires {@code Map<String, Tool>} (all Tool beans) — including any
  * {@link Skill}-typed ones — but it does NOT signal the parallel Skill index. Splitting
- * the registration into two configurations keeps each one Single-Responsibility:
- * {@code LocalToolsAutoConfiguration} handles the four built-in Tools (incl. their
- * {@code BashTool}-specific wiring into {@code RuntimeSandbox}); this class handles the
- * zero-wiring Skills (Skills have no external dependencies, just registration).
+ * the registration into two configurations keeps each one Single-Responsibility.
  *
  * <p>Reuses the same template as {@code LocalToolsAutoConfiguration}:
  * <ul>
  *   <li>{@code @Configuration} + {@link InitializingBean} — avoids
  *       {@code javax.annotation.PostConstruct} import per Story #009 R-13 mitigation
- *       philosophy (do not pull {@code javax.annotation-api} / Jakarta's annotation-api
- *       just for one lifecycle hook).</li>
+ *       philosophy.</li>
  *   <li>Toggle via {@link #PROP_ENABLED} {@code agent.skills.enabled}, default {@code true}.</li>
  *   <li>{@link Lazy} on the {@code Map<String, Skill>} injection to break the
  *       bean-cycle (this {@code @Configuration} ↔ Skill {@code @Component}s).</li>
@@ -42,20 +54,6 @@ import java.util.Map;
  * <p><b>Why no Skill-specific wiring (cf. {@code BashTool.setProcessRunner}):</b>
  * Skills have no external dependencies — they are pure {@code (call, ctx) → ToolResult}
  * transformations. Pure registration is sufficient.
- *
- * <p><b>Bean wiring order:</b>
- * <ol>
- *   <li>Spring creates {@code @Component}-typed Skill beans (e.g. {@link CommitSkill})
- *       as part of component-scanning.</li>
- *   <li>{@link #afterPropertiesSet()} fires after constructor injection; we iterate the
- *       {@code Map<String, Skill>} and register each with the shared
- *       {@link ToolRegistry}. The registry's {@code register} method does the
- *       {@code instanceof Skill} check internally (Story #020a T-04) and updates
- *       both {@code registry} and {@code skillsByName} indices.</li>
- *   <li>From this point on, any caller of {@code ToolRegistry.findSkill("commit")},
- *       {@code toolRegistry.skillNames()}, or {@code toolRegistry.modelVisibleSpecs()}
- *       sees the registered Skills.</li>
- * </ol>
  */
 @Configuration
 public class SkillAutoConfiguration implements InitializingBean {
@@ -68,30 +66,26 @@ public class SkillAutoConfiguration implements InitializingBean {
     private final ToolRegistry toolRegistry;
     private final Map<String, Skill> skills;
     private final Environment environment;
+    private final CompositeSkillLoader loader;
 
     /**
-     * Constructor injection of all dependencies. {@link Skill} beans are injected as a
-     * {@code Map<String, Skill>} where keys are the {@code @Component} bean names
-     * (e.g. {@code "commitSkill"}).
+     * Constructor injection of all dependencies.
      *
-     * <p>The first argument is the SPI-level {@link ToolRegistry} — this keeps the
-     * wiring open to any {@code ToolRegistry} implementation (including user-supplied
-     * alternatives).
-     *
-     * <p><b>{@code @Lazy} on the {@link Map} parameter:</b> as with
-     * {@code LocalToolsAutoConfiguration}, Spring's eager bean-creation order could
-     * create a cycle ({@code SkillAutoConfiguration} ↔ {@code commitSkill}). The
-     * {@code @Lazy} proxy defers actual lookup until {@link #afterPropertiesSet()}
+     * <p><b>{@code @Lazy} on the {@link Map} parameter:</b> Spring's eager bean-creation
+     * order could create a cycle ({@code SkillAutoConfiguration} ↔ {@code commitSkill}).
+     * The {@code @Lazy} proxy defers actual lookup until {@link #afterPropertiesSet()}
      * iterates it — by that point all Skills have been instantiated.
      */
     @Autowired
     public SkillAutoConfiguration(
             ToolRegistry toolRegistry,
             @Lazy Map<String, Skill> skills,
-            Environment environment) {
+            Environment environment,
+            CompositeSkillLoader loader) {
         this.toolRegistry = toolRegistry;
         this.skills = skills;
         this.environment = environment;
+        this.loader = loader;
     }
 
     @Override
@@ -103,19 +97,30 @@ public class SkillAutoConfiguration implements InitializingBean {
             return;
         }
 
+        // Phase 1 — SKILL.md-derived Skills from configured sources
+        SkillSourceProperties props = SkillSourceProperties.bindFromEnvironment(environment);
+        Map<String, Skill> phase1 = loader.loadAll(props);
+
+        // Phase 2 — @Component-typed Skills (Story #020a)
+        Map<String, Skill> phase2 = skills;
+
+        // Merge — Phase 2 wins on collision
+        Map<String, Skill> merged = loader.mergePhases(phase1, phase2);
+
         int registered = 0;
-        for (Map.Entry<String, Skill> e : skills.entrySet()) {
+        for (Map.Entry<String, Skill> e : merged.entrySet()) {
             Skill skill = e.getValue();
-            toolRegistry.register(skill);  // register internally does instanceof Skill 分流
+            toolRegistry.register(skill);
             registered++;
-            LOG.debug("Registered skill: beanName={} skillName={} class={}",
+            LOG.debug("Registered skill: key={} skillName={} class={}",
                 e.getKey(), skill.name(), skill.getClass().getSimpleName());
         }
+
         // Sorted name list for the INFO log line — stable ordering aids log grep.
-        List<String> sorted = new ArrayList<>();
-        for (Skill s : skills.values()) sorted.add(s.name());
+        List<String> sorted = new ArrayList<String>();
+        for (Skill s : merged.values()) sorted.add(s.name());
         Collections.sort(sorted);
-        LOG.info("Skills ready — {} skill(s) registered: {}",
-            registered, sorted);
+        LOG.info("Skills ready — {} skill(s) registered ({} from sources, {} from @Component): {}",
+            registered, phase1.size(), phase2.size(), sorted);
     }
 }

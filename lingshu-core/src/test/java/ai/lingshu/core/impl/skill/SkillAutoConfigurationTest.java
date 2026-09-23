@@ -1,5 +1,9 @@
 package ai.lingshu.core.impl.skill;
 
+import ai.lingshu.core.impl.skill.source.ClasspathSkillSourceProvider;
+import ai.lingshu.core.impl.skill.source.CompositeSkillLoader;
+import ai.lingshu.core.impl.skill.source.DirectorySkillSourceProvider;
+import ai.lingshu.core.impl.skill.source.SkillSourceRouter;
 import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.slot.Skill;
 import org.junit.jupiter.api.DisplayName;
@@ -9,6 +13,7 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -37,7 +42,7 @@ class SkillAutoConfigurationTest {
         beans.put("echoSkill", echo);
         Environment env = enabledEnv();
 
-        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env);
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
         cfg.afterPropertiesSet();
 
         // Both registered, both visible as Skills
@@ -58,7 +63,7 @@ class SkillAutoConfigurationTest {
             Collections.<String, Object>singletonMap(
                 SkillAutoConfiguration.PROP_ENABLED, "false")));
 
-        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env);
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
         cfg.afterPropertiesSet();
 
         // Skills exist but were never registered
@@ -75,7 +80,7 @@ class SkillAutoConfigurationTest {
         Map<String, Skill> beans = new LinkedHashMap<>();
         Environment env = enabledEnv();
 
-        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env);
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
         cfg.afterPropertiesSet();
 
         assertThat(registry.skillNames()).isEmpty();
@@ -91,7 +96,7 @@ class SkillAutoConfigurationTest {
         beans.put("greetSkill", s);
         Environment env = enabledEnv();
 
-        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env);
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
         cfg.afterPropertiesSet();
 
         assertThat(registry.skillNames()).containsExactly("greet");
@@ -108,10 +113,74 @@ class SkillAutoConfigurationTest {
         // Plain environment — no property overrides; default behavior is enabled=true
         Environment env = new StandardEnvironment();
 
-        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env);
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
         cfg.afterPropertiesSet();
 
         assertThat(registry.skillNames()).containsExactly("commit");
+    }
+
+    // ── 🆕 Story #020b — Phase 1 (SKILL.md sources) wiring ────────────────
+
+    @Test
+    @DisplayName("AC-020b-5: agent.skills.sources[0].type=classpath binds and loads SKILL.md files")
+    void phase1_classpathSource_discoversSkills() throws Exception {
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        Map<String, Skill> beans = new LinkedHashMap<>();   // no @Component Skills
+        StandardEnvironment env = new StandardEnvironment();
+        env.getPropertySources().addFirst(new MapPropertySource("Story020b",
+            Collections.<String, Object>singletonMap(
+                "agent.skills.sources[0].type", "classpath")));
+        env.getPropertySources().addFirst(new MapPropertySource("Story020b2",
+            Collections.<String, Object>singletonMap(
+                "agent.skills.sources[0].location", "classpath:skills/agent-builtin/")));
+
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
+        cfg.afterPropertiesSet();
+
+        // 3 SKILL.md fixtures: commit / review / docs
+        assertThat(registry.skillNames()).containsExactlyInAnyOrder("commit", "review", "docs");
+    }
+
+    @Test
+    @DisplayName("AC-020b-5: sources=[] → no Skills from sources, @Component Skills still register")
+    void phase1_emptySources_componentSkillsStillRegister() throws Exception {
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        CommitSkill commit = new CommitSkill();
+        Map<String, Skill> beans = new LinkedHashMap<>();
+        beans.put("commitSkill", commit);
+        StandardEnvironment env = new StandardEnvironment();
+        env.getPropertySources().addFirst(new MapPropertySource("Story020b",
+            Collections.<String, Object>singletonMap(
+                "agent.skills.sources[0].type", "classpath")));
+        // Note: NO .location key → bindFromEnvironment treats this as a missing-index terminator
+
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
+        cfg.afterPropertiesSet();
+
+        // Phase 1 produced 0 (no valid sources); Phase 2's CommitSkill still registered
+        assertThat(registry.skillNames()).containsExactly("commit");
+    }
+
+    @Test
+    @DisplayName("AC-020b-5: agent.skills.enabled=false skips both Phase 1 and Phase 2 registration")
+    void disabled_skipsBothPhases() throws Exception {
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        CommitSkill commit = new CommitSkill();
+        Map<String, Skill> beans = new LinkedHashMap<>();
+        beans.put("commitSkill", commit);
+        StandardEnvironment env = new StandardEnvironment();
+        Map<String, Object> props = new LinkedHashMap<String, Object>();
+        props.put(SkillAutoConfiguration.PROP_ENABLED, "false");
+        props.put("agent.skills.sources[0].type", "classpath");
+        props.put("agent.skills.sources[0].location", "classpath:skills/agent-builtin/");
+        env.getPropertySources().addFirst(new MapPropertySource("Story020b", props));
+
+        SkillAutoConfiguration cfg = new SkillAutoConfiguration(registry, beans, env, newCompositeLoader());
+        cfg.afterPropertiesSet();
+
+        // Disabled → nothing registered from either phase
+        assertThat(registry.skillNames()).isEmpty();
+        assertThat(registry.names()).isEmpty();
     }
 
     // ── helpers ─────────────────────────────────────────────────────────
@@ -127,5 +196,17 @@ class SkillAutoConfigurationTest {
         MutablePropertySources sources = env.getPropertySources();
         sources.addFirst(new MapPropertySource("SkillTestOverride", overrides));
         return env;
+    }
+
+    /**
+     * Build a {@link CompositeSkillLoader} wired with the two v1
+     * {@link ai.lingshu.core.slot.SkillSourceProvider} beans — mirrors what Spring
+     * auto-discovers in {@code SkillAutoConfiguration}'s production bootstrap.
+     */
+    private static CompositeSkillLoader newCompositeLoader() {
+        SkillSourceRouter router = new SkillSourceRouter(Arrays.asList(
+            new ClasspathSkillSourceProvider(),
+            new DirectorySkillSourceProvider()));
+        return new CompositeSkillLoader(router);
     }
 }
