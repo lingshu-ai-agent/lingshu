@@ -9,9 +9,9 @@
 
 ---
 
-## ✅ 已完成(Story #001—#009 + #009a/b/c/d + #017 + #018 + #019)
+## ✅ 已完成(Story #001—#009 + #009a/b/c/d + #017 + #018 + #019 + #020a)
 
-详见 `README.md` 「Story 路线图」段 + `dsh_agent_design.md §13` changelog。共 16 个 PR 合入:
+详见 `README.md` 「Story 路线图」段 + `dsh_agent_design.md §13` changelog。共 17 个 PR 合入:
 
 | Story | slug | 状态 |
 |---|---|---|
@@ -31,6 +31,7 @@
 | #017 | cli-entrypoint | ✅ 合 |
 | #018 | truncating-compactor | ✅ 合 |
 | #019 | built-in-tools | ✅ 合 |
+| #020a | skill-foundation | ✅ 合(2026-09-23,PR #28) |
 
 ---
 
@@ -48,7 +49,7 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 
 | 序 | Story # | slug | dsh § | 范围 | 文件数 | ErrorCode | 依赖 |
 |---:|---|---|---|---|---:|---|---|
-| 1 | **#020a** | `skill-foundation` | §6.4 核心 | `SkillTool` + `fromMarkdown` 静态工厂 + `@Component CommitSkill` + `ToolRegistry`(modelVisibleSpecs / findSkill / skillNames / findByName) | 5 | 0 | 依赖 #019 ✅ 已合 |
+| 1 | ~~**#020a**~~ | ~~`skill-foundation`~~ | §6.4 核心 | ~~`SkillTool` + `fromMarkdown` 静态工厂 + `@Component CommitSkill` + `ToolRegistry`(modelVisibleSpecs / findSkill / skillNames / findByName)~~ | ~~5~~ | ~~0~~ | **✅ 已合**(PR #28,2026-09-23) |
 | 2 | **#020b** | `skill-source-discovery` | §6.4 多源 | `SkillSource` + `SkillSourceProvider` 接口 + `ClasspathSkillSource` + `DirectorySkillSource` + `CompositeSkillLoader`(putIfAbsent)+ `SkillSourceRouter` | 5–6 | 0 | 依赖 #020a |
 | 3 | **#020c** | `cli-skill-trigger` | §6.4 CLI | CLI `/xxx` 拦截 + `handleUserInput` + Skill 列表自动补全 + 启动日志 dump skills | 4 | 0 | 依赖 #020a(可选,#020b 不阻塞)|
 | 4 | **#021a** | `mcp-stdio-transport` | §6.5 (2.1) | `McpServerConnection` interface + `ConnectionState` enum 6 态 + `McpServerConnectionFactory` + `StdioMcpServerConnection`(daemon 心跳 + 1s→60s 指数退避 + 无限重试)+ `McpServerConfig` | 5 | LINGS-M01 (connect failed)| — |
@@ -61,7 +62,7 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 ### 实施顺序建议(支持并行)
 
 ```
-主链(必须顺序): #020a → #020b → #020c   (Skill 3 件套,依赖 #019 ✅ 已合)
+主链(必须顺序): ✅ #020a → #020b → #020c   (Skill 3 件套,主链下一步 = #020b skill-source-discovery)
 并行支链(与主链无依赖):
   支链 A: #021a → #021b     (MCP,可与 #020 系列并行)
   支链 B: #022               (Spring AI,可与 #020 / #021 并行)
@@ -125,6 +126,6 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 ## 🎯 实施节奏建议
 
 1. **本周(2026-09-22 周)**:Story #009d + Story #018 文档同步已完成(本文件 + 配套 4 件套 dsync)
-2. **2026-09-23 起**:Story #019 built-in-tools 已合,继续按主链顺序 #020a → #020b → #020c 推进;并行启动 #021a / #022 / #023 各自 spec.md
+2. **2026-09-23 起**:Story #019 built-in-tools + Story #020a skill-foundation 已合,继续按主链顺序 #020b → #020c 推进;并行启动 #021a / #022 / #023 各自 spec.md
 3. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
 4. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整

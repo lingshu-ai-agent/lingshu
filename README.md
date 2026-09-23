@@ -54,6 +54,7 @@
 - 🖥️ **CLI 入口已上线** — `mvn -pl lingshu-cli spring-boot:run --args='run --config app.yml --prompt ...'`,5 个子命令 `run / resume / serve / doctor / config`,hand-rolled argv 解析器零新依赖,Story #017 dsh §10.3 全落地
 - 🧹 **TruncatingCompactor 已上线** — `Compactor` SPI Slot 2 v1 默认实现,两步压缩(ToolResult 内容截断 + 滑动窗口收口),`Session.compact(List)` 原子替换 + 与 `append(Message)` 同锁,`@Value AgentConfig.CompactorConfig(maxPromptTokens / maxToolResultBytes / keepRecentTurns)` zero-config 默认 `(100_000 / 50_000 / 20)`(Story #018 dsh §6.2)
 - 🛠️ **4 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1))
+- 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
 
 ---
 
@@ -936,6 +937,70 @@ $ diff /tmp/deps-018-baseline.txt /tmp/deps-019-post.txt
 
 ---
 
+### Story #020a skill-foundation(`SkillTool` + `CommitSkill` + `ToolRegistry` 4 方法 + `SkillAutoConfiguration` AC-020a-1—AC-020a-12)
+
+dsh §6.4 L3970-4420 Skill 系统第一块砖 —— 落地 Skill 既能被 LLM FunctionCalling 自动调(对模型可见 schema),也能被用户通过 `/xxx` 显式触发(CLI 拦截留 Story #020c)的「双触发渠」基础设施。本 Story 只交付 `@Component` Skill 注册路径(SKILL.md 多源自动发现留给 Story #020b `ClasspathSkillSource` + `DirectorySkillSource`),为 Story #020c CLI `/xxx` dispatcher 与 Story #020b `CompositeSkillLoader` 铺好底层。
+
+**核心交付**(dsh §6.4 L4279-4409):
+- `SkillTool` concrete class(`Skill` interface marker 实现,4 final 字段:`name` / `description` / `content` / `inputSchema`)+ `fromMarkdown(name, markdownContent)` 静态工厂(SKILL.md 第一行 `# title` 去 leading hash 提 description,剩余正文作 content,`inputSchema` 固定 `{ "input": string }` shape)+ 4 字段构造器(`description` null → name fallback,`content` null → "" fallback,JSON schema 解析失败抛 `IllegalStateException`)
+- `CommitSkill` `@Component("commitSkill")` 内置示例 —— `name()="commit"`(常量),`description()="按 Conventional Commits 风格生成 commit message"`,复用 `SkillTool.FIXED_INPUT_SCHEMA_JSON`,`execute()` 拼"按 Conventional Commits 风格..."提示正文 + diff 非空追加 `Staged diff:\n```\n<diff>\n```` 块。**Bean 名 `commitSkill`**(非 `commit`)—— Bean 名 = 容器 ID 与 Tool name 解耦,避免未来 SKILL.md 路径同名 Bean 冲突
+- `ToolRegistry` 接口 +4 方法(`modelVisibleSpecs` / `findSkill` / `skillNames` / `findByName`)+ 原 3 方法(`register` / `lookup` / `names`)**不变**(向后兼容 Story #001 / #019 测试)
+- `DefaultToolRegistry` Skill 双索引实现 —— `Map<String, Tool> registry`(所有 Tool)+ `Map<String, Skill> skillsByName`(仅 Skill-typed),`register()` 走 `instanceof Skill` 分流 lock-step 双写 `putIfAbsent` first-wins(同名后续 register 仅 WARN 日志);`modelVisibleSpecs()` 字典序排序稳定 PromptBuilder prompt cache 命中(对齐 #009d `RemoteAgentSchemaBuilder` sort-by-`(agentName, skillId)` 哲学);`findByName()` 强契约找不到抛 `IllegalArgumentException`(与 `lookup()` 返 null 走 `ToolExecutor.dispatch` `ToolNotFoundException` 翻译路径区分)
+- `SkillAutoConfiguration` 注册样板 —— `@Configuration` + `InitializingBean.afterPropertiesSet()`,复用 `LocalToolsAutoConfiguration` 模板,`@Lazy Map<String, Skill>` 注入破 bean-cycle,`agent.skills.enabled` 默认 true(可关闭)
+
+**Narrow scope(本 Story 落地)**:
+- `SkillTool` / `CommitSkill` / `SkillAutoConfiguration` 3 新源文件 + `ToolRegistry` 接口扩 4 方法 + `DefaultToolRegistry` 改 1 文件(双索引 register) = **5 核心 Java 文件**(≤ 5 ✓)
+- `Skill` interface 不变(Story #003 已就位,`extends Tool` 零额外方法)
+- `LocalToolsAutoConfiguration` 不变(已合 Story #019)
+- `ToolExecutor.dispatch()` 5 步流水线不变 —— Skill 与 Tool 共用 dispatch path,**不**绕任何一步
+
+**Out-of-Scope**(deferred to Story #020b / #020c):
+- `SkillSource` SPI + `ClasspathSkillSource` + `DirectorySkillSource` + `CompositeSkillLoader`(SKILL.md 多源自动发现)→ Story #020b
+- CLI `/xxx` dispatcher + Skill 列表自动补全 + 启动日志 dump skills → Story #020c
+- `Skill` interface 加方法(用户别名 `/c` → `commit` / 权限标记 只能用户触发 / 危险等级 联动 §4.7 审批门)→ 未来 §14 扩展
+
+**设计决策 / 重要 plan 偏差**:
+- **Bean 名 `commitSkill` 而非 `commit`**:`@Component("commitSkill")` Bean 名 = Spring 容器 ID,与 Skill `name()`(LLM/CLI 可见标识符)= `"commit"` 解耦。未来 SKILL.md 路径同可能用 `name()="commit"`(Story #020b `CompositeSkillLoader.putIfAbsent`),**保留 `name()` 用裸名**,避免 Bean 名冲突
+- **`FIXED_INPUT_SCHEMA_JSON` 静态常量共享**:`SkillTool` 与 `CommitSkill` 复用同一 schema JSON(`{ "input": string }`),保证 SKILL.md 派与 `@Component` 派 schema 一致,同一 CLI `/xxx <arg>` 调用习惯通用(Story #020c 复用)
+- **`@Lazy Map<String, Skill>` 而非 `List<Skill>` 注入**:`SkillAutoConfiguration` 构造器注入 `Map<String, Skill>` 让 Spring 通过 bean-name → Skill 装配,Bean 名(`commitSkill`)=Map key,`Map.values()` 拿所有 Skill 实例;`@Lazy` 破 bean-cycle(`SkillAutoConfiguration` ↔ `Skill` 子类 ctor)
+- **`Skills ready — N skill(s) registered: [name1, name2, ...]` INFO log 字典序排序**:稳定输出便于 grep / log 监控
+- **`findByName()` 抛 `IllegalArgumentException`(非 ToolException.ToolNotFoundException)**:这是 API 契约错误,**不**走 ToolExecutor.dispatch 异常翻译路径(那个路径仍走 `lookup() → null → ToolNotFoundException`)
+- **Spring context 测试用 `AnnotationConfigApplicationContext` 而非 `@SpringBootTest`**:`lingshu-core` Maven POM **不**依赖 `spring-boot-test`(R-13 锁 13 项不含),`SkillRegistryE2ETest` 用 `AnnotationConfigApplicationContext` 手装 minimal ctx(只 `ToolRegistry` + `CommitSkill` + `SkillAutoConfiguration`),**0 新依赖**
+- **JDK 8 `var` 严格不用**:`CommitSkillTest` 一开始写了 `var schema = new CommitSkill().inputSchema()`,编译警告"受限类型名称",立即改回 `com.fasterxml.jackson.databind.JsonNode schema`,与 #019 同一 hard rule
+
+**0 新 ErrorCode**:`findByName()` 抛 `IllegalArgumentException` 是 Java 标准 API 契约错误,**不**算 LINGS-<域><编号> 业务错误码(对齐 Story #019 `LocalToolsAutoConfiguration` 抛 `LINGS-T01` 校验失败是 LINGS- 域,但本 Story 无业务异常)。
+
+**测试覆盖**(54 case / 7 文件,超出预算 23 case — AC 全覆盖 + 边界 case 加倍):
+- `SkillToolTest`(20 case L1)- 4 ctor(`null name` / `description null` / `content null` / `invalid JSON`)+ 4 execute 路径(有 input / 无 input / toolUseId echo / success+!error)+ 2 EC input(null input / 缺 input 字段)+ 7 fromMarkdown(标准 / `## Subtitle` / 多空格 / 空 markdown / 只有 `# ` / null markdown / 单行)+ 2 inputSchema 验证(fromMarkdown 固定 / `full ctor` 自定义) = **27 L1**
+- `CommitSkillTest`(7 case L1)- name / description / inputSchema + 4 execute(无 diff / 有 diff / null input / 缺 input 字段) = **7 L1**
+- `ToolRegistryContractTest`(6 case L2)- 反射验 SPI 暴露 4 新方法 + 保留原 3 方法 + 各方法返回类型(`List<ToolSpec>` / `Skill` / `Set<String>` / `Tool`) = **6 L2 契约**
+- `DefaultToolRegistrySkillTest`(11 case L2)- Skill 双索引 / plain Tool 仅 registry / `modelVisibleSpecs` 含所有 + 字典序 / `findSkill` null / `findByName` IAE / `lookup` null / 2 并发(同名 first-wins / 32 线程 distinct Skills)+ 3 边界(EC-020a-4 manual SkillTool / `register(null)` IAE / `skillNames()` 不可变) = **11 L2**
+- `SkillAutoConfigurationTest`(5 case L2)- enabled=true / disabled=false / 空 map / EC-020a-4 manual SkillTool / default 行为(无 prop) = **5 L2**
+- `SkillRegistryE2ETest`(1 case L3 E2E)- `AnnotationConfigApplicationContext` 启动 → registry 含 `commit` Skill → `modelVisibleSpecs` 字典序 + `findSkill` / `skillNames` 一致 = **1 L3**
+- `CommitSkillVsSkillToolTest`(4 case L2 EC-020a-3)- CommitSkill 先 vs SkillTool 先 vs 不同名共存 vs 同一实例重注册幂等 = **4 L2**
+
+**关键不变项**:
+- `Skill` interface 4 方法契约不变(`name` / `description` / `inputSchema` / `execute` 来自 `extends Tool`)
+- `ToolExecutor.dispatch()` 5 步流水线不变 —— Skill 与 Tool 共用 path,`PermissionPolicy.check()` → `ToolRegistry.lookup()` → `TimeoutWrap` → `SandboxApply` → `tool.execute()` → `Checkpoint` 全套
+- `Tool` interface 4 方法契约不变(Story #019 已就位)
+- `ToolException.ToolNotFoundException` 抛翻译仍不变(`lookup()` 返 null 路径)
+- `LocalToolsAutoConfiguration` 4 Tool 注册行为不变(Story #019 已合)
+
+**R-13 dependency:tree 自查**(本 Story 0 新依赖,baseline dep-tree 0 binary delta):
+
+```bash
+$ mvn -pl lingshu-core dependency:tree -DincludeScope=runtime > /tmp/deps-020a-post.txt
+$ diff /tmp/deps-019-post.txt /tmp/deps-020a-post.txt
+# 仅有 [INFO] Total time 时间戳差异,0 binary delta
+# SkillTool + SkillAutoConfiguration 只用 Jackson / Lombok / spring-context(已锁 6.1.6):InitializingBean + Environment + MapPropertySource
+```
+
+**累计测试**:`mvn -pl lingshu-core test` → **327 case**(Story #019 273 + Story #020a 新增 54),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**Story 边界**:**5 核心 Java 文件改动**(3 新 + 2 改)严格守 ≤ 5 ✓;**0 新 ErrorCode** 严格守 ≤ 3 ✓;本 Story 是 ROADMAP 「🟡 §6 关键实现 待补」主链 `#020a → #020b → #020c` 第 1 块,**已合 ✅**(PR #28,2026-09-23) — 下一步 Story #020b `skill-source-discovery`(SKILL.md 多源自动发现 + `CompositeSkillLoader`)。
+
+---
+
 ### 🗺️ Story 路线图 #009a—#009d A2A Client 系列
 
 > **dsh_agent_design.md 不含此节**(dsh §5.6.3.2 L3184-3185 只显式锚定 #009a Grpc + #009b InProcess 两项,3/4 个 Story 由本仓库 Story 边界检查反推)。后续 Story 实施者**不要**改动 dsh,直接编辑本节。
@@ -1115,6 +1180,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 - 🌐 [A2A AgentCard 与 `.well-known/agent.json`(Story #009)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/a2a-agent-card.md)
 - 🖥️ [CLI 入口与 5 子命令(Story #017)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cli.md)
 - 🛠️ [内置 Tool(Read / Write / Edit / Bash)与自动注册(Story #019)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/built-in-tools.md)
+- 🧩 [Skill 系统第一块砖:SkillTool + CommitSkill + ToolRegistry 4 方法(Story #020a)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/skill-foundation.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
 设计文档:`dsh_agent_design.md`(v1.5.34)
