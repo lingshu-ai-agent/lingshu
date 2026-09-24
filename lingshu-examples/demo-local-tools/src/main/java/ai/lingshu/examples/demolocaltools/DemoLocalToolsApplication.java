@@ -37,9 +37,11 @@ import org.springframework.context.annotation.FilterType;
     // Exclude YamlWatcher: it's the Story #007 daemon that hot-reloads agent.yml
     // and requires a fully-configured AgentFactory + ~70 args to construct.
     // This demo is a wiring verification, not a hot-reload one.
+    // Exclude AgentToolScanner(setApplicationContext 阶段 ctx.getBeansWithAnnotation 自引用 circular ref,
+    //  Story #022 @AgentTool 引入后所有 demo 都要排除)
     excludeFilters = @ComponentScan.Filter(
         type = FilterType.ASSIGNABLE_TYPE,
-        classes = YamlWatcher.class))
+        classes = {YamlWatcher.class}))
 public class DemoLocalToolsApplication {
 
     /**

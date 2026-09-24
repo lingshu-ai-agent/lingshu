@@ -1,0 +1,13 @@
+# Story #021a + #021b + #021c demo configuration
+agent:
+  llm:
+    provider: anthropic
+  react:
+    max-steps: 5
+  # Story #019 — 关闭本地 4 个内置 Tool(避免干扰 MCP 演示)
+  tools:
+    enabled: false
+  # Story #021a + #021b + #021c — MCP 显式空 servers 配置
+  # (若省略,mcp 配置走 AgentConfigDefaults;同样为空,McpTransport 走 idle 分支)
+  mcp:
+    servers: []

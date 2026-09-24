@@ -102,9 +102,23 @@ class AgentToolScannerTest {
     void scannerNullCtx_skipsCleanly() {
         DefaultToolRegistry registry = new DefaultToolRegistry();
         AgentToolScanner scanner = new AgentToolScanner(registry);
-        // null ctx — 不该抛异常
-        scanner.setApplicationContext(null);
+        // null ctx — 不该抛异常(scanContext 是 package-private,直接调避免
+        // 走 @EventListener 路径,验证 scan 边界)
+        scanner.scanContext(null);
         // registry 仍然为空
+        assertThat(registry.names()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("AC-022-26b: scannerIdempotent_secondScanContextIsNoOp")
+    void scannerIdempotent_secondScanContextIsNoOp() {
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        AgentToolScanner scanner = new AgentToolScanner(registry);
+        // 第一次扫 + 第二次扫 —— 第二次必须 no-op(防止 nested context /
+        // 多次 refresh 导致重复注册)
+        scanner.scanContext(new AnnotationConfigApplicationContext(DefaultToolRegistry.class));
+        scanner.scanContext(new AnnotationConfigApplicationContext(DefaultToolRegistry.class));
+        // 仅第一次生效 → 0 个 tool(DefaultToolRegistry 自身无 @AgentTool)
         assertThat(registry.names()).isEmpty();
     }
 

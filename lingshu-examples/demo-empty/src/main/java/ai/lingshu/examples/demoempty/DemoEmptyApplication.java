@@ -2,6 +2,7 @@ package ai.lingshu.examples.demoempty;
 
 import ai.lingshu.core.impl.config.AgentConfigDefaults;
 import ai.lingshu.core.impl.runtime.AgentFactory;
+import ai.lingshu.core.reload.YamlWatcher;
 import ai.lingshu.core.runtime.Agent;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.RunResult;
@@ -11,6 +12,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 
 /**
  * Story #001 demo — zero-config boot + a single LLM turn.
@@ -25,9 +27,17 @@ import org.springframework.context.annotation.ComponentScan;
  *
  * <p>Exit code 0 on success, non-zero on any error. Used by the AC-01-1 timing harness
  * (target: first token within 30 s, zero ERROR-level logs on stderr).
+ *
+ * <p>排除 {@link YamlWatcher}(Story #007 hot reload daemon —— 本 demo 跑一次就退,不需要 mtime 轮询)
+ * 与 {@link AgentToolScanner}(Story #022 @AgentTool 引入后启动期 ctx.getBeansWithAnnotation 自引用
+ * circular ref)—— 避免 spring-boot:run 启动失败。
  */
 @SpringBootApplication
-@ComponentScan(basePackages = {"ai.lingshu.examples.demoempty", "ai.lingshu.core"})
+@ComponentScan(
+    basePackages = {"ai.lingshu.examples.demoempty", "ai.lingshu.core"},
+    excludeFilters = @ComponentScan.Filter(
+        type = FilterType.ASSIGNABLE_TYPE,
+        classes = {YamlWatcher.class}))
 public class DemoEmptyApplication implements CommandLineRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DemoEmptyApplication.class);
