@@ -18,7 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
+import org.springframework.beans.factory.InitializingBean;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -60,7 +60,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * US3 / {@code /slots}-style introspection can list all 9 Slots from one entry point.
  */
 @Component
-public class AgentFactory {
+public class AgentFactory implements InitializingBean {
 
     private static final Logger LOG = LoggerFactory.getLogger(AgentFactory.class);
 
@@ -115,8 +115,8 @@ public class AgentFactory {
      * <p>JVM {@code Runtime.addShutdownHook} is idempotent on the same Thread instance
      * — repeated registrations of the same hook thread are silently ignored.
      */
-    @PostConstruct
-    public void registerJvmShutdownHook() {
+    @Override
+    public void afterPropertiesSet() throws Exception {
         Thread hook = new Thread(new Runnable() {
             @Override
             public void run() {
