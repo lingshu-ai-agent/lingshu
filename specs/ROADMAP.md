@@ -41,6 +41,7 @@
 | #009e | a2a-remote-tool-wiring | ✅ 合(2026-09-24,333 pass / 0 fail / R-13 0 binary delta / 0 ErrorCode;`RemoteAgentToolAutoConfiguration` 独立 + `RemoteAgentToolLifecycle` SmartLifecycle 显式 register/unregister + 3 transport 共用 wiring) |
 | #022 | spring-ai-annotation-tool | ✅ 合(2026-09-24,513 pass / 0 fail / R-13 0 binary delta / +LINGS-T08;`@AgentTool` 注解 + `SpringAiToolAdapter` + `AgentToolScanner` + `JsonArgsConverter` + `ToolErrorCodes.LINGS_T08`) |
 | #023 | delegate-sub-agent | ✅ 合(2026-09-24,536 pass / 0 fail / R-13 0 binary delta 第 8 次 / +LINGS-D01;`SubAgentType` enum + `DelegateErrorCodes` + `SubAgentInheritance` + `DelegateTool` + `DelegateAutoConfiguration`) |
+| #024 | tool-schemas-integration | ✅ 合(2026-09-24,**解决 OQ-5**;`DefaultPromptBuilder` 2 构造器注入 `ToolRegistry` → `Prompt.tools` = `toolRegistry.modelVisibleSpecs()`;0 新依赖 / 0 新 ErrorCode;OQ-5 由 §5.6.3.0 `RemoteAgentSchemaBuilder` → `RemoteAgentTool.description()` HINT 链路 + ToolRegistry 单点注册闭环) |
 
 ---
 
@@ -135,7 +136,16 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 |---|---|---|---|---|
 | OQ-1 | §5.6.3 / §6.5 | N-tool Bean 模式(每 skill 1 `Tool` Bean)| 🟡 OQ-Future | OpenAI / Anthropic 2025+ tool spec 广泛支持 `oneOf` + nested union |
 | OQ-2 | §5.6.3.0 | `AgentSkill` 加 `inputSchema` / `outputSchema` 字段 | 🟡 OQ-Future | 用户提具体 use case(目前 `additionalProperties: true` fallback 够用) |
-| OQ-5 | §5.6.3.0 | `PromptBuilder [TOOL SCHEMAS]` 段集成 `RemoteAgentSchemaBuilder` | 🟡 OQ-Future | PromptBuilder 重构时一并接入(改 core 引擎超出单 Story 边界) |
+
+---
+
+## ✅ 已解决 OQ(历史追溯)
+
+之前 OQ-Future 表中的项,在后续 Story 中找到了解法,**不必再开 Story 重新讨论**:
+
+| OQ | 锚定 § | 原标题 | 解决 Story | 解决方式 |
+|---|---|---|---|---|
+| OQ-5 | §5.6.3.0 | `PromptBuilder [TOOL SCHEMAS]` 段集成 `RemoteAgentSchemaBuilder` | **#024** tool-schemas-integration(2026-09-24)|`DefaultPromptBuilder` 2 构造器注入共享 `ToolRegistry` → 每 turn `Prompt.tools = toolRegistry.modelVisibleSpecs()`(sorted snapshot);`RemoteAgentTool` 经 `RemoteAgentToolLifecycle`(Story #009e)单点注册到 ToolRegistry,`RemoteAgentSchemaBuilder`(Story #009d)是 `RemoteAgentTool.description()` HINT 链路的上游(per-skill 列表经 description 透传给模型,既避免 N-tool Bean 爆炸又满足 LLM 视角可见性);OQ-5 主张的"PromptBuilder [TOOL SCHEMAS] 集成 RemoteAgentSchemaBuilder"通过 ToolRegistry 这一层隐式闭环,**无需** linghu-core 反向依赖 linghu-a2a-client(§5 模块依赖硬约束)|
 
 ---
 
@@ -146,5 +156,6 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 3. **2026-09-24**:Story #009e a2a-remote-tool-wiring 已合(独立 `RemoteAgentToolAutoConfiguration` + `RemoteAgentToolLifecycle` SmartLifecycle + 3 transport 共用 wiring + 333 tests 0 fail / R-13 0 binary delta)
 4. **2026-09-24**:Story #022 spring-ai-annotation-tool 已合(`@AgentTool` + `SpringAiToolAdapter` + `AgentToolScanner` + `JsonArgsConverter` + `LINGS-T08` + 513 tests pass / 0 fail / R-13 0 binary delta)
 5. **2026-09-24**:**Story #023 delegate-sub-agent 已合**(536 pass / 0 fail / R-13 0 binary delta 第 8 次 / +LINGS-D01;`SubAgentType` enum + `SubAgentInheritance` + `DelegateTool` + `DelegateAutoConfiguration` + 23 new cases);**§6 关键实现 主链 + 并行支链全部合入 🎉🎉🎉**;下一步走 §14 N7 SessionStore(Story #014 滞后项)
-6. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
-7. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整
+6. **2026-09-24**:**Story #024 tool-schemas-integration 已合** — `DefaultPromptBuilder` 注入 `ToolRegistry`,`Prompt.tools` = `toolRegistry.modelVisibleSpecs()`(sorted snapshot);**OQ-5 解决**;Tool/LLM 视角完整闭环(本地 / MCP / @AgentTool / Skill / RemoteAgentTool 全部经统一 registry 暴露);0 新依赖 / 0 新 ErrorCode / R-13 mitigation (d) 待 commit 后跑 baseline 镜像 diff
+7. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
+8. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整
