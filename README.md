@@ -1358,6 +1358,49 @@ agent:
 
 ---
 
+### Story #022 spring-ai-annotation-tool(`@AgentTool` 注解 + `SpringAiToolAdapter` + `AgentToolScanner` + `JsonArgsConverter` + `LINGS-T08` AC-022-1—AC-022-31)
+
+dsh §6.5 (3) L4873-4980 `Spring AI @Tool 注解集成` 实施 —— §6.5 (3) 草图只列名未给契约,且**故意**避开 Spring AI 自动执行(`ChatClient.tools().call()` 会绕过 ToolExecutor 的 5 步流水线,**严格禁用** —— dsh §4.10.1 硬规则 2);Story #022 实现**只复用 spring-ai `@Tool` 注解信息**做 JSON Schema 生成 + reflection invoke,**不依赖** spring-ai 自动执行,**完美**贴合硬规则 2。
+
+**关键设计抉择**(为什么不用 `@Tool` 而用 `@AgentTool`):
+- spring-ai 1.0.0-M6 `@Tool` 注解已在 13 项依赖表内(`spring-ai-bom` v1.5.7 引入),技术可零增量复用
+- 但 `@Tool` 是 spring-ai 命名,语义被 spring-ai 自动执行绑定 —— 用户读代码会误以为**一旦标注 spring-ai 就会自动调**,绕过 §4.10.1 硬规则 2
+- `@AgentTool` 是 lingshu 自有命名,清晰表达"通过 lingshu Tool SPI 执行(reflection)";@Tool 与 @AgentTool 字段完全相同(`name / description / returnDirect`),**AnnotationSynthesizer 转译路径 OQ-Future**(等社区诉求再做)
+
+**5 个生产文件**(全部 lingshu-core 新增):
+- `ai.lingshu.core.tool.AgentTool` —— 注解(`@Retention(RUNTIME)` + `@Target(METHOD)` + `name()` + `description()` + `capabilities()` 默认空 + `returnDirect()` 默认 false,Javadoc 明确"不依赖 spring-ai 自动执行")
+- `ai.lingshu.core.tool.ToolErrorCodes` —— `LINGS_T08 = "LINGS-T08"` 常量类(工具域 T 段 8 号空位 = 反射调用失败 ErrorCode;`ToolResult.getContent()` 内嵌入 `"[LINGS-T08] ..."` 与 §4.10.1 硬规则 2「永远 ToolResult.error 永不抛」对齐)
+- `ai.lingshu.core.tool.JsonArgsConverter` —— `static Object[] convert(ObjectNode args, Parameter[] params)`,primitive + String 类型映射(`asInt/asLong/asBoolean/asDouble`),缺字段 primitive 抛 IAE,boxed 传 null,复杂类型(Object)抛 IAE 走 LINGS-T08 catch-all
+- `ai.lingshu.core.tool.SpringAiToolAdapter implements Tool` —— JSON Schema 启动期 from reflection Method(`Map<String, JsonNode> properties` + `List<String> required`),`name()` 取 `@AgentTool.name()` + `description()` 同,`execute(call, ctx)` reflection invoke + 业务异常 catch-all 转 `[LINGS-T08]` ErrorCode ToolResult.error
+- `ai.lingshu.core.tool.AgentToolScanner implements ApplicationContextAware` —— 启动期扫 `ctx.getBeansWithAnnotation(org.springframework.stereotype.Component.class).values()` 反射找 `@AgentTool` method,调 `toolRegistry.register(new SpringAiToolAdapter(bean, method, annotation))`,**完整 LLM 视角可发现**(`modelVisibleSpecs()` 含全部 `@AgentTool`)
+
+**32 new cases 跨 4 测试文件**(AC-022-1—AC-022-31):
+- L1 `JsonArgsConverterTest` 13 case(`convert_twoInts_returnsNativeIntArgs` / `convert_mixedStringIntBool_returnsAllSet` / `convert_allFivePrimitives_returnsBoxedNative` / `convert_longCanOverflow_whenValueIsTooBig` / 5 failure path + 3 边界 + 1 sanity = 13)
+- L1+L2 `SpringAiToolAdapterTest` 10 case(`name_andDescription_matchAnnotation` / 3 schema 验证 / `execute_happyPath_returnsSuccessWithToStringContent` / `execute_businessException_returnsToolResultErrorWithLINGS_T08` / 4 capability / null call = 10)
+- L2 `AgentToolScannerTest` 5 case(`scannedAnnotatedBean_registersAllMethodsAsTools` / `duplicateToolName_logsWarningAndSkips` / `nullApplicationContext_doesNothing` / `serviceStereotypeBean_alsoScanned` / `noAnnotatedBeans_emptyRegistry`)
+- L2+L3 `AgentToolIntegrationTest` 4 case(`endToEnd_annotatedBeanMethodIsDiscoverableAndCallableViaToolExecutor` / `integrationBusinessException_reachesToolExecutor_andEmitsLINGS_T08` / `integrationStereotypeServiceBean_alsoScanned` / `modelVisibleSpecs_sortedDeterministically`)
+
+**累计测试**:`mvn -pl lingshu-core test` → **513 case**(Story #022 pre-merge 481 + Story #022 新增 32),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。**+32 新 case** 分布如上。
+
+**R-13 dep-tree 自查**(Story #022 必须按 SOP §3.2 + §3.4 流程):
+```bash
+# Pre-Story dep tree (Story #021c post-merge baseline):
+$ mvn -pl lingshu-core dependency:tree | grep -E "^\[INFO\] [+\\|\\\\]" | wc -l
+# 57 [INFO] lines
+# Post-Story dep tree (Story #022 post-merge):
+$ mvn -pl lingshu-core dependency:tree | grep -E "^\[INFO\] [+\\|\\\\]" | wc -l
+# 57 [INFO] lines, 0 binary delta vs Story #021c baseline (only [INFO] timestamps differ)
+```
+
+**Story 边界**:**5 核心 Java 源文件新增**(`@AgentTool` 注解 + `ToolErrorCodes` + `JsonArgsConverter` + `SpringAiToolAdapter` + `AgentToolScanner`)= **5 文件改动**;**严格 ≤5 边界内** ✓;**1 新 ErrorCode LINGS-T08**(工具域 T 段 8 号空位)**严格守 ≤ 3** ✓;R-13 缓解 `(d)` PASS 0 binary delta(`@AgentTool` / `JsonArgsConverter` / `SpringAiToolAdapter` 全部 JDK + Jackson + Lombok 已锁 0 新依赖,`ApplicationContextAware` / `@Component` 来自 `spring-context` transitive 已锁 + `ToolRegistry` / `Tool` / `ToolResult` 全部已存在 —— **0 新 Maven 依赖**);**关键不变项** —— `Tool` 接口契约不变(只新增 Tool 实现)/ `ToolRegistry` SPI 不变(#020a 已落地)/ `ToolExecutor` 5 步流水线不变(§4.10.1 硬规则 2)/ `spring-ai-bom` 1.0.0-M6 复用不依赖自动执行 / §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / JDK 8 only(`AtomicReference` / `volatile boolean` + `Collections.emptyList()` + `orElseThrow(IllegalStateException::new)` 而非 `orElseThrow()` no-arg,不用 `var` / sealed / records / `List.of`);**复用 spring-ai `@Tool` 注解信息但不依赖 spring-ai 自动执行**(dsh §4.10.1 硬规则 2 守住)。
+
+**扳机条件**(重新评估):
+- dsh §6.5 (3) `Spring AI @Tool 注解集成` 完整契约**生效** —— 5 文件 + 32 case + 1 ErrorCode 全在线
+- 后续 Story #023 delegate-sub-agent 可**安全**依赖 `@AgentTool` 注解(DelegateTool 本身也是 Tool SPI 实现,**不必**走 `@AgentTool` 但可借鉴 AgentToolScanner 自动发现模式)
+- dsh §4.10.1 硬规则 2「永远 ToolExecutor.dispatch() 永不直调 tool.execute()」依然唯一权威 —— 用户**禁止**用 spring-ai `ChatClient.tools().call()` 自动执行绕过
+
+---
+
 ### Story #017 cli-entrypoint(`lingshu-cli/` 5 子命令 + Spring Boot bootstrap + dsh §10.3 全落地)
 
 dsh §10.3 锚定 5 个 CLI 子命令(`run / resume / serve / doctor / config`),Story #001 实施期 `lingshu-cli/` 模块只搭了 Maven 骨架,实际从未交付;Story #017 把 §10.3 全部 5 个子命令一次性补齐 —— **首个**用户能直接 `mvn spring-boot:run --args='run ...'` 跑通端到端的入口。
