@@ -275,11 +275,13 @@ public final class DelegateTool implements Tool {
 
     @Override
     public String description() {
-        // Generic description — three declared SubAgentType configKeys are
-        // surfaced via inputSchema().enum. The description intentionally avoids
-        // hard-coding the keys (SubAgentType may grow in future versions).
+        // Surface the closed set of sub-agent roles in both prose (so the LLM
+        // sees them in the description) and via inputSchema().enum (so the LLM
+        // can only emit one of these three values). SubAgentType.allKeys() is
+        // the single source of truth.
         return "Delegate one turn of reasoning to a specialized sub-agent. "
-            + "Sub-agent runs in a fresh session and inherits the parent's config.";
+            + "Sub-agent runs in a fresh session and inherits the parent's config. "
+            + "Available subagent_types: " + SubAgentType.allKeys() + ".";
     }
 
     @Override
