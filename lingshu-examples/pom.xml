@@ -21,6 +21,20 @@
         <module>demo-empty</module>
         <module>demo-engineer</module>
         <module>demo-local-tools</module>
+        <!-- 🆕 Stage A skeletons (Story #003/#004/#005/#006/#007/#008/#009[a-e]/#018/#020[a-c]/#021[a-c]/#022/#023/#024) -->
+        <module>demo-spi</module>
+        <module>demo-parallel</module>
+        <module>demo-cancellation</module>
+        <module>demo-tenants</module>
+        <module>demo-reload</module>
+        <module>demo-max-steps</module>
+        <module>demo-compactor</module>
+        <module>demo-a2a</module>
+        <module>demo-skill</module>
+        <!-- 🆕 Story #021a + #021b + #021c — McpServerConnection 3 transport + Tool adapter + Factory dispatch -->
+        <module>demo-mcp</module>
+        <!-- 🆕 Story #022 + #023 + #024 — @AgentTool + DelegateTool + [TOOL SCHEMAS] 段 wiring -->
+        <module>demo-delegate</module>
     </modules>
 
     <dependencies>

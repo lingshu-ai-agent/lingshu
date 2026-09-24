@@ -1,0 +1,12 @@
+# Story #004 parallel-dispatch demo configuration
+agent:
+  llm:
+    provider: demo-parallel-echo          # 使用 mock LLM,4 个并行 tool call
+  tool:
+    parallelism: 4                        # AC-03:并发上限 4,允许 4 个 sleep 1s 并发
+    timeout-seconds: 30
+  react:
+    max-steps: 10
+  # Story #019 — 关闭本地 4 个内置 Tool,避免与本 demo 自定义 sleep_* 命名冲突
+  tools:
+    enabled: false

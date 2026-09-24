@@ -1,0 +1,11 @@
+# Story #006 cancellation demo configuration
+agent:
+  tenants:
+    map:
+      alice: "tenant-alice-secret"
+      bob: "tenant-bob-secret"
+  react:
+    max-steps: 10
+  # Story #019 — 关闭本地 4 个内置 Tool(本 demo 不验证 tool)
+  tools:
+    enabled: false

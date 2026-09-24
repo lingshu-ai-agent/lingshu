@@ -1,0 +1,14 @@
+# Story #018 compactor demo configuration
+agent:
+  llm:
+    provider: anthropic
+  react:
+    max-steps: 10
+  compactor:
+    name: truncating
+    max-tool-result-bytes: 512     # 缩短到 512 字节,测试时单 ToolResult 超过即触发截断
+    max-prompt-tokens: 1000        # 触发 sliding-window
+    keep-recent-turns: 3           # 保留最近 3 轮 assistant
+  # Story #019 — 关闭本地 4 个内置 Tool(本 demo 不验证 tool)
+  tools:
+    enabled: false

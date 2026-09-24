@@ -1,0 +1,15 @@
+# Story #009 + #009a—#009e demo configuration
+server:
+  port: 8080
+agent:
+  llm:
+    provider: anthropic
+  react:
+    max-steps: 5
+  # Story #019 — 关闭本地 4 个内置 Tool(避免干扰 A2A 演示)
+  tools:
+    enabled: false
+  # Story #009 — 内嵌 A2A HTTP server (AgentCard endpoint)
+  a2a:
+    enabled: true
+    card-path: /.well-known/agent.json

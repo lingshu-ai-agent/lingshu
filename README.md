@@ -348,6 +348,36 @@ mvn -pl lingshu-cli spring-boot:run \
 
 完整 CLI 子命令矩阵与 ErrorCode 详见下方 "Story #017 cli-entrypoint" 段。
 
+### 所有 14 个 demo 工程索引(Stage A 骨架,2026-09-24 落盘)
+
+按主题合并 ~ 12 个新 demo(Story #003—#024 全部覆盖),每个 demo 跑通 Spring 上下文 + 至少 1 个 `BlackBoxVerificationTest` skeleton test;完整 AC 黑盒留 Stage B。
+
+| Demo | Story 覆盖 | 验证内容(Stage A) | 跑通命令 |
+|---|---|---|---|
+| `demo-empty` | #001 | Spring main 启动 + AgentFactory.create | `mvn -pl lingshu-examples/demo-empty -am spring-boot:run` |
+| `demo-engineer` | #002 + #024 | 4 MemorySource wiring + 5 段 Prompt + `[TOOL SCHEMAS]` 段(`prompt.getTools()` 镜像 registry) | `mvn -pl lingshu-examples/demo-engineer -am test` |
+| `demo-local-tools` | #019 | 4 Tool(Read/Write/Edit/Bash)从 `LocalToolsAutoConfiguration` 注册到 `ToolRegistry` | `mvn -pl lingshu-examples/demo-local-tools -am test` |
+| `demo-spi` | #003 | `SlotRouter` 多 Provider + `AgentFactory.description()` 9 行 | `mvn -pl lingshu-examples/demo-spi -am test` |
+| `demo-parallel` | #004 | `LinearTurnEngine.dispatchParallel` 4 tool 并行 | `mvn -pl lingshu-examples/demo-parallel -am test` |
+| `demo-cancellation` | #005 | `CancellationToken` 三层贯通 + 200ms AC-04 | `mvn -pl lingshu-examples/demo-cancellation -am test` |
+| `demo-tenants` | #006 | `TenantContext` ThreadLocal + 4 维隔离 | `mvn -pl lingshu-examples/demo-tenants -am test` |
+| `demo-reload` | #007 | `YamlWatcher` mtime 轮询 + `AtomicReference` config swap | `mvn -pl lingshu-examples/demo-reload -am test` |
+| `demo-max-steps` | #008 | `MaxStepsExceeded` 事件发射 + 5 终止路径 | `mvn -pl lingshu-examples/demo-max-steps -am test` |
+| `demo-compactor` | #018 | `TruncatingCompactor` + `CompactorRouter` token 减少 | `mvn -pl lingshu-examples/demo-compactor -am test` |
+| `demo-a2a` | #009 + #009a—#009e | `A2aServer` JDK HttpServer + `/.well-known/agent.json` 黑盒 | `mvn -pl lingshu-examples/demo-a2a -am test` |
+| `demo-skill` | #020a + #020b + #020c | `SkillSourceRouter` classpath+directory + `SkillCommandDispatcher` cli 模块 | `mvn -pl lingshu-examples/demo-skill -am test` |
+| `demo-mcp` | #021a + #021b + #021c | `McpServerConnectionFactory` 3 transport(STDIO/SSE/STREAMABLE_HTTP)dispatch | `mvn -pl lingshu-examples/demo-mcp -am test` |
+| `demo-delegate` | #022 + #023 + #024 | `@AgentTool` + `DelegateTool` Task + `SubAgentType` enum 3 值 | `mvn -pl lingshu-examples/demo-delegate -am test` |
+
+**全量回归**(Stage A 14 demo 一次性跑,1 分钟级):
+
+```bash
+cd lingshu-examples
+mvn test
+```
+
+实测:`Tests run: 56, Failures: 0, Errors: 0, Skipped: 0`(demo-empty 0 + demo-engineer 3 + demo-local-tools 5 + 11 个新 demo 48)。
+
 ### Story #003 spi-slot-router(`Provider.version()` + `SlotRouter` 兼容性校验)
 
 ```bash
