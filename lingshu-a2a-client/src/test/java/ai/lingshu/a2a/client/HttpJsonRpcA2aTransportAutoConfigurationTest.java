@@ -14,7 +14,13 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * L1 unit tests — {@link HttpJsonRpcA2aTransportAutoConfiguration} (3 cases per data-model.md DM-04).
+ * L1 unit tests — {@link HttpJsonRpcA2aTransportAutoConfiguration} (Story #009c + #009e).
+ *
+ * <p><b>Story #009e</b>: this class was slimmed down to ONE {@code @Bean}
+ * (the transport provider). The previously-tested
+ * {@code remoteAgentTool} + {@code remoteAgentSchemaBuilder} beans have
+ * moved to {@link RemoteAgentToolAutoConfiguration} and are tested by
+ * {@link RemoteAgentToolAutoConfigurationTest}.</p>
  *
  * <p>Mirrors {@link InProcessA2aTransportAutoConfigurationTest}: validates the
  * AutoConfiguration class shape + SPI registration file. Uses reflection (no
@@ -23,8 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HttpJsonRpcA2aTransportAutoConfigurationTest {
 
     @Test
-    @DisplayName("TC-AC-HTTP-1: autoconfig_class_isAnnotated_andExposesProviderAndRemoteAgentToolBeans()")
-    void autoconfig_class_isAnnotated_andExposesProviderAndRemoteAgentToolBeans() throws Exception {
+    @DisplayName("TC-AC-HTTP-1: autoconfig_class_isAnnotated_andExposesProviderBean_only")
+    void autoconfig_class_isAnnotated_andExposesProviderBean_only() throws Exception {
         Class<?> clazz = HttpJsonRpcA2aTransportAutoConfiguration.class;
         assertThat(clazz.isAnnotationPresent(
             org.springframework.boot.autoconfigure.AutoConfiguration.class))
@@ -32,9 +38,10 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
             .isTrue();
 
         boolean foundProviderBean = false;
-        boolean foundToolBean = false;
+        int totalBeanMethods = 0;
         for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
             if (!m.isAnnotationPresent(org.springframework.context.annotation.Bean.class)) continue;
+            totalBeanMethods++;
             org.springframework.context.annotation.Bean bean =
                 m.getAnnotation(org.springframework.context.annotation.Bean.class);
             m.setAccessible(true);
@@ -54,15 +61,13 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
                 assertThat(provider.priority()).isEqualTo(10);
                 assertThat(provider.version()).isEqualTo("1.0.0");
             }
-            if (RemoteAgentTool.class.isAssignableFrom(m.getReturnType())) {
-                foundToolBean = true;
-                assertThat(bean.name())
-                    .as("@Bean name for RemoteAgentTool must be 'remoteAgentTool'")
-                    .containsExactly("remoteAgentTool");
-            }
         }
         assertThat(foundProviderBean).isTrue();
-        assertThat(foundToolBean).isTrue();
+        // 🆕 Story #009e: only 1 @Bean (the provider) — remoteAgentTool + remoteAgentSchemaBuilder
+        // have moved to RemoteAgentToolAutoConfiguration.
+        assertThat(totalBeanMethods)
+            .as("HttpJsonRpcA2aTransportAutoConfiguration now exposes exactly 1 @Bean (provider)")
+            .isEqualTo(1);
     }
 
     @Test
@@ -80,8 +85,8 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("TC-AC-HTTP-3: importsFile_containsAllThreeProviderLines")
-    void importsFile_containsAllThreeProviderLines() throws Exception {
+    @DisplayName("TC-AC-HTTP-3: importsFile_containsAllFourLines_includingRemoteAgentToolAutoConfiguration")
+    void importsFile_containsAllFourLines_includingRemoteAgentToolAutoConfiguration() throws Exception {
         URL importsUrl = getClass().getClassLoader().getResource(
             "META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports");
         assertThat(importsUrl)
@@ -100,6 +105,11 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
             }
         }
 
+        // 🆕 Story #009e — 4 lines now: RemoteAgentTool + 3 transports
+        assertThat(lines)
+            .as("imports file must contain 4 entries (RemoteAgentTool + 3 transports)")
+            .hasSize(4);
+        assertThat(lines).anyMatch(l -> l.contains("RemoteAgentToolAutoConfiguration"));
         assertThat(lines).anyMatch(l -> l.contains("GrpcA2aTransportAutoConfiguration"));
         assertThat(lines).anyMatch(l -> l.contains("InProcessA2aTransportAutoConfiguration"));
         assertThat(lines).anyMatch(l -> l.contains("HttpJsonRpcA2aTransportAutoConfiguration"));
@@ -116,58 +126,5 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
             }
         }
         return null;
-    }
-
-    // ─── Story #009d — TC-AC-HTTP-4: RemoteAgentSchemaBuilder @Bean + remoteAgentTool 5-arg ctor
-
-    @Test
-    @DisplayName("TC-AC-HTTP-4: remoteAgentSchemaBuilderBean_isExposed_withCorrectName")
-    void remoteAgentSchemaBuilderBean_isExposed_withCorrectName() throws Exception {
-        Class<?> clazz = HttpJsonRpcA2aTransportAutoConfiguration.class;
-
-        boolean foundSchemaBuilderBean = false;
-        boolean foundToolBean = false;
-        int toolBeanArgs = 0;
-        for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
-            if (!m.isAnnotationPresent(org.springframework.context.annotation.Bean.class)) continue;
-            org.springframework.context.annotation.Bean bean =
-                m.getAnnotation(org.springframework.context.annotation.Bean.class);
-            Class<?> rt = m.getReturnType();
-            m.setAccessible(true);
-            if (rt.equals(RemoteAgentSchemaBuilder.class)) {
-                foundSchemaBuilderBean = true;
-                // verify @Bean name is 'remoteAgentSchemaBuilder' (Story #009d)
-                assertThat(bean.name())
-                    .as("@Bean name for RemoteAgentSchemaBuilder must be 'remoteAgentSchemaBuilder'")
-                    .containsExactly("remoteAgentSchemaBuilder");
-                // verify the ctor takes ObjectMapper only (single-arg)
-                assertThat(m.getParameterCount())
-                    .as("remoteAgentSchemaBuilder(@Bean) ctor must take 1 arg (ObjectMapper)")
-                    .isEqualTo(1);
-                assertThat(m.getParameterTypes()[0])
-                    .isEqualTo(com.fasterxml.jackson.databind.ObjectMapper.class);
-                // verify invoking the bean returns a real RemoteAgentSchemaBuilder
-                Object instance = m.invoke(clazz.getDeclaredConstructor().newInstance(),
-                    new com.fasterxml.jackson.databind.ObjectMapper());
-                assertThat(instance).isInstanceOf(RemoteAgentSchemaBuilder.class);
-            }
-            if (RemoteAgentTool.class.isAssignableFrom(rt)) {
-                foundToolBean = true;
-                toolBeanArgs = m.getParameterCount();
-                // Story #009d: 5-arg ctor — A2aTransportRouter, AgentConfig,
-                // ObjectMapper, RemoteAgentSchemaBuilder (4 args expected at @Bean level)
-                // Wait: 5-arg ctor has 5 params but AutoConfig @Bean gets the
-                // RemoteAgentTool built from 4 injected beans. Verify at least 4.
-                assertThat(toolBeanArgs)
-                    .as("remoteAgentTool(@Bean) must take >= 4 args (router, cfg, json, schemaBuilder)")
-                    .isGreaterThanOrEqualTo(4);
-            }
-        }
-        assertThat(foundSchemaBuilderBean)
-            .as("AutoConfiguration must expose a RemoteAgentSchemaBuilder @Bean")
-            .isTrue();
-        assertThat(foundToolBean)
-            .as("AutoConfiguration must still expose the RemoteAgentTool @Bean")
-            .isTrue();
     }
 }
