@@ -114,6 +114,14 @@ class CliRunnerSkillTriggerTest {
             if (t == null) throw new IllegalArgumentException("Unknown tool: " + n);
             return t;
         }
+        // 🆕 Story #021b — unregister: dual-index clear (mirrors DefaultToolRegistry.unregister
+        // + the registerSkill dual-write pattern above). null name → false; unknown name → false.
+        @Override public boolean unregister(String n) {
+            if (n == null) return false;
+            Tool removedTool = tools.remove(n);
+            Skill removedSkill = skills.remove(n);
+            return removedTool != null || removedSkill != null;
+        }
     }
 
     /** Stub {@link ToolExecutor} returning a fixed ToolResult. */
