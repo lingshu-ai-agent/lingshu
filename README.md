@@ -129,6 +129,15 @@ agent:
     enabled: true            # 关闭后 LocalToolsAutoConfiguration 跳过 4 Tool 注册
     max-read-bytes: 200000   # ReadTool 单次上限(超过截断 + 末尾 marker)
     max-write-bytes: 1000000 # WriteTool 字节硬 guard(content.length > 此值则拒绝写盘)
+  delegate:                  # Story #023 子 Agent 配置;整段缺失 = 跳过 register
+    prompts-dir: ./prompts
+    types:                     # 必须3项:explore / engineer / reviewer
+      explore:
+        system-prompt-file: ./prompts/explore.md
+      engineer:
+        system-prompt-file: ./prompts/engineer.md
+      reviewer:
+        system-prompt-file: ./prompts/reviewer.md
 ```
 
 ### 调用内置 Tool(Story #019)
@@ -1398,6 +1407,53 @@ $ mvn -pl lingshu-core dependency:tree | grep -E "^\[INFO\] [+\\|\\\\]" | wc -l
 - dsh §6.5 (3) `Spring AI @Tool 注解集成` 完整契约**生效** —— 5 文件 + 32 case + 1 ErrorCode 全在线
 - 后续 Story #023 delegate-sub-agent 可**安全**依赖 `@AgentTool` 注解(DelegateTool 本身也是 Tool SPI 实现,**不必**走 `@AgentTool` 但可借鉴 AgentToolScanner 自动发现模式)
 - dsh §4.10.1 硬规则 2「永远 ToolExecutor.dispatch() 永不直调 tool.execute()」依然唯一权威 —— 用户**禁止**用 spring-ai `ChatClient.tools().call()` 自动执行绕过
+
+---
+
+### Story #023 delegate-sub-agent(`SubAgentType` + `DelegateTool` + `SubAgentInheritance` + `DelegateAutoConfiguration` + `LINGS-D01` AC-023-1—AC-023-7)
+
+dsh §6.6 L5054-5113 `DelegateTool` + §6.6.1 L5131-5146 `Sub-agent field-level inheritance` 实施 —— `Task` tool 把当前 turn 派给一个 fresh-session 子 Agent,子 Agent 配置由父 Agent 配置**字段级合并**而来(per SubAgentType 加 `(Sub-agent: <configKey>)` name 后缀 / Identity/Instructions/Memory 三件套换/继承/fallback 三段语义);闭合 3 个 subagent_type(`explore` / `engineer` / `reviewer`)对齐 Claude Code 固定集;启动期 yml 缺失 `agent.delegate` 块 → 跳过 register(spec §5 「缺失即跳过」反向 AC),配置不全则 fail-fast `[LINGS-D01]` 报缺哪个 key。
+
+**5 个生产文件**(全部 lingshu-core 新增):
+- `ai.lingshu.core.agent.SubAgentType` —— `public enum { EXPLORE("explore", "explore.md"), ENGINEER("engineer", "engineer.md"), REVIEWER("reviewer", "reviewer.md") }` + `configKey()` / `promptFile()` / `key()`(= configKey 别名)+ `static fromKey(String)`(遍历 values() 比对 configKey,未知抛 IAE `Unknown subagent_type: <key> (known: [explore, engineer, reviewer])`)+ `static allKeys()`(`Arrays.stream + Collectors.toCollection(LinkedHashSet::new)` 保证 enum 顺序)
+- `ai.lingshu.core.agent.DelegateErrorCodes` —— `LINGS_D01 = "LINGS-D01"` 常量类(对齐 `McpErrorCodes` / `ToolErrorCodes` 模式);D 域 = 第 9 域字母加入(原 C/S/L/T/X/R/A/Z = 8 域,**新增 D = Delegate(子 Agent)域**)
+- `ai.lingshu.core.agent.SubAgentInheritance` —— 静态工具类 `inheritFromParent(AgentConfig parent, AgentConfig child, SubAgentType type)`,手工 `new AgentConfig(...)` 拼 24 字段(`@Value` 无 toBuilder —— **必须手传**)+ per-field 规则:reference 字段 child 非 null 胜 / 否则 parent(String/int 字段加 non-empty/non-zero 保护)+ Identity 字段:child 非 null 全替换 / 否则 parent.identity.name + " (Sub-agent: <configKey>)" 后缀 + 其余 5 字段 verbatim 继承 / parent.identity 也 null → `Identity.defaults()` **不**加后缀 + Instructions 字段:child 全替换 / 否则 parent / 父 null → `Instructions.empty()` + Memory 字段:child 全替换 / 否则 parent / 父 null → `Memory.defaults()`;Delegate 字段本身被强制置 null(无子-子 Agent 嵌套)
+- `ai.lingshu.core.agent.DelegateTool implements Tool` —— 4 field:`agentFactory` / `parentConfig`(build-time 冻结父 config 快照)/ `delegateProps` / `Map<SubAgentType, AgentConfig> typeConfigs`;ctor 3 参(全 null-check)+ `loadConfigs(props)` 遍历 `SubAgentType.values()` 调 `SubAgentInheritance.inheritFromParent` 做字段级合并(预 build 而非 per-execute —— O(1) dispatch + startup fail-fast 暴露 LINGS-D01);`name() { return "Task"; }`(对齐 Claude Code 固定名)+ `description()` 静态文本 + SubAgentType.allKeys() 列表(LLM 视角 description + schema enum 双暴露)+ `inputSchema()` 静态构造 `{ type: object, properties: { subagent_type: { type: string, enum: [explore, engineer, reviewer] }, prompt: { type: string } }, required: [subagent_type, prompt] }`(ObjectMapper + ObjectNode + ArrayNode,Jackson 已锁 0 新依赖);`execute(ToolCall, ToolExecutionContext)`:`SubAgentType.fromKey(input.get("subagent_type").asText())` + `agentFactory.create(typeConfigs.get(type))`(fresh session,dsh §7.1 不变项守住)+ `child.runBlocking(prompt)` + `ToolResult.success(call.id, finalText)`
+- `ai.lingshu.core.agent.DelegateAutoConfiguration` —— `@Configuration implements InitializingBean`(对齐 e13e6a5 fix 用 InitializingBean 不用 `@PostConstruct`,R-13 mitigation 守住 0 新依赖);`@Autowired` ctor 收 `AgentFactory` + `ToolRegistry` + `AgentConfigRegistry`;`afterPropertiesSet()` 3 路守卫:registry 还没 publishInitial → INFO 跳过(早 refresh 竞态保护)/ current.getDelegate() == null → INFO 跳过(spec §5 「缺失即跳过」)/ 否则构造 DelegateTool + `toolRegistry.register(tool)` —— yml 自动加载委托给 AgentFactory (TypeConfig.systemPromptFile + llm/sandbox 子代理化)
+
+**23 new cases 跨 4 测试文件**(AC-023-1—AC-023-7):
+- L1 `SubAgentTypeTest` 3 case(`allKeys_sizeIs3_andContainsExpectedConfigKeys` + `fromKey_eachValidKey_returnsMatchingEnumValue` + `fromKey_unknownOrNull_throwsIAE_withKnownKeysListed` 含大小写敏感 EXPLORE IAE)
+- L1 `SubAgentInheritanceTest` 9 case(identity 4 / instructions 2 / memory 1 / trio fallback 1 / null parent|child|type IAE 1)
+- L1+L2 `DelegateToolTest` 7 case(`name() == "Task"` + 完整 props 装载 / 缺 subagent_type → ISE [LINGS-D01] + known 列表 / `description()` 含 3 key / `inputSchema()` enum 3 值 + required / `execute()` happy path → SUCCESS "explored-result" / `execute()` unknown → IAE)
+- L2 `DelegateAutoConfigurationTest` 4 case(delegatePresent → register + name="Task" / delegateNull → 跳过 / malformed → ISE [LINGS-D01] / registryNoCurrent → 跳过)
+
+**JDK 23 + Mockito inline mockmaker workaround**:AgentFactory / AgentConfigRegistry 是具体 Spring `@Component` 类,Mocito 5.x + JDK 23 inline mockmaker **不能 mock `InitializingBean` 子类**(`Could not modify all classes` 异常)—— 沿用 Story #007 模式,`DelegateToolTest` + `DelegateAutoConfigurationTest` 用 `StubAgentFactory extends AgentFactory` 子类(`super(null, null, null, null, null, null)` 绕开 @Autowired 6-Router 依赖)+ `new AgentConfigRegistry().publish(cfg)` 真实例调原生 API,而非 `mock(AgentFactory.class)` / `mock(AgentConfigRegistry.class)`。
+
+**累计测试**:`mvn -pl lingshu-core test` → **536 case**(Story #023 pre-merge 513 + Story #023 新增 23),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。**+23 新 case** 分布如上。
+
+**R-13 dep-tree 自查**(Story #023 必须按 SOP §3.2 + §3.4 流程):
+```bash
+# Pre-Story dep tree (Story #022 post-merge baseline = e3d2468):
+$ git show e3d2468:lingshu-core/pom.xml > /tmp/lingshu-pom-pre.xml
+$ diff /tmp/lingshu-pom-pre.xml lingshu-core/pom.xml
+# CORE_POM_IDENTICAL — 0 行 diff
+$ mvn -pl lingshu-core dependency:tree -Dverbose > /tmp/lingshu-dep-tree-023-pre.txt
+# 118 lines
+# Post-Story dep tree (Story #023):
+$ mvn -pl lingshu-core dependency:tree -Dverbose > /tmp/lingshu-dep-tree-023-post.txt
+# 118 lines
+$ diff /tmp/lingshu-dep-tree-023-pre.txt /tmp/lingshu-dep-tree-023-post.txt
+# 117c117 — only [INFO] Finished at: <timestamp> 差异
+# 2 lines diff total (1 insertion + 1 deletion = 仅时间戳)
+```
+**0 binary delta 第 8 次** ✓ —— `SubAgentType` 用 JDK 8 内置 `Enum` + `Arrays.stream` + `Collectors.toCollection(LinkedHashSet::new)` + `SubAgentInheritance` 用 JDK 8 内置 `LinkedHashMap` + `Collections.emptyMap()` + `DelegateTool` 复用 Jackson `JsonNode` / `ObjectMapper` / `ObjectNode` / `ArrayNode`(spring-boot-bom 已锁)—— **0 新 Maven 依赖**。
+
+**Story 边界**:**5 核心 Java 源文件新增**(`SubAgentType` + `DelegateErrorCodes` + `SubAgentInheritance` + `DelegateTool` + `DelegateAutoConfiguration`)= **5 文件改动**;**严格 ≤5 边界内** ✓;**1 新 ErrorCode LINGS-D01**(Delegate 域 D 段 1 号 = DELEGATE_CONFIG_INVALID,启动期 `props.types` 缺 key)+ **严格守 ≤ 3** ✓;R-13 缓解 `(d)` PASS 0 binary delta(`SubAgentType` / `SubAgentInheritance` / `DelegateTool` 全部 JDK + Jackson + Lombok 已锁;`DelegateAutoConfiguration` 用 `InitializingBean` 来自 spring-beans 已 transitive + `AgentConfigRegistry` / `ToolRegistry` / `AgentFactory` 全部已存在 —— **0 新 Maven 依赖**);**关键不变项** —— `AgentConfig` 嵌套 `Delegate` + `TypeConfig` **0 改动** / `AgentFactory.create(AgentConfig)` 单参入口 **0 改动** / `Agent` interface + `DefaultAgent.runBlocking` 模板 **0 改动** / `Tool` interface 4 方法 + `ToolRegistry.register(Tool)` SPI **0 改动** / `ToolExecutor.dispatch()` 5 步流水线 **0 改动**(§4.10.1 硬规则 2 守住)/ `Session` interface + `DefaultSession` **0 改动** / dsh §15 域字母 C/S/L/T/X/R/A/Z 编号全部不动,**只新增 D 域 + D01**;JDK 8 only(`EnumMap` 不必 + `LinkedHashMap` 保序 + `Collections.emptyMap()` / `Arrays.asList()` 而非 `Map.of` / `List.of`);**复用 spring-ai `@Tool` 注解信息但不依赖 spring-ai 自动执行**(dsh §4.10.1 硬规则 2 守住)。
+
+**扳机条件**(重新评估):
+- dsh §6.6 + §6.6.1 完整契约**生效** —— 5 文件 + 23 case + 1 ErrorCode 全在线
+- §14 N7 SessionStore 仍滞后 + §14.8 hot-reload 已生效 + §14 N1/N2/N5-N13 全部滞后
+- 子 Agent 真正接通 `execute()` 调用链 / yml 自动加载 `agent.delegate` 块 / 子-子 Agent 嵌套 / 子 Agent 并发调度 / 子 Agent Skill `/xxx` 拦截 / 用户自定义 SubAgentType enum 留 OQ-#023-A/B/C/D/E/F(后续 Story #023.1 / 等增量)
 
 ---
 
