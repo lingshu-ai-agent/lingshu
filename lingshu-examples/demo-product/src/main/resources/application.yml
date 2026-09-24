@@ -1,0 +1,117 @@
+# demo-product — comprehensive HTTP SSE chat demo (Story #025)
+# Phase 4: full configuration combining 8 features.
+
+spring:
+  application:
+    name: demo-product
+  main:
+    banner-mode: off
+
+server:
+  port: 8080
+
+# Logging tuned for demo: events visible, framework noise reduced.
+logging:
+  level:
+    root: INFO
+    ai.lingshu: INFO
+    ai.lingshu.examples.demoproduct: INFO
+    org.springframework.web: INFO
+
+agent:
+  # ── LLM provider (Anthropic-compatible, MiniMax endpoint) ─────────────
+  # base-url + api-key are resolved by AnthropicLlmProviderProvider via
+  # (1) ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY env vars
+  # (2) spring.ai.anthropic.base-url system property
+  # (3) DEFAULT_BASE_URL = https://api.anthropic.com
+  # Set env vars before `mvn spring-boot:run` for the demo to hit a real LLM.
+  llm:
+    provider: anthropic
+    model: MiniMax-M3
+    max-tokens: 2048
+    temperature: 0.3
+
+  # ── Identity / Instructions / Memory (Story #002) ──────────────────────
+  identity:
+    name: LingShu
+    role: Interactive AI coding assistant
+    language: zh
+    traits:
+      - concise
+      - precise
+      - file-aware
+    tone: friendly
+
+  instructions:
+    file: ./prompts/system-product.md
+    template-engine: mustache
+    variables: {}
+
+  memory:
+    claude-md:
+      enabled: true
+      project: ./CLAUDE.md
+      user: ~/.lingshu/CLAUDE.md
+
+  # ── Skills (Story #020) — classpath SKILL.md auto-discovery ────────────
+  skills:
+    sources:
+      - type: classpath
+        location: skills
+
+  # ── Tools (Story #019 built-in read/write, Story #025 custom bash_safe) ─
+  # The four @Component Tools (read_file/write_file/list_dir/bash_safe) live
+  # in ai.lingshu.examples.demoproduct.ProductTools and are auto-scanned via
+  # Spring's @ComponentScan. We disable the engine's built-in bash tool so
+  # the demo's whitelist (BashSafeTool) is the only shell path.
+  tools:
+    enabled: true
+    read: true
+    write: true
+    edit: false
+    bash: false
+    max-file-bytes: 65536
+
+  # ── MCP (Story #021) — factory wired, no real server in this demo ──────
+  mcp:
+    servers: []
+
+  # ── Delegate sub-agents (Story #023) — explore / engineer / reviewer ──
+  delegate:
+    prompts-dir: ./prompts
+    types:
+      explore:
+        llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 1024 }
+        tools: [read_file, list_dir]
+        sandbox:
+          policy: default
+          runtime: chroot
+          workingDirectory: "@user.dir"
+      engineer:
+        llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 2048 }
+        tools: [read_file, write_file, list_dir, bash_safe]
+        sandbox:
+          policy: default
+          runtime: chroot
+          workingDirectory: "@user.dir"
+      reviewer:
+        llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 1024 }
+        tools: [read_file]
+        sandbox:
+          policy: default
+          runtime: chroot
+          workingDirectory: "@user.dir"
+
+  # ── Compactor (Story #018) — low threshold so the demo triggers it ────
+  compactor:
+    name: truncating
+    max-tool-result-bytes: 512
+    max-prompt-tokens: 1000
+    keep-recent-turns: 3
+
+  # ── Loop tuning ────────────────────────────────────────────────────────
+  react-max-steps: 8
+  tool-parallelism: 4
+  turn-timeout-seconds: 120
+  llm-timeout-seconds: 30
+  tool-timeout-seconds: 30

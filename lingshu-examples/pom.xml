@@ -35,6 +35,8 @@
         <module>demo-mcp</module>
         <!-- 🆕 Story #022 + #023 + #024 — @AgentTool + DelegateTool + [TOOL SCHEMAS] 段 wiring -->
         <module>demo-delegate</module>
+        <!-- 🆕 Story #025 — demo-product comprehensive HTTP SSE chat product -->
+        <module>demo-product</module>
     </modules>
 
     <dependencies>

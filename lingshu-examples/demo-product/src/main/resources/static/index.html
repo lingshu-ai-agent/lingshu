@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>灵枢 LingShu — Interactive Chat</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 12px; background: #0e1116; color: #e6edf3; }
+    header { display: flex; gap: 12px; align-items: baseline; margin-bottom: 12px; }
+    header h1 { margin: 0; font-size: 18px; }
+    header code { color: #8b949e; font-size: 12px; }
+    button { background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+    button:hover { background: #30363d; }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; height: calc(100vh - 100px); }
+    .chat, .events { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; overflow-y: auto; }
+    .msg { margin: 6px 0; padding: 8px 12px; border-radius: 6px; max-width: 90%; white-space: pre-wrap; }
+    .msg.user { background: #1f6feb; margin-left: auto; }
+    .msg.assistant { background: #21262d; }
+    .events h3 { margin: 0 0 8px 0; font-size: 13px; color: #8b949e; }
+    .ev { font-family: ui-monospace, monospace; font-size: 11px; padding: 3px 6px; margin: 2px 0; border-radius: 3px; background: #0d1117; border-left: 3px solid #30363d; }
+    .ev.text { border-left-color: #58a6ff; }
+    .ev.tool-start, .ev.tool-progress, .ev.tool-done { border-left-color: #d29922; }
+    .ev.reasoning-start, .ev.observation { border-left-color: #8b949e; }
+    .ev.turn-completed, .ev.max-steps { border-left-color: #3fb950; }
+    .ev.compacted { border-left-color: #a371f7; font-weight: bold; }
+    .ev.error { border-left-color: #f85149; }
+    .ev.approval { border-left-color: #db61a2; }
+    footer { display: flex; gap: 8px; margin-top: 8px; }
+    input[type=text] { flex: 1; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; padding: 6px 10px; }
+    input[type=text]:focus { outline: none; border-color: #1f6feb; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>灵枢 LingShu</h1>
+    <code id="sid">session: —</code>
+    <button id="new">New session</button>
+  </header>
+  <main>
+    <div class="chat" id="chat"></div>
+    <div class="events"><h3>Event stream</h3><div id="events"></div></div>
+  </main>
+  <footer>
+    <input id="prompt" type="text" placeholder="Ask LingShu anything — or /help /clear /compact" autofocus>
+    <button id="send">Send</button>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>
