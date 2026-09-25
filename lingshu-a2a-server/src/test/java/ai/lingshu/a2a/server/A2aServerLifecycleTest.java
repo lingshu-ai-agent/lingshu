@@ -58,7 +58,7 @@ class A2aServerLifecycleTest {
     @Test
     @DisplayName("start_withDefaultPort8080_listensOn8080")
     void start_withDefaultPort8080_listensOn8080() throws Exception {
-        server = new A2aServer(configFor(AgentConfig.A2a.defaults(), AgentConfig.Identity.defaults()));
+        server = new A2aServer(configFor(AgentConfig.A2a.defaults(), AgentConfig.Identity.defaults()), null);
         server.start();
 
         assertThat(server.getActualPort()).isEqualTo(8080);
@@ -73,7 +73,7 @@ class A2aServerLifecycleTest {
     @DisplayName("start_withCustomPort_listensOnCustomPort")
     void start_withCustomPort_listensOnCustomPort() throws Exception {
         AgentConfig.A2a custom = new AgentConfig.A2a("127.0.0.1", 18090, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10);
-        server = new A2aServer(configFor(custom, AgentConfig.Identity.defaults()));
+        server = new A2aServer(configFor(custom, AgentConfig.Identity.defaults()), null);
         server.start();
 
         assertThat(server.getActualPort()).isEqualTo(18090);
@@ -87,7 +87,7 @@ class A2aServerLifecycleTest {
     @DisplayName("start_withPortZero_returnsOsAssignedPort")
     void start_withPortZero_returnsOsAssignedPort() throws Exception {
         AgentConfig.A2a zero = new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10);
-        server = new A2aServer(configFor(zero, AgentConfig.Identity.defaults()));
+        server = new A2aServer(configFor(zero, AgentConfig.Identity.defaults()), null);
         server.start();
 
         assertThat(server.getActualPort()).isGreaterThan(0).isLessThanOrEqualTo(65535);
@@ -97,14 +97,14 @@ class A2aServerLifecycleTest {
     @DisplayName("stop_releasesPortForRebind")
     void stop_releasesPortForRebind() throws Exception {
         AgentConfig.A2a a2a = new AgentConfig.A2a("127.0.0.1", 18091, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10);
-        server = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()));
+        server = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()), null);
         server.start();
         int port = server.getActualPort();
         server.stop();
 
         // Rebind on same port should succeed (TIME_WAIT may still bite on some OSes,
         // but JDK HttpServer.stop(0) releases immediately).
-        A2aServer server2 = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()));
+        A2aServer server2 = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()), null);
         server2.start();
         try {
             assertThat(server2.getActualPort()).isEqualTo(port);
@@ -117,10 +117,10 @@ class A2aServerLifecycleTest {
     @DisplayName("start_withPortAlreadyInUse_throwsLingsS06")
     void start_withPortAlreadyInUse_throwsLingsS06() throws Exception {
         AgentConfig.A2a a2a = new AgentConfig.A2a("127.0.0.1", 18092, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10);
-        server = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()));
+        server = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()), null);
         server.start();
 
-        A2aServer conflicting = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()));
+        A2aServer conflicting = new A2aServer(configFor(a2a, AgentConfig.Identity.defaults()), null);
         try {
             assertThatThrownBy(conflicting::start)
                 .isInstanceOf(LingsA2aServerException.class)
@@ -138,7 +138,7 @@ class A2aServerLifecycleTest {
             AgentConfig.A2a.defaults(),
             new AgentConfig.Identity("", null, "auto",
                 Collections.<String>emptyList(), null, null));
-        server = new A2aServer(cfg);
+        server = new A2aServer(cfg, null);
         assertThatThrownBy(server::start)
             .isInstanceOf(LingsA2aServerException.class)
             .hasMessageContaining("LINGS-T02");
@@ -150,7 +150,7 @@ class A2aServerLifecycleTest {
         AgentConfig cfg = configFor(
             new AgentConfig.A2a("127.0.0.1", -1, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
             AgentConfig.Identity.defaults());
-        server = new A2aServer(cfg);
+        server = new A2aServer(cfg, null);
         assertThatThrownBy(server::start)
             .isInstanceOf(LingsA2aServerException.class)
             .hasMessageContaining("LINGS-S06");
@@ -162,7 +162,7 @@ class A2aServerLifecycleTest {
         server = new A2aServer(configFor(
             AgentConfig.A2a.defaults(),
             new AgentConfig.Identity("test-card", "test role", "auto",
-                Collections.<String>emptyList(), null, null)));
+                Collections.<String>emptyList(), null, null)), null);
         server.start();
 
         HttpURLConnection con = (HttpURLConnection) new URL(
