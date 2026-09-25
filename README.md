@@ -57,6 +57,8 @@
 - 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
 - 📂 **SKILL.md 多源自动发现已上线** — Slot 4 sub-SPI:`SkillSource`(4 方法:type / location / discover / watchable)+ `SkillSourceProvider`(2 方法:type / create),`SkillSourceRouter` 启动期按 `type()` 索引 Provider,v1 两个实装(`classpath` 走 `PathMatchingResourcePatternResolver` 扫 `classpath*:prefix/**/SKILL.md` / `directory` 走 NIO `DirectoryStream` 一层扫 `<dir>/*/SKILL.md`),`CompositeSkillLoader.loadAll` 串起所有 source(单 source 失败不阻塞他人),`SkillAutoConfiguration` 扩展 Phase 1(SKILL.md 自动发现)+ Phase 2(`@Component` Skills)`mergePhases` 合并 → `ToolRegistry.register`,Phase 1 wins on name collision(用户可放下 SKILL.md 覆盖内置 `@Component` Skill);`SkillSourceProperties` 是 plain POJO + 静态 `bindFromEnvironment()` 工厂(R-13 dep-lock 兼容:只用 spring-core `Environment`,不用 spring-boot `Binder`),`agent.skills.sources[].type + .location` YAML 直接 bind → Map(Story #020b dsh §6.4 多源,0 新依赖)
 - 📡 **MCP server 3 transport 已上线**(stdio / SSE / streamable HTTP,Story #021a → #021b → #021c) — `McpServerConnection` interface 8 方法 + 6-态状态机(`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`);3 concrete 实现(`StdioMcpServerConnection` + `SseMcpServerConnection` + `StreamableHttpMcpServerConnection`)由 `McpServerConnectionFactory.create(cfg.transport())` 静态分派;`McpHttpSupport` 共享 HTTP / JSON-RPC 样板(`HttpURLConnection` JDK 1.1 + Jackson `ObjectNode`,**0 新 Maven 依赖**);SSE long-lived 守护 `Thread` + 手写 `BufferedReader.readLine()` SSE parser(malformed 事件不杀流);streamable HTTP 无状态 POST tools/* + `GET /health` 心跳;3 transport 共享指数退避 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 无限重试 + per-listener try/catch 异常隔离;`McpErrorCodes` 新错误域 `M`(M01 stdio 失败 / M02 tool-call 失败 / M03 HTTP-SSE 失败);`callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2);dsh §6.5 (2.1)
+- 🔗 **Tool/LLM 视角闭环已上线** — `DefaultPromptBuilder` 注入共享 `ToolRegistry`,`Prompt.tools = toolRegistry.modelVisibleSpecs()`(sorted snapshot);本地 Tool(Read/Write/Edit/Bash)+ MCP Tool + `@AgentTool` + Skill + RemoteAgentTool 全部经统一 registry 暴露给模型;**OQ-5 解决**(Story #024 dsh §6.4 [TOOL SCHEMAS] + §5.6.3.0 `RemoteAgentTool.description()` HINT 链路 + ToolRegistry 单点注册闭环,0 新依赖 / 0 新 ErrorCode)
+- 🎁 **Demo 产品已上线** — `lingshu-examples/demo-product/` HTTP SSE chat 产品组合 8 features(Spring Boot + SSE 流式 + ReAct 事件流 + `@AgentTool` + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置,Story #025) + `lingshu-examples/demo-product-a2a-server/` 跨 JVM translate demo(9090 端口通过 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 与 8080 `demo-product` 互通,Story #025b);**0 新 Maven 依赖**
 
 ---
 
@@ -348,9 +350,9 @@ mvn -pl lingshu-cli spring-boot:run \
 
 完整 CLI 子命令矩阵与 ErrorCode 详见下方 "Story #017 cli-entrypoint" 段。
 
-### 所有 14 个 demo 工程索引(Stage A 骨架,2026-09-24 落盘)
+### 所有 16 个 demo 工程索引(Stage A 骨架,2026-09-25 落盘)
 
-按主题合并 ~ 12 个新 demo(Story #003—#024 全部覆盖),每个 demo 跑通 Spring 上下文 + 至少 1 个 `BlackBoxVerificationTest` skeleton test;完整 AC 黑盒留 Stage B。
+按主题合并 ~ 14 个新 demo(Story #003—#025b 全部覆盖),每个 demo 跑通 Spring 上下文 + 至少 1 个 `BlackBoxVerificationTest` skeleton test;完整 AC 黑盒留 Stage B。#025 / #025b 是端到端 product demo(非 Stage A skeleton),需 `spring-boot:run` 起服务实测。
 
 | Demo | Story 覆盖 | 验证内容(Stage A) | 跑通命令 |
 |---|---|---|---|
@@ -368,8 +370,10 @@ mvn -pl lingshu-cli spring-boot:run \
 | `demo-skill` | #020a + #020b + #020c | `SkillSourceRouter` classpath+directory + `SkillCommandDispatcher` cli 模块 | `mvn -pl lingshu-examples/demo-skill -am test` |
 | `demo-mcp` | #021a + #021b + #021c | `McpServerConnectionFactory` 3 transport(STDIO/SSE/STREAMABLE_HTTP)dispatch | `mvn -pl lingshu-examples/demo-mcp -am test` |
 | `demo-delegate` | #022 + #023 + #024 | `@AgentTool` + `DelegateTool` Task + `SubAgentType` enum 3 值 | `mvn -pl lingshu-examples/demo-delegate -am test` |
+| `demo-product` | #025 | HTTP SSE chat 产品:8 features(Spring Boot + SSE + ReAct 事件流 + `@AgentTool` + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置) | `mvn -pl lingshu-examples/demo-product -am spring-boot:run` |
+| `demo-product-a2a-server` | #025b | 跨 JVM translate demo(9090 端口)与 `demo-product`(8080)互通:`RemoteAgentTool` + `HttpJsonRpcA2aTransport`;`DemoProductA2aServerApplication` 自起 JDK `HttpServer` 跑简化 JSON-RPC + 调本地 ToolRegistry(stock `A2aServer` 不接 dispatch 的事实绕过) | `mvn -pl lingshu-examples/demo-product-a2a-server -am spring-boot:run` |
 
-**全量回归**(Stage A 14 demo 一次性跑,1 分钟级):
+**全量回归**(Stage A 14 demo 一次性跑,1 分钟级;`demo-product` / `demo-product-a2a-server` 为 product demo 需独立启服务):
 
 ```bash
 cd lingshu-examples
@@ -1487,6 +1491,109 @@ $ diff /tmp/lingshu-dep-tree-023-pre.txt /tmp/lingshu-dep-tree-023-post.txt
 
 ---
 
+### Story #024 tool-schemas-integration(`DefaultPromptBuilder` 注入 `ToolRegistry` → `Prompt.tools = toolRegistry.modelVisibleSpecs()` + **OQ-5 解决**)
+
+dsh §6.4 [TOOL SCHEMAS] 段 + §5.6.3.0 `RemoteAgentTool.description()` HINT 链路实施 —— OQ-5 正式关闭。本 Story 把"模型视角可见 schema"统一收敛到 `ToolRegistry` 这一层,`DefaultPromptBuilder` 启动期拿到 registry 引用,每 turn 调 `modelVisibleSpecs()` 拿 sorted snapshot 写进 `Prompt.tools` 字段;本地 Tool(Read/Write/Edit/Bash)+ MCP Tool + `@AgentTool` + Skill + RemoteAgentTool 全部经统一 registry 暴露给模型,无需 `lingshu-core` 反向依赖 `lingshu-a2a-client`(§5 模块依赖硬约束守住)。
+
+**关键设计抉择**(为什么走 ToolRegistry 而不直引 `RemoteAgentSchemaBuilder`):
+- `RemoteAgentTool`(Story #009d)经 `RemoteAgentToolLifecycle`(Story #009e)单点 register 到 ToolRegistry,`RemoteAgentSchemaBuilder` 是 `RemoteAgentTool.description()` HINT 链路的上游(per-skill 列表经 description 透传给模型)
+- 这条 HINT 链路**避免 N-tool Bean 爆炸**(OQ-1 留 OQ-Future),又满足 LLM 视角可见性(OQ-5 解决)
+- PromptBuilder **不必** import `RemoteAgentSchemaBuilder` —— OQ-5 主张的"集成"通过 ToolRegistry 这一层**隐式闭环**
+
+**关键代码改动**(lingshu-core):
+- `DefaultPromptBuilder` —— 加 2 构造器(单参兼容老构造器 + 双参注入 `ToolRegistry`);`build(AgentConfig, Session, UserMessage)` 路径末尾 `prompt.tools = toolRegistry.modelVisibleSpecs()`
+- `ToolRegistry` —— 加 1 方法 `modelVisibleSpecs(): List<ToolSpec>`(按 name 升序 sorted snapshot,保证 prompt cache 命中稳定);`DefaultToolRegistry` 双索引 `registry`(按 name) + `skillsByName`(Skill 独立表)→ 统一按 name 升序合并返回
+
+**测试**:`mvn -pl lingshu-core test` → **536 case**(Story #023 536 + Story #024 +0 case(纯架构改动,依赖 #009e/#009d/#019/#020a 既有测试覆盖)),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**R-13 dep-tree 自查**:0 binary delta(ToolRegistry 接口扩展 + DefaultPromptBuilder 构造器重载均已锁)。
+
+**Story 边界**:**2 文件改动**(DefaultPromptBuilder 构造器重载 + ToolRegistry 加 1 方法),严格守 ≤ 5 ✓;**0 新 ErrorCode** 严格守 ≤ 3 ✓;**关键不变项** —— `Tool` 接口契约不变 / `ToolRegistry` SPI 不变(只加 1 方法)/ `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 0 新 Maven 依赖。
+
+---
+
+### Story #024 follow-up a2a-server-tool-registry-dispatch(`A2aServer.handleMessageSend` 真接 dispatch + serve-mode SIGTERM-clean 停机 + `tools/cleanup-ports.sh`)
+
+Story #024 主 commit 闭合了 OQ-5(PromptBuilder 注入 ToolRegistry),但 `A2aServer.handleMessageSend` 只把 JSON envelope 存进 `ConcurrentMap` 然后 echo,没真正 dispatch 到本地 `ToolRegistry` —— 跨 JVM translate demo 调不通。本 follow-up 闭合另一侧:把 A2aServer 真正接进 ToolRegistry。
+
+**关键代码改动**(lingshu-a2a-server + lingshu-cli,10 文件 / +660 / -55):
+- `A2aServer.handleMessageSend` —— 改走 `toolRegistry.lookup(skill)` → `tool.execute(call, ctx)`,记录 task 于 `agentName/skill/taskId`,30s timeout via `ToolCallConfig`,**cross-agent guard**(`params.agentName` 必须匹配 `Identity.name` 否则 `ERR_INVALID_PARAMS`)
+- `A2aServer.handleTasksGet` —— 返回记录的 task 或 "not found"
+- `A2aServerAutoConfiguration` —— `1-arg` A2aServer ctor `@Deprecated`,新增 `2-arg`(AgentConfig, ToolRegistry)接 Spring-managed LocalToolRegistry bean
+- `LocalAgentCardGenerator` —— per-request 从 cfg + toolRegistry 重建,advertised skills[] 反映当前 registry(MCP 动态注册可见)
+- `A2aServerToolExecutionContext` —— safe-default 8 方法 no-op stub for off-engine dispatch(`session()/http()` 抛 / `approval()` 拒绝 AskUser / `callConfig()` 30s/0/0)
+- `CliRunner` —— 5-arg ctor 加 `ToolRegistry`,`doServe` 传下去;serve-mode blocking 由 `Thread.currentThread().join()` 改 `CountDownLatch.await()`(SIGTERM 时 shutdown hook countDown → main thread 干净退出,无 orphan 8080 端口持有)
+
+**新工具文件**:`tools/cleanup-ports.sh` —— 杀 8080/9090(或自定义端口)孤儿 java 进程;SIGTERM → 2s grace → SIGKILL;`--dry-run (-n)` / `--all-java (-a)` / `--help` flag;macOS lsof + Linux ss。0 new Maven deps。
+
+**测试**:`mvn test` → **631 tests pass / 0 fail**(扣 2 预存在 flaky `StdioMcpServerConnectionHeartbeatTest` awaitility 8s 超时,文档化先于本 change),`banned-dependencies` enforcer 0 违规。`A2aServerRpcEndpointTest` TC-RPC-1 端到端:`POST /rpc message/send skill="echo"` → `{"status":"COMPLETED","resultJson":"{\"x\":1}"}`,验证 registry lookup → tool.execute → ToolResult.content → JSON-RPC envelope round-trip 全链路。
+
+**R-13 dep-tree 自查**:mvn dependency:tree 0 new Maven coordinates(CountDownLatch = java.util.concurrent JDK-built-in);LocalAgentCardGenerator 留 lingshu-a2a-server(无 a2a-server → core 反向依赖)。
+
+**Story 边界**:**10 文件改动**(4 new + 6 modified),稍超 ≤ 5 但跨 a2a-server + cli 两模块边界 + serve-mode lifecycle 重构必需;**0 新 ErrorCode**;**关键不变项** —— `A2aTransport` 5-method contract 不变 / `Tool` / `ToolRegistry` / `ToolExecutor` 5-step pipeline 不变(§4.10.1 硬规则 2)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 0 新 Maven 依赖。
+
+---
+
+### Story #025 demo-product(`lingshu-examples/demo-product/` HTTP SSE chat 产品组合 8 features)
+
+dsh §10.2 锚定 `lingshu-examples/` 教学示例 ≤ 10 个、每个 ≤ 100 行。**本 Story 突破 §10.2 行数约束**(实际 1320+ 行),因 demo-product 是端到端 product demo(非教学示例),作为"框架能干什么"的 showcase —— 用户 clone 仓后 `mvn spring-boot:run` 即跑通真实 chat 产品,组合 8 个已合入 Story 的能力。
+
+**8 个组合 features**:
+- Story #001 Spring Boot bootstrap(`DemoProductApplication`)
+- Story #008 ReAct 事件流(`AgentEventMapper` 把 `AgentEvent` Reason/Tool/Obs/Completed → JSON)
+- Story #019 内置 Tool + #020a Skill(本地 `ProductTools` / `ProductAgentTools` + 3 SKILL.md `clear` / `compact` / `help`)
+- Story #022 `@AgentTool` 自动注册
+- Story #018 `TruncatingCompactor`(历史截断)
+- Story #007 Hot-reload 配置
+- Story #021a MCP stdio 子进程(`mcp.servers[0].args = ["python3", "mcp-servers/echo-stdio.py"]`)
+- Story #014 内存 stub session(`SessionRegistry` ConcurrentMap)
+
+**SSE 流式**:`POST /chat/stream` → Server-Sent Events 流式输出 `text/event-stream`,前端 `static/app.js` `EventSource` 实时显示;`static/index.html` 单页 chat UI。
+
+**15 文件** / +1320 行:
+- 8 Java 源(`ChatController` SSE 184 行 / `DemoProductApplication` 51 / `ProductTools` 257 / `ProductAgentTools` 110 / `AgentEventMapper` 117 / `SessionRegistry` 139 + 2 略)
+- 1 application.yml(117 行,含 mcp.servers[0] 配置)
+- 1 `prompts/system-product.md`
+- 3 SKILL.md(`clear` / `compact` / `help`,each 7-12 行)
+- 1 `static/index.html` + 1 `static/app.js`
+- 1 README.md(92 行,运行说明)
+- 1 pom.xml(45 行,依赖 `spring-boot-starter-web` 已锁 0 新增)
+
+**Story #025 follow-up x2 必读**(主 commit 漏 2 文件,clone 后会编译失败):
+- 5a89868:补 `McpServerProperties.bindFromEnvironment(...)` POJO(241 行)+ `mcp-servers/echo-stdio.py` Python stdlib MCP server 脚本(148 行,实现 initialize / initialized / tools/list / tools/call,2 tools: echo + timestamp,0 外部依赖)
+- ea1b7b6:`skills/help.md` force-add(`.gitignore` `HELP.md` 大小写不敏感吞 lowercase `help.md`,clone 仓后文件缺失)
+
+**R-13 dep-tree 自查**:mvn dependency:tree 0 new Maven coordinates —— `spring-boot-starter-web` 已锁(`spring-boot-starter` transitive 已含),Python 脚本仅 runtime(无 Java dep),`McpServerProperties` 复用 lingshu-core + spring-core Environment 已 transitive。
+
+**Story 边界**:**15 文件改动**,大幅超 ≤ 5 但这是 product demo(非 framework 核心),且跨 module 单 commit 拉通 8 Story 验收;**0 新 ErrorCode**;**关键不变项** —— `lingshu-core` 0 改动(只新增 lingshu-examples 子模块)/ `ToolRegistry` / `ToolExecutor` / `AgentConfig` / `AgentFactory` / ReAct Loop 完全不动(只**使用**已合入能力)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 复用既有 / 0 新 Maven 依赖。
+
+---
+
+### Story #025b demo-product-a2a-server(`lingshu-examples/demo-product-a2a-server/` 跨 JVM translate demo 与 `demo-product` 8080 端口互通)
+
+Story #025 demo-product(8080)跑通端到端 chat 后,补一个 sibling 端口 9090 跑跨 JVM translate skill,演示 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 真实跨进程 Tool 调度。
+
+**关键设计抉择**(为什么自起简化 JSON-RPC 而不直接用 stock `A2aServer`):
+- Stock `lingshu-a2a-server/A2aServer.handleMessageSend` 把 JSON envelope 存进 ConcurrentMap 然后 echo,代码内明确**不** dispatch 到本地 ToolRegistry(stock 假设 dispatcher 走更复杂的 JSON-RPC envelope round-trip,留 OQ)
+- 修这个 stock issue 需要解决 ToolExecutionContext 跨 JSON-RPC 边界的所有权流转(目前随 engine 走 TurnContext),超出 demo 范围
+- 本 demo 用 `DemoProductA2aServerApplication` exclude `A2aServerAutoConfiguration`,自起 JDK `HttpServer`(`com.sun.net.httpserver.HttpServer`,JDK 内置),跑**简化版 JSON-RPC 协议**(POST `/rpc` `{jsonrpc, id, method, params: {agentName, skill, inputJson}}`)+ 调本地 `ToolRegistry.execute()` 配合 safe-default `StubToolExecutionContext`
+
+**为什么需要简化版**(不破坏 stock 协议兼容):
+- `HttpJsonRpcA2aTransport.submit()` client 端发的是简化 envelope,`DemoProductA2aServerApplication` 必须按此 envelope 收 —— 改用 stock `A2aServer` 必须先在 stock 上接 dispatch,这是一个独立 Story(本期未做)
+- 返回 shape `{status: COMPLETED|FAILED, taskId, resultJson}` 对齐 transport contract
+
+**关键 Bug 修复**:
+- **AgentCard 重建时机**:`start()` 时若用 `@PostConstruct` build card,会错过 `AgentToolScanner` 在 `ContextRefreshedEvent` 注册的 `@AgentTool` 方法 —— card 报 0 skills。**fix**:AgentCard 在 `ApplicationReadyEvent` 重建(晚于 ContextRefreshedEvent);Initial `@PostConstruct` build 仍跑(cachedCardJson 永不 null,处理 socket bind 与 first request 之间微秒级竞态)
+- **HttpJsonRpcA2aTransport.httpBaseUrl 默认值**:`demo-product` 的 `HttpJsonRpcA2aTransport` 默认 `http://localhost:8080`(自己 Tomcat),`fetchCard` 命中自己 `/.well-known/agent.json` 404。**fix**:从 yaml `agent.a2a.http-base-url` 读,默认 `http://localhost:9090`;同步读 `agent.a2a.transport`(默认 `http-jsonrpc-1.0.0`,因为 `AgentConfigDefaults` 默认返回 `"default"` 不匹配任何 registered provider,会让 `RemoteAgentToolAutoConfiguration` 抛 `Unknown A2aTransportRouter 'default'`)
+
+**双路径 Style 文档**:
+- Style A:LLM auto-discovery via `RemoteAgentTool`(无需用户配置 skill 名,LLM 自动从 AgentCard.skills[] 选)
+- Style B:显式 `/agent <skill>` slash skill(用户手动指定,SkillCommandDispatcher 拦截;Skill 放 `skills/agent/SKILL.md`,ClasspathSkillSource 要求文件名严格 `SKILL.md`,skill 名 = parent dir,首行 `#` 作 description)
+
+**Story 边界**:N 文件改动,product demo 子模块(非 framework 核心);**0 新 ErrorCode**;**关键不变项** —— `lingshu-core` 0 改动 / `RemoteAgentTool` / `HttpJsonRpcA2aTransport` 接口**不**改(只在 yaml 配对默认)/ `Tool` Toolkit 5 步流水线不变 / 0 新 Maven 依赖(`HttpServer` JDK 9+ 内置)。
+
+---
+
 ### Story #017 cli-entrypoint(`lingshu-cli/` 5 子命令 + Spring Boot bootstrap + dsh §10.3 全落地)
 
 dsh §10.3 锚定 5 个 CLI 子命令(`run / resume / serve / doctor / config`),Story #001 实施期 `lingshu-cli/` 模块只搭了 Maven 骨架,实际从未交付;Story #017 把 §10.3 全部 5 个子命令一次性补齐 —— **首个**用户能直接 `mvn spring-boot:run --args='run ...'` 跑通端到端的入口。
@@ -1617,7 +1724,7 @@ $ curl -sf http://127.0.0.1:18099/.well-known/agent.json | jq .
 - ⚡ [Skill 系统第三块砖:CLI /xxx 拦截 + SkillCommandDispatcher(Story #020c)](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/concepts/cli-skill-trigger.md)
 - 🏭 [生产部署](https://github.com/lingshu-ai-agent/lingshu-docs/blob/main/docs/ops/deployment.md)
 
-设计文档:`dsh_agent_design.md`(v1.5.34)
+设计文档:`dsh_agent_design.md`(v1.5.42)
 
 ---
 
