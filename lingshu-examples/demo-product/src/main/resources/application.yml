@@ -1,0 +1,188 @@
+# demo-product — comprehensive HTTP SSE chat demo (Story #025)
+# Phase 4: full configuration combining 8 features.
+
+spring:
+  application:
+    name: demo-product
+  main:
+    banner-mode: off
+
+server:
+  port: 8080
+
+# Logging tuned for demo: events visible, framework noise reduced.
+logging:
+  level:
+    root: INFO
+    ai.lingshu: INFO
+    ai.lingshu.examples.demoproduct: INFO
+    org.springframework.web: INFO
+
+agent:
+  # ── LLM provider (Anthropic-compatible, MiniMax endpoint) ─────────────
+  # base-url + api-key are resolved by AnthropicLlmProviderProvider via
+  # (1) ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY env vars
+  # (2) spring.ai.anthropic.base-url system property
+  # (3) DEFAULT_BASE_URL = https://api.anthropic.com
+  # Set env vars before `mvn spring-boot:run` for the demo to hit a real LLM.
+  llm:
+    provider: anthropic
+    model: MiniMax-M3
+    max-tokens: 2048
+    temperature: 0.3
+
+  # ── Identity / Instructions / Memory (Story #002) ──────────────────────
+  identity:
+    name: LingShu
+    role: Interactive AI coding assistant
+    language: zh
+    traits:
+      - concise
+      - precise
+      - file-aware
+    tone: friendly
+
+  instructions:
+    file: ./prompts/system-product.md
+    template-engine: mustache
+    variables: {}
+
+  memory:
+    claude-md:
+      enabled: true
+      project: ./CLAUDE.md
+      user: ~/.lingshu/CLAUDE.md
+
+  # ── Skills (Story #020) — classpath SKILL.md auto-discovery ────────────
+  skills:
+    sources:
+      - type: classpath
+        location: skills
+
+  # ── Tools (Story #019 built-in read/write, Story #025 custom bash_safe) ─
+  # The four @Component Tools (read_file/write_file/list_dir/bash_safe) live
+  # in ai.lingshu.examples.demoproduct.ProductTools and are auto-scanned via
+  # Spring's @ComponentScan. We disable the engine's built-in bash tool so
+  # the demo's whitelist (BashSafeTool) is the only shell path.
+  tools:
+    enabled: true
+    read: true
+    write: true
+    edit: false
+    bash: false
+    max-file-bytes: 65536
+
+  # ── MCP (Story #021a/b/c) — all 3 transports wired ────────────────────
+  # Each server gets its own `name` + `transport` + matching fields. The
+  # McpServerConnectionFactory dispatches on `transport`:
+  #   STDIO          → spawn command + speak JSON-RPC over stdin/stdout
+  #   SSE            → long-lived HTTP GET for server-pushed events
+  #   STREAMABLE_HTTP → stateless POST request/response
+  #
+  # stdio server below is real and self-contained (echo-stdio.py ships in
+  # src/main/resources/mcp-servers/). SSE and streamable_http point to
+  # localhost URLs — replace with a real MCP server (e.g. the official
+  # `mcp-server-everything` reference server) to see them live. McpTransport
+  # logs the connect failure once and then backs off (1s→2s→4s→...→60s cap),
+  # so boot is never blocked.
+  mcp:
+    servers:
+      # ── 1. STDIO — real, working out of the box ────────────────────────
+      - name: echo-stdio
+        transport: stdio
+        command: python3
+        args:
+          - src/main/resources/mcp-servers/echo-stdio.py
+        # env: {}        # uncomment + customize env if your server needs it
+        heartbeat-interval-ms: 30000
+        heartbeat-timeout-ms: 10000
+        reconnect-cap-ms: 60000
+
+      # ── 2. SSE — replace URL with a real SSE MCP server ────────────────
+      # McpServerConnectionFactory dispatches to SseMcpServerConnection on
+      # transport=sse. Connection lifecycle: GET /sse stays open; heartbeat
+      # = GET /health; reconnect rebuilds HttpClient + re-handshakes.
+      - name: reference-sse
+        transport: sse
+        url: http://localhost:9999/sse
+        heartbeat-interval-ms: 30000
+        heartbeat-timeout-ms: 10000
+        reconnect-cap-ms: 60000
+
+      # ── 3. STREAMABLE_HTTP — replace URL with a real HTTP MCP server ───
+      # McpServerConnectionFactory dispatches to StreamableHttpMcpServerConnection
+      # on transport=streamable_http. Each request is a fresh POST; no long-lived
+      # connection.
+      - name: reference-streamable
+        transport: streamable_http
+        url: http://localhost:9998/mcp
+        heartbeat-interval-ms: 30000
+        heartbeat-timeout-ms: 10000
+        reconnect-cap-ms: 60000
+
+  # ── A2A (Story #009 + #009d + 🆕 #025b) — remote agents list ────────────
+  # DemoProductApplication.agentConfig(Environment) walks this list and
+  # populates AgentConfig.A2a.remoteAgents. RemoteAgentTool.description()
+  # then fetches each agent's AgentCard from `url/.well-known/agent.json`
+  # and surfaces the skill ids into the LLM's tool list. When the LLM
+  # emits a tool call with {agentName, skill, input}, RemoteAgentTool
+  # routes it to A2aTransport.submit → POST /rpc message/send.
+  #
+  # Pairs with the sibling module demo-product-a2a-server (port 9090)
+  # which exposes the `translator` agent advertising the `translate` skill.
+  # Boot order: start demo-product-a2a-server FIRST so its AgentCard is
+  # reachable when demo-product starts up.
+  #
+  # Why `http-base-url: http://localhost:9090` — HttpJsonRpcA2aTransport
+  # uses a transport-wide `httpBaseUrl` (one Transport Bean, one base URL),
+  # NOT per-agentRef URL. All remote agents are fetched/dispatched via the
+  # same base URL. To reach a multi-agent gateway, set this to the gateway
+  # URL; for our 1-translator demo it's the a2a-server's own URL.
+  a2a:
+    transport: http-jsonrpc-1.0.0
+    http-base-url: http://localhost:9090
+    remote-agents:
+      - name: translator
+        url: http://localhost:9090
+        priority: 10
+    description-skill-limit: 10
+
+  # ── Delegate sub-agents (Story #023) — explore / engineer / reviewer ──
+  delegate:
+    prompts-dir: ./prompts
+    types:
+      explore:
+        llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 1024 }
+        tools: [read_file, list_dir]
+        sandbox:
+          policy: default
+          runtime: chroot
+          workingDirectory: "@user.dir"
+      engineer:
+        llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 2048 }
+        tools: [read_file, write_file, list_dir, bash_safe]
+        sandbox:
+          policy: default
+          runtime: chroot
+          workingDirectory: "@user.dir"
+      reviewer:
+        llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 1024 }
+        tools: [read_file]
+        sandbox:
+          policy: default
+          runtime: chroot
+          workingDirectory: "@user.dir"
+
+  # ── Compactor (Story #018) — low threshold so the demo triggers it ────
+  compactor:
+    name: truncating
+    max-tool-result-bytes: 512
+    max-prompt-tokens: 1000
+    keep-recent-turns: 3
+
+  # ── Loop tuning ────────────────────────────────────────────────────────
+  react-max-steps: 8
+  tool-parallelism: 4
+  turn-timeout-seconds: 120
+  llm-timeout-seconds: 30
+  tool-timeout-seconds: 30

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/schema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>ai.lingshu</groupId>
+        <artifactId>lingshu-examples</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>demo-product</artifactId>
+    <name>LingShu Demo Product (Story #025 — HTTP SSE chat product)</name>
+    <description>
+        Comprehensive product demo combining 8 features in one HTTP streaming UI:
+        SSE chat, multi-turn sessions, custom Tools, @AgentTool, Skills,
+        Delegate sub-agents, Compactor, Identity/Instructions/Memory.
+        spring-boot-starter-web precedent: demo-empty/pom.xml:25.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ai.lingshu</groupId>
+            <artifactId>lingshu-core</artifactId>
+        </dependency>
+        <!--
+          🆕 Story #025b — lingshu-a2a-client gives demo-product the `remote_agent`
+          tool so it can call demo-product-a2a-server's `translate` skill across
+          JVM boundaries. lingshu-a2a-server comes in transitively; we don't want
+          its A2aServer bean (it would try to bind on port 8080 and conflict
+          with Tomcat), so we exclude A2aServerAutoConfiguration in
+          DemoProductApplication.java — see its @SpringBootApplication(exclude = ...).
+        -->
+        <dependency>
+            <groupId>ai.lingshu</groupId>
+            <artifactId>lingshu-a2a-client</artifactId>
+            <version>${revision}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

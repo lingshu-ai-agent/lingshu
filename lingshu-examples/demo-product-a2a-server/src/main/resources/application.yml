@@ -1,0 +1,60 @@
+# demo-product-a2a-server — companion to demo-product (Story #025b).
+# Exposes an A2A agent on port 9090 with a single 'translate' skill.
+#
+# Pairs with demo-product on port 8080:
+#   mvn -pl lingshu-examples/demo-product-a2a-server -am spring-boot:run &
+#   mvn -pl lingshu-examples/demo-product         -am spring-boot:run
+#
+# Demo-product's AgentConfig wires `agent.a2a.remote-agents` so its
+# `remote_agent` tool discovers this server and can call translate.
+# (See demo-product/src/main/resources/application.yml.)
+
+spring:
+  application:
+    name: demo-product-a2a-server
+  main:
+    banner-mode: off
+    # Disable Spring Boot's embedded web server auto-detection. The
+    # lingshu-a2a-client transitive dep tree pulls in spring-webflux
+    # (via gRPC / Netty), which makes Spring Boot default to Reactive
+    # web app mode and try to start Netty — but we don't need ANY
+    # servlet/reactive web container here, since DemoA2aServer uses
+    # the JDK's own com.sun.net.httpserver.HttpServer on port 9090.
+    # Setting web-application-type=none bypasses the auto-detection
+    # and lets us boot a plain Spring context with just our HttpServer.
+    web-application-type: none
+
+# Bind port — separate from demo-product's 8080.
+# DemoA2aServer reads these via @Value in its constructor.
+a2a:
+  demo-server:
+    host: 0.0.0.0
+    port: 9090
+
+logging:
+  level:
+    root: INFO
+    ai.lingshu: INFO
+    ai.lingshu.examples.demoproducta2aserver: INFO
+
+agent:
+  # The server doesn't itself need an LLM — the only tool is the canned
+  # translate dictionary in TranslateTools. We still populate llm.model
+  # so any future log that prints the model name doesn't show null.
+  llm:
+    provider: anthropic
+    model: MiniMax-M3
+
+  # Identity.name → AgentCard.name → cross-agent guard in DemoA2aServer.
+  # Demo-product wires `name: translator` in its remote-agents block.
+  identity:
+    name: translator
+    role: A2A translation agent
+    language: auto
+    tone: neutral
+
+  # Disable built-in local tools (read/write/edit/bash) — translate is
+  # the only @Component we ship, and we don't want local filesystem access
+  # exposed in this minimal A2A demo.
+  tools:
+    enabled: false

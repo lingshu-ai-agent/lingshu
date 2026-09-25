@@ -35,6 +35,10 @@
         <module>demo-mcp</module>
         <!-- 🆕 Story #022 + #023 + #024 — @AgentTool + DelegateTool + [TOOL SCHEMAS] 段 wiring -->
         <module>demo-delegate</module>
+        <!-- 🆕 Story #025 — demo-product comprehensive HTTP SSE chat product -->
+        <module>demo-product</module>
+        <!-- 🆕 Story #025b — demo-product-a2a-server, custom A2A server with translate skill (pairs with demo-product) -->
+        <module>demo-product-a2a-server</module>
     </modules>
 
     <dependencies>
