@@ -213,7 +213,7 @@ class CliRunnerSkillTriggerTest {
         factory = new StubAgentFactory(AgentConfigDefaults.defaults(), agent);
         outBuf = new ByteArrayOutputStream();
         errBuf = new ByteArrayOutputStream();
-        runner = new CliRunner(factory, dispatcher, new PrintStream(outBuf), new PrintStream(errBuf));
+        runner = new CliRunner(factory, dispatcher, null, new PrintStream(outBuf), new PrintStream(errBuf));
     }
 
     // ── AC-020c-10: doRun with /xxx prompt dispatches Skill ───────────────
@@ -307,7 +307,7 @@ class CliRunnerSkillTriggerTest {
         // Use TestSupport's real AgentFactory — it has wired Routers so factory.description()
         // works (StubAgentFactory passes null Routers, which makes description() NPE).
         ai.lingshu.core.impl.runtime.AgentFactory realFactory = TestSupport.buildFactory();
-        CliRunner doctorRunner = new CliRunner(realFactory, dispatcher,
+        CliRunner doctorRunner = new CliRunner(realFactory, dispatcher, null,
             new PrintStream(outBuf), new PrintStream(errBuf));
         Path yml = tmp.resolve("app.yml");
         Files.write(yml, VALID_YML.getBytes("UTF-8"));
