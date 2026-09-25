@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>ai.lingshu</groupId>
+        <artifactId>lingshu-examples</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>demo-product-a2a-server</artifactId>
+    <name>LingShu Demo Product A2A Server (Story #025b — custom A2A server with translate skill)</name>
+    <description>
+        Companion demo to demo-product. Exposes an A2A agent at port 9090 with a
+        single 'translate' skill backed by an @AgentTool method. Pairs with
+        demo-product so the chat UI can call `remote_agent` to translate text
+        across JVM boundaries.
+
+        Replaces lingshu A2aServer via @SpringBootApplication(exclude =
+        A2aServerAutoConfiguration.class) because lingshu A2aServer's
+        RpcDispatcherHandler does NOT dispatch tools/call to a local
+        ToolRegistry — see DemoA2aServer class Javadoc for the full rationale.
+    </description>
+
+    <properties>
+        <!--
+          SpringAiToolAdapter reads Method parameter names via reflection
+          (SpringAiToolAdapter.java:213). Without -parameters, JDK 8 returns
+          'arg0'/'arg1' instead of the declared name, breaking LLM tool calls
+          that address arguments by name. demo-product already works around
+          this with one-word param names; we use -parameters to allow readable
+          multi-word param names like 'targetLang'.
+        -->
+        <maven.compiler.parameters>true</maven.compiler.parameters>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ai.lingshu</groupId>
+            <artifactId>lingshu-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Required ONLY for A2aServerAutoConfiguration (which we exclude)
+                 — the classes A2aServer / AgentCard / etc. live here.
+                 DemoA2aServer does NOT extend A2aServer; it builds its own
+                 HttpServer + AgentCard JSON from scratch. -->
+            <groupId>ai.lingshu</groupId>
+            <artifactId>lingshu-a2a-server</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

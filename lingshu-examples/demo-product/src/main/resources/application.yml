@@ -72,9 +72,80 @@ agent:
     bash: false
     max-file-bytes: 65536
 
-  # ── MCP (Story #021) — factory wired, no real server in this demo ──────
+  # ── MCP (Story #021a/b/c) — all 3 transports wired ────────────────────
+  # Each server gets its own `name` + `transport` + matching fields. The
+  # McpServerConnectionFactory dispatches on `transport`:
+  #   STDIO          → spawn command + speak JSON-RPC over stdin/stdout
+  #   SSE            → long-lived HTTP GET for server-pushed events
+  #   STREAMABLE_HTTP → stateless POST request/response
+  #
+  # stdio server below is real and self-contained (echo-stdio.py ships in
+  # src/main/resources/mcp-servers/). SSE and streamable_http point to
+  # localhost URLs — replace with a real MCP server (e.g. the official
+  # `mcp-server-everything` reference server) to see them live. McpTransport
+  # logs the connect failure once and then backs off (1s→2s→4s→...→60s cap),
+  # so boot is never blocked.
   mcp:
-    servers: []
+    servers:
+      # ── 1. STDIO — real, working out of the box ────────────────────────
+      - name: echo-stdio
+        transport: stdio
+        command: python3
+        args:
+          - src/main/resources/mcp-servers/echo-stdio.py
+        # env: {}        # uncomment + customize env if your server needs it
+        heartbeat-interval-ms: 30000
+        heartbeat-timeout-ms: 10000
+        reconnect-cap-ms: 60000
+
+      # ── 2. SSE — replace URL with a real SSE MCP server ────────────────
+      # McpServerConnectionFactory dispatches to SseMcpServerConnection on
+      # transport=sse. Connection lifecycle: GET /sse stays open; heartbeat
+      # = GET /health; reconnect rebuilds HttpClient + re-handshakes.
+      - name: reference-sse
+        transport: sse
+        url: http://localhost:9999/sse
+        heartbeat-interval-ms: 30000
+        heartbeat-timeout-ms: 10000
+        reconnect-cap-ms: 60000
+
+      # ── 3. STREAMABLE_HTTP — replace URL with a real HTTP MCP server ───
+      # McpServerConnectionFactory dispatches to StreamableHttpMcpServerConnection
+      # on transport=streamable_http. Each request is a fresh POST; no long-lived
+      # connection.
+      - name: reference-streamable
+        transport: streamable_http
+        url: http://localhost:9998/mcp
+        heartbeat-interval-ms: 30000
+        heartbeat-timeout-ms: 10000
+        reconnect-cap-ms: 60000
+
+  # ── A2A (Story #009 + #009d + 🆕 #025b) — remote agents list ────────────
+  # DemoProductApplication.agentConfig(Environment) walks this list and
+  # populates AgentConfig.A2a.remoteAgents. RemoteAgentTool.description()
+  # then fetches each agent's AgentCard from `url/.well-known/agent.json`
+  # and surfaces the skill ids into the LLM's tool list. When the LLM
+  # emits a tool call with {agentName, skill, input}, RemoteAgentTool
+  # routes it to A2aTransport.submit → POST /rpc message/send.
+  #
+  # Pairs with the sibling module demo-product-a2a-server (port 9090)
+  # which exposes the `translator` agent advertising the `translate` skill.
+  # Boot order: start demo-product-a2a-server FIRST so its AgentCard is
+  # reachable when demo-product starts up.
+  #
+  # Why `http-base-url: http://localhost:9090` — HttpJsonRpcA2aTransport
+  # uses a transport-wide `httpBaseUrl` (one Transport Bean, one base URL),
+  # NOT per-agentRef URL. All remote agents are fetched/dispatched via the
+  # same base URL. To reach a multi-agent gateway, set this to the gateway
+  # URL; for our 1-translator demo it's the a2a-server's own URL.
+  a2a:
+    transport: http-jsonrpc-1.0.0
+    http-base-url: http://localhost:9090
+    remote-agents:
+      - name: translator
+        url: http://localhost:9090
+        priority: 10
+    description-skill-limit: 10
 
   # ── Delegate sub-agents (Story #023) — explore / engineer / reviewer ──
   delegate:
