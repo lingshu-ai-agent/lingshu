@@ -11,6 +11,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -77,6 +79,10 @@ public class DemoProductApplication {
         // Walk agent.a2a.remote-agents[N] by hand — same pattern as McpServerProperties.
         List<AgentRef> remoteAgents = readRemoteAgents(env);
 
+        // 🆕 Story #025 follow-up — read agent.sandbox.* (5-field Slot 3 schema,
+        // dsh §5623-5627). Mirrors readRemoteAgents pattern.
+        AgentConfig.Sandbox sandbox = readSandbox(env);
+
         // 🆕 Story #025b — read A2aTransport name from YAML.
         // AgentConfigDefaults returns a2aTransport="default" but the
         // A2aTransportRouter providers are registered under versioned names
@@ -118,15 +124,15 @@ public class DemoProductApplication {
 
         if (mcpProps.getServers().isEmpty()) {
             LOG.info("agentConfig: no MCP servers in YAML, using defaults (McpTransport will idle)");
-            // Even with no MCP servers, still propagate remoteAgents.
-            return mergeConfig(defaults, null, a2a, remoteAgents, a2aTransportName);
+            // Even with no MCP servers, still propagate remoteAgents + sandbox.
+            return mergeConfig(defaults, null, a2a, remoteAgents, a2aTransportName, sandbox);
         }
 
         AgentConfig.Mcp mcp = new AgentConfig.Mcp(mcpProps.toAgentConfigServerConfigs());
         LOG.info("agentConfig: MCP servers bound from YAML — {} server(s): {}",
             mcp.getServers().size(), summarizeMcpNames(mcp));
         LOG.info("agentConfig: A2aTransport name from YAML — {}", a2aTransportName);
-        return mergeConfig(defaults, mcp, a2a, remoteAgents, a2aTransportName);
+        return mergeConfig(defaults, mcp, a2a, remoteAgents, a2aTransportName, sandbox);
     }
 
     /**
@@ -167,20 +173,97 @@ public class DemoProductApplication {
     }
 
     /**
+     * 🆕 Story #025 follow-up — read {@code agent.sandbox.*} properties from
+     * {@link Environment} into a fresh {@link AgentConfig.Sandbox}. Mirrors the
+     * {@link #readRemoteAgents(Environment)} pattern for inline per-AgentConfig
+     * overrides (Story #025 had this gap — the {@code agentConfig(Environment)}
+     * @Bean was using {@code defaults.getSandbox()}, so the demo's
+     * {@code application.yml} {@code agent.sandbox} block was never consumed).
+     *
+     * <p>5-field schema (dsh §5623-5627, matches {@link AgentConfig.Sandbox}):
+     * <ul>
+     *   <li>{@code .policy} — String, defaults to AgentConfigDefaults's value</li>
+     *   <li>{@code .runtime} — String, defaults to AgentConfigDefaults's value</li>
+     *   <li>{@code .working-directory} — Path; Spring resolves
+     *       {@code ${user.dir}} placeholder at {@code env.getProperty} time,
+     *       so the resulting String is the absolute path; we then convert
+     *       via {@link Paths#get(String, String...)}</li>
+     *   <li>{@code .command-whitelist} / {@code .domain-whitelist} —
+     *       {@code List<String>} walked by index, default to
+     *       AgentConfigDefaults's empty list</li>
+     * </ul>
+     *
+     * <p>Returns the AgentConfigDefaults {@link AgentConfig.Sandbox} verbatim
+     * when the {@code agent.sandbox} block is absent from YAML — preserves
+     * Story #001's "empty yml must boot" contract.
+     */
+    private static AgentConfig.Sandbox readSandbox(Environment env) {
+        AgentConfig defaults = AgentConfigDefaults.defaults();
+        String policy = env.getProperty("agent.sandbox.policy",
+            defaults.getSandbox().getPolicy());
+        String runtime = env.getProperty("agent.sandbox.runtime",
+            defaults.getSandbox().getRuntime());
+        String wdRaw = env.getProperty("agent.sandbox.working-directory");
+        Path workingDirectory = (wdRaw == null || wdRaw.isEmpty())
+            ? defaults.getSandbox().getWorkingDirectory()
+            : Paths.get(wdRaw);
+        List<String> commandWhitelist = readSandboxList(env, "agent.sandbox.command-whitelist",
+            defaults.getSandbox().getCommandWhitelist());
+        List<String> domainWhitelist = readSandboxList(env, "agent.sandbox.domain-whitelist",
+            defaults.getSandbox().getDomainWhitelist());
+        if (env.containsProperty("agent.sandbox.policy")
+            || env.containsProperty("agent.sandbox.runtime")
+            || env.containsProperty("agent.sandbox.working-directory")
+            || env.containsProperty("agent.sandbox.command-whitelist")
+            || env.containsProperty("agent.sandbox.domain-whitelist")) {
+            LOG.info("agentConfig: sandbox bound from YAML — policy={} runtime={} "
+                + "workingDir={} cmdWhitelist(size={}) domainWhitelist(size={})",
+                policy, runtime, workingDirectory,
+                commandWhitelist.size(), domainWhitelist.size());
+        } else {
+            LOG.info("agentConfig: no agent.sandbox in YAML — using defaults");
+        }
+        return new AgentConfig.Sandbox(policy, runtime, workingDirectory,
+            commandWhitelist, domainWhitelist);
+    }
+
+    /**
+     * Walk {@code prefix[N]} (zero-based index) from {@link Environment} into a
+     * {@code List<String>}. Mirrors the index-walking helper in
+     * {@link McpServerProperties#bindFromEnvironment} but takes a fallback list
+     * (defaults-based) so absence is preserved verbatim rather than coerced
+     * to {@code Collections.emptyList()}.
+     */
+    private static List<String> readSandboxList(Environment env, String prefix,
+                                                List<String> fallback) {
+        List<String> out = new ArrayList<>();
+        for (int j = 0; ; j++) {
+            String v = env.getProperty(prefix + "[" + j + "]");
+            if (v == null) {
+                break;
+            }
+            out.add(v);
+        }
+        return out.isEmpty() ? fallback : out;
+    }
+
+    /**
      * Assemble the full 24-field {@link AgentConfig}, overriding only the
-     * fields that need values from YAML. 21 fields stay untouched; only
-     * {@code mcp} (Story #025), {@code a2a.remoteAgents} (Story #025b), and
-     * {@code a2aTransport} (Story #025b) come from the environment.
+     * fields that need values from YAML. 20 fields stay untouched; only
+     * {@code mcp} (Story #025), {@code a2a.remoteAgents} (Story #025b),
+     * {@code a2aTransport} (Story #025b), and {@code sandbox} (Story #025
+     * follow-up) come from the environment.
      */
     private static AgentConfig mergeConfig(AgentConfig defaults, AgentConfig.Mcp mcp,
                                            AgentConfig.A2a a2a, List<AgentRef> remoteAgents,
-                                           String a2aTransportName) {
+                                           String a2aTransportName,
+                                           AgentConfig.Sandbox sandbox) {
         return new AgentConfig(
             defaults.getFlowEngine(),
             defaults.getLlm(),
             defaults.getPrompt(),
             defaults.getToolExecutor(),
-            defaults.getSandbox(),
+            sandbox,                                    // 🆕 Story #025 follow-up — populated from YAML
             defaults.getCompactor(),
             defaults.getSessionStore(),
             defaults.getDelegate(),

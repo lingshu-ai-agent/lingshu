@@ -1,6 +1,6 @@
 # demo-product — LingShu HTTP SSE chat product
 
-A comprehensive demo combining **8 features** of LingShu into one
+A comprehensive demo combining **9 features** of LingShu into one
 HTTP-streaming web app. Open the browser at `http://localhost:8080`,
 type a message, watch text stream in real time and see the event
 panel fill up with `tool.start` / `tool.done` / `compacted` / etc.
@@ -17,6 +17,7 @@ panel fill up with `tool.start` / `tool.done` / `compacted` / etc.
 | 6 | Delegate sub-agents | `Task` tool → explore / engineer / reviewer |
 | 7 | Compactor (auto + manual) | `compactor` event in panel |
 | 8 | Identity / Instructions / Memory | Pre-loaded on every turn |
+| 9 | Sandbox (Slot 3) | Bounds the 4 fs-touching Tools — see `application.yml` `agent.sandbox:` |
 
 ## Run
 
