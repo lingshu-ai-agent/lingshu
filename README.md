@@ -3,7 +3,9 @@
 
   <h1>lingshu · 灵枢</h1>
   <p><strong>The Pivot of Agent Orchestration</strong></p>
-  <p>Open-source Java Agent Engine for JDK 8+ · Spring Boot SPI · ReAct Loop · 9 Pluggable Slots</p>
+  > **更新日期**:2026-09-26 — **Story #026 yaml-placeholder-resolution 已合**(567 pass / 0 fail / R-13 0 binary delta 第 11 次 / +LINGS-C03 / +LINGS-C04):`PlaceholderResolver` 静态工具类(brace-counting scanner 4-form grammar `${X}` / `${X:default}` / `${X:${Y}}` / `$${literal}` escape + 32 层递归深度 + `Set<String> visited` 环检测)+ `YamlPlaceholderErrorCodes`(`LINGS-C03 YAML_PLACEHOLDER_UNRESOLVED` / `LINGS-C04 YAML_PLACEHOLDER_CYCLE`,Config 域 C 段 3/4 号)+ `AgentFactory.loadYamlAndValidate` 真接 `PlaceholderResolver.resolvePlaceholders(agent, ymlPath)`(`parseMinimalYaml` 与 `toAgentConfig` 之间 hook),**修跨路径 placeholder parity bug** —— 之前 CLI + YamlWatcher hand-rolled 路径下 `${user.dir}` 静默变 13 字符串,Spring Env 路径(demo-product)一直支持;17 单元测试(`PlaceholderResolverTest`)+ 2 IT 测试(`YamlHotReloadIT` `${user.dir}` 跨 hot-reload 真接 Path + unresolved `${X}` 触发 LingsConfigException → YamlWatcher catch + rollback);5 文件改动(3 new + 2 modify)/ 0 新 Maven 依赖(R-13 第 11 次 PASS);累计 30 个 Story 合入。
+>
+> **更新日期**:2026-09-26 — **Story #025 follow-up sandbox-wiring 已合**(631 pass / 0 fail / R-13 0 binary delta 第 10 次 / 0 新 ErrorCode):`DemoProductApplication.readSandbox(Environment)` 私有静态 helper(模仿 `readRemoteAgents(env)` 模式,5 字段全读 + INFO 日志分支)+ `readSandboxList` 索引式 list helper + `mergeConfig()` 签名 +1 `AgentConfig.Sandbox` 参数(`@Value` 24-字段构造器位置 5)+ `agentConfig(Environment)` @Bean 真吃 `agent.sandbox:` YAML 5 字段(policy/runtime/working-directory/command-whitelist/domain-whitelist);Spring 启动日志 `agentConfig: sandbox bound from YAML — policy=default runtime=chroot workingDir=<cwd> cmdWhitelist(size=11) domainWhitelist(size=2)` 验证接线;3 文件改动 / ~110 行代码 + ~35 行 YAML + ~3 行 README / 0 新 Maven 依赖 / 0 新 ErrorCode;`application.yml` sandbox 段注释同步更新(说明 ChatController 限制与 mcp/a2a 同病)
 
   <p>
     <a href="https://github.com/lingshu-ai-agent/lingshu/stargazers"><img src="https://img.shields.io/github/stars/lingshu-ai-agent/lingshu?style=for-the-badge" alt="stars"/></a>
@@ -59,6 +61,7 @@
 - 📡 **MCP server 3 transport 已上线**(stdio / SSE / streamable HTTP,Story #021a → #021b → #021c) — `McpServerConnection` interface 8 方法 + 6-态状态机(`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`);3 concrete 实现(`StdioMcpServerConnection` + `SseMcpServerConnection` + `StreamableHttpMcpServerConnection`)由 `McpServerConnectionFactory.create(cfg.transport())` 静态分派;`McpHttpSupport` 共享 HTTP / JSON-RPC 样板(`HttpURLConnection` JDK 1.1 + Jackson `ObjectNode`,**0 新 Maven 依赖**);SSE long-lived 守护 `Thread` + 手写 `BufferedReader.readLine()` SSE parser(malformed 事件不杀流);streamable HTTP 无状态 POST tools/* + `GET /health` 心跳;3 transport 共享指数退避 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 无限重试 + per-listener try/catch 异常隔离;`McpErrorCodes` 新错误域 `M`(M01 stdio 失败 / M02 tool-call 失败 / M03 HTTP-SSE 失败);`callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2);dsh §6.5 (2.1)
 - 🔗 **Tool/LLM 视角闭环已上线** — `DefaultPromptBuilder` 注入共享 `ToolRegistry`,`Prompt.tools = toolRegistry.modelVisibleSpecs()`(sorted snapshot);本地 Tool(Read/Write/Edit/Bash)+ MCP Tool + `@AgentTool` + Skill + RemoteAgentTool 全部经统一 registry 暴露给模型;**OQ-5 解决**(Story #024 dsh §6.4 [TOOL SCHEMAS] + §5.6.3.0 `RemoteAgentTool.description()` HINT 链路 + ToolRegistry 单点注册闭环,0 新依赖 / 0 新 ErrorCode)
 - 🎁 **Demo 产品已上线** — `lingshu-examples/demo-product/` HTTP SSE chat 产品组合 8 features(Spring Boot + SSE 流式 + ReAct 事件流 + `@AgentTool` + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置,Story #025) + `lingshu-examples/demo-product-a2a-server/` 跨 JVM translate demo(9090 端口通过 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 与 8080 `demo-product` 互通,Story #025b);**0 新 Maven 依赖**
+- 🌱 **YAML `${...}` 占位符跨路径统一** — `PlaceholderResolver` 静态工具类(brace-counting scanner 4-form grammar:`${X}` / `${X:default}` / `${X:${Y}}` 嵌套 / `$${literal}` 转义;env → sys-prop 查找;32 层环检测),`AgentFactory.loadYamlAndValidate` 在 `parseMinimalYaml` 与 `toAgentConfig` 之间 hook 调用,**修跨路径 parity bug** —— 之前 CLI / YamlWatcher hand-rolled 路径下 `${user.dir}` 静默变 13 字符串,Spring Env 路径(demo-product)一直支持;新增 2 ErrorCode `LINGS-C03 YAML_PLACEHOLDER_UNRESOLVED` / `LINGS-C04 YAML_PLACEHOLDER_CYCLE`;**0 新 Maven 依赖**(Story #026)
 
 ---
 
@@ -1598,6 +1601,44 @@ App 启动 ~3.2s,接线成功。
 **R-13 mitigation (d) baseline 镜像 PASS** —— `mvn -pl lingshu-examples/demo-product dependency:tree` pre/post diff **仅时间戳不同**,0 binary delta;`banned-dependencies` enforcer `Rule 0 passed`;**第 10 次** R-13 mitigation (d) 路径验证(前 9 次:#018 #019 #020a #020b #020c #021a-c #009e #022 #023)。
 
 **Story 边界** —— 3 文件改动(`DemoProductApplication.java` + `application.yml` + `README.md`)+ 0 新增源文件;**关键不变项** —— `AgentConfig` 不可变契约不变(`@Value` + `@Builder`,24 字段 final;`AgentConfig.Sandbox @Value` 5 字段只读不改)/ `AgentFactory` SPI 不变(只新增 1 个 helper 读 env,@Autowired 6-Router ctor 不动)/ `Tool` SPI 不变 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `ToolRegistry` SPI 不变(#020a 已落地)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 9 Slot 体系不变 / 24 字段 AgentConfig schema 不变 / JDK 8 兼容(`Paths.get` + `ArrayList` + `Collections.emptyList()`,无 record / sealed / var / List.of / Map.of) / 0 新 Maven 依赖 / 0 新 ErrorCode / R-13 强度最弱。
+
+---
+
+### Story #026 yaml-placeholder-resolution(`MinimalYamlParser` 4-form `${...}` 占位符跨路径统一,修 hand-rolled 路径静默失败 bug)
+
+LingShu 有 **2 条 YAML 摄取路径**,语义之前**不一致**(dsh §6.5 (1)):
+
+| 路径 | 解析器 | `${X}` 支持 | 使用者 |
+|---|---|---|---|
+| **Spring Environment**(demo-product) | Spring `Binder` via `McpServerProperties` / `Environment.getProperty` | ✅ yes(内置) | `DemoProductApplication.agentConfig(Environment)` |
+| **Hand-rolled 路径** | `MinimalYamlParser`(`AgentFactory.parseMinimalYaml` L379-478) | ❌ **no** —— `${X}` 直接当字面 token 落 `Map<String, Object>` | CLI(`CliRunner`)+ `YamlWatcher` hot-reload(Story #007)+ 单元测试 |
+
+Story #025 follow-up(commit `20a56f2 / 183c146`,PR #48)刚刚**暴露这个洞**:`application.yml` 里 `agent.sandbox.working-directory: ${user.dir}` 在 demo-product Spring Env 路径上 work(demo-product `@Bean` 走 `Environment.getProperty`),但同样语法放 `delegate.types.{explore,engineer,reviewer}.sandbox.workingDirectory` 在 CLI / hot-reload 路径上**静默**变成 13 字符字符串 `${user.dir}`,demo 直接 broken at runtime。
+
+**Story #026 一次性把 4-form grammar 补齐**,跨路径 parity 拿回。
+
+**4-form grammar**:
+1. `${X}` —— 必填,`env.get(X)` → `System.getProperty(X)` → 缺失抛 `LINGS-C03 YAML_PLACEHOLDER_UNRESOLVED`(fail-fast,不静默 coerce 到 null / 空串)
+2. `${X:default}` —— 有默认值,**第一 `:` 切分**(允许默认值含 `:`),env/sys-prop 缺失走 default
+3. `${X:${Y}}` —— 嵌套,**递归**先解 `${Y}`,结果作 `${X}` 的 default(内层可自己再有 default)
+4. `$${literal}` —— 转义,emit `${literal}` 字面不解析
+
+**实现要点**:
+1. **`PlaceholderResolver.java`**(新文件,~250 行,`ai.lingshu.core.impl.runtime` 包)—— `final class` 私有构造抛 `AssertionError`,3 public 静态 API(`resolvePlaceholders(Object, Path)` 递归 walk Map/List/String + `resolvePlaceholderExpression(String)` 单标量入口 + 私有 `walk` / `resolveScalar` / `resolveOneExpression` / `findMatchingBrace` / `resolveNestedDefault` / `lookup`);**brace-counting scanner**(而非 regex —— regex 无法干净表达 `${X:${Y}}` 嵌套)+ `StringBuilder` 增量构造;`MAX_RESOLUTION_DEPTH = 32` 防 stack overflow;每进 `resolveOneExpression` 都 `nextVisited = new LinkedHashSet<>(parentVisited); nextVisited.add(name)` 推 visited 才传下去 —— **测试覆盖** `cycleDetectedThrowsC04` 真造 A→B→A 嵌套默认链环;**env 先 / sys-prop 后**(Locked 决策,见 `PlaceholderResolver.lookup` + JavaDoc);JDK 8 only(`LinkedHashSet` / `Collections.emptySet()` / `StringBuilder`,no `var` / `List.of` / `Map.of` / sealed)
+2. **`YamlPlaceholderErrorCodes.java`**(新文件,~30 行)—— `public static final String LINGS_C03 = "LINGS-C03"` / `LINGS_C04 = "LINGS-C04"`(Config 域 C 段 3/4 号,YAML_PLACEHOLDER_UNRESOLVED / YAML_PLACEHOLDER_CYCLE);私有构造抛 `AssertionError`(对齐现有 `DelegConfigErrorCodes` 风格)
+3. **`AgentFactory.loadYamlAndValidate` hook** —— `parseMinimalYaml(content)` 与 `toAgentConfig(agent, ymlPath)` 之间 1 行调用 `agent = (Map<String, Object>) PlaceholderResolver.resolvePlaceholders(agent, ymlPath);`,**单一 chokepoint** 覆盖 CLI + hot-reload + 未来所有 caller;**不变** `parseMinimalYaml` 字符串 unquote / block-list 提升 / 注释忽略逻辑(它们独立测试 `MinimalYamlParserTest` 不动)
+4. **`LingsConfigException` 复用** + **ErrorCode 嵌入 message 模式**对齐 `LinearTurnEngine.LINGS-C02` —— 让 AssertJ `hasMessageContaining("LINGS-C0X")` 工作,而不是只检 `Throwable.code` 字段
+5. **`YamlWatcher` 不变** —— 已有 `catch (Exception)` 块 + `lastSeen` 不更新机制,**resolver 抛 `LingsConfigException(LINGS-C03)` 直接复用现有 rollback 语义**,零新增 wiring
+
+**测试覆盖**(19 新 cases):
+- **`PlaceholderResolverTest`**(17 cases L1,`ai.lingshu.core.impl.runtime` 包)—— `${X}` resolves via sys-prop / `${X:default}` 用 default / `${X:default}` env value wins over default / `${X:${Y}}` nested resolves first / `${X:${Y:fallback}}` nested with own default / `$${literal}` escape / lone `$` passthrough / unclosed `${X` emits literally / multiple placeholders in one scalar / block-list items resolved individually / non-string scalars(Integer/Boolean)pass through / null passes through / plain scalar unchanged / `${MISSING}` throws `LINGS-C03` / missing nested inner throws `LINGS-C03` / placeholder cycle A→B→A throws `LINGS-C04` / `resolvePlaceholderExpression` 单标量 API
+- **`YamlHotReloadIT`**(+2 cases L3 IT,`ai.lingshu.core.reload` 包)—— `${user.dir}` in `sandbox.working-directory` resolves across YAML hot-reload(实测 cross-path parity bug 修复);`${LINGS_TEST_UNSET_X_NOT_RESOLVED}` triggers `LingsConfigException` → `YamlWatcher` catches + rolls back to previous config(已有 `invalidYaml_keepsOldConfigPublished` 测试复刻)
+
+**累计** 567 pass / 0 fail(R-13 mitigation (d) baseline 镜像 pre/post `mvn -pl lingshu-core dependency:tree` diff 仅时间戳差异 = 0 binary delta 第 11 次 PASS)。
+
+**反模式 / 反思** —— 不允许"递归加 depth 但 `Set<String> visited` 不变",会漏 cycle。本实现**每进** `resolveOneExpression` 都 `nextVisited = new LinkedHashSet<>(parentVisited); nextVisited.add(name)` 才传下去,而不是 `resolveScalar` 全局共用一个 visited —— 后者会因多 line / 多 block-list 干扰产生 false-positive。`PlaceholderResolverTest.cycleDetectedThrowsC04` 真造 `${A:${B:${A}}}` 默认链环触发,守卫有效。
+
+**Story 边界** —— 5 文件改动(2 new ~280 行 + 2 modify +6 / +65 行 + 1 new test ~250 行),≤ 5 边界略超(新增 1 test 文件,允许;`PlaceholderResolver.java` 是核心实现 + `PlaceholderResolverTest.java` 是 1 对 1 unit test + `YamlPlaceholderErrorCodes.java` 是配套 constants,自然 3 件套);**关键不变项** —— `AgentConfig` 不可变契约不变 / `MinimalYamlParser`(`parseMinimalYaml` L379-478)字符串 unquote / block-list 提升 / 注释忽略逻辑零改动 / `AgentFactory` SPI 不变 / `Tool` SPI 不变 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `ToolRegistry` SPI 不变(#020a 已落地)/ `YamlWatcher` SPI 不变(#007 已落地)/ `McpServerProperties` POJO 不变 / §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 9 Slot 体系不变 / 24 字段 AgentConfig schema 不变 / JDK 8 兼容(`LinkedHashSet` / `Collections.emptySet()` / `ArrayDeque`,无 record / sealed / var / List.of / Map.of) / **0 新 Maven 依赖** / **2 新 ErrorCode**(`LINGS-C03` + `LINGS-C04`,Config 域 C 段 3/4 号,自 #023 后首次新增 ErrorCode)/ R-13 mitigation (d) baseline 镜像 **第 11 次 PASS 0 binary delta**(brace-counting 自实现 + `LinkedHashSet` + 32 层递归深度 + `StringBuilder` 增量构造 全 JDK built-in,无新 binary 引入)。
 
 ---
 
