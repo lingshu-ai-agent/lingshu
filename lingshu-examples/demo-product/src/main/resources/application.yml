@@ -72,6 +72,43 @@ agent:
     bash: false
     max-file-bytes: 65536
 
+  # ── Sandbox (Slot 3) — boundary for the 4 fs-touching Tools ──────────
+  # demo-product enables 4 local @Component Tools (read_file/write_file/
+  # list_dir/bash_safe in ProductTools.java). The sandbox policy is the
+  # *primary* boundary (per the class Javadoc); Tool-level checks (maxBytes,
+  # BashSafeTool whitelist) are defence in depth.
+  #
+  # Schema (5 fields, dsh §5623-5627) — matches AgentConfig.Sandbox:
+  #   policy              → PermissionPolicy (strict / default)
+  #   runtime             → RuntimeSandbox (chroot default)
+  #   working-directory   → fs ops must resolve under this Path
+  #   command-whitelist   → only enforced when built-in bash=true (here: false,
+  #                           BashSafeTool enforces its own whitelist instead)
+  #   domain-whitelist    → only enforced by WebFetch (not in this demo)
+  #
+  # Consumed by the `agentConfig(Environment)` @Bean (Story #025 follow-up).
+  # ChatController builds per-session configs from defaults directly —
+  # same pre-existing limitation as mcp/a2a here.
+  sandbox:
+    policy: default
+    runtime: chroot
+    working-directory: ${user.dir}
+    command-whitelist:
+      - ls
+      - cat
+      - echo
+      - head
+      - tail
+      - wc
+      - date
+      - uname
+      - whoami
+      - pwd
+      - which
+    domain-whitelist:
+      - github.com
+      - maven.aliyun.com
+
   # ── MCP (Story #021a/b/c) — all 3 transports wired ────────────────────
   # Each server gets its own `name` + `transport` + matching fields. The
   # McpServerConnectionFactory dispatches on `transport`:
