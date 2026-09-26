@@ -5,6 +5,8 @@
 > **与 constitution.md 关系**:本文件是工程 tracker(可修改);`constitution.md` 是法律(不可改,改须走 RFC)。
 > **与 dsh_agent_design.md 关系**:dsh 是设计真理(只读);本文件是「哪些 dsh 章节已落地 / 哪些待 Story」的实施映射。
 > **创建日期**:2026-09-22 — Story #009d a2a-remote-schema-builder 已合入,扫 §6 关键实现发现 5 大块空白。
+> **更新日期**:2026-09-26 — **Story #025 follow-up sandbox-wiring 已合**(631 pass / 0 fail / R-13 0 binary delta 第 10 次 / 0 新 ErrorCode):`DemoProductApplication.readSandbox(Environment)` 私有静态 helper(模仿 `readRemoteAgents(env)` 模式,5 字段全读 + INFO 日志分支)+ `readSandboxList` 索引式 list helper + `mergeConfig()` 签名 +1 `AgentConfig.Sandbox` 参数(`@Value` 24-字段构造器位置 5)+ `agentConfig(Environment)` @Bean 真吃 `agent.sandbox:` YAML 5 字段(policy/runtime/working-directory/command-whitelist/domain-whitelist);Spring 启动日志 `agentConfig: sandbox bound from YAML — policy=default runtime=chroot workingDir=<cwd> cmdWhitelist(size=11) domainWhitelist(size=2)` 验证接线;3 文件改动 / ~110 行代码 + ~35 行 YAML + ~3 行 README / 0 新 Maven 依赖 / 0 新 ErrorCode;`application.yml` sandbox 段注释同步更新(说明 ChatController 限制与 mcp/a2a 同病)
+>
 > **更新日期**:2026-09-25 — **Story #024 follow-up + Story #025 + Story #025b + Story #025 follow-up x2 已合**(631 tests pass / 0 fail / R-13 0 binary delta 第 9 次 / 0 新 ErrorCode):
 >   - **Story #024 follow-up a2a-server-tool-registry-dispatch**(`A2aServer.handleMessageSend` 走 `toolRegistry.lookup(skill)` → `tool.execute(call, ctx)` + cross-agent guard `params.agentName` 必须匹配 `Identity.name` + 30s timeout via `ToolCallConfig` + serve-mode `CountDownLatch` SIGTERM-clean 停机 + `tools/cleanup-ports.sh` SIGTERM→2s grace→SIGKILL 工具;10 文件改动 / +631 tests)
 >   - **Story #025 demo-product**(`lingshu-examples/demo-product/` 新模块,HTTP SSE chat 产品组合 8 features:Spring Boot + SSE 流式 + ReAct 事件流 + `@AgentTool` + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置;15 文件 / +1320 行)
@@ -16,9 +18,9 @@
 
 ---
 
-## ✅ 已完成(Story #001—#009 + #009a/b/c/d + #017 + #018 + #019 + #020a + #020b + #020c + #009e + #022 + #023 + #024 + #025 + #025b)
+## ✅ 已完成(Story #001—#009 + #009a/b/c/d + #017 + #018 + #019 + #020a + #020b + #020c + #009e + #022 + #023 + #024 + #025 + #025b + #025 follow-up)
 
-详见 `README.md` 「Story 路线图」段 + `dsh_agent_design.md §13` changelog。共 28 个 Story 合入(对应 ~26 个 PR;follow-up commits 算 PR 内补丁,不独立计数):
+详见 `README.md` 「Story 路线图」段 + `dsh_agent_design.md §13` changelog。共 29 个 Story 合入(对应 ~26 个 PR;follow-up commits 算 PR 内补丁,不独立计数):
 
 | Story | slug | 状态 |
 |---|---|---|
@@ -51,6 +53,7 @@
 | #024 follow-up | a2a-server-tool-registry-dispatch | ✅ 合(2026-09-25,631 pass / 0 fail / R-13 0 binary delta 第 9 次;`A2aServer.handleMessageSend` 走 `toolRegistry.lookup(skill)` → `tool.execute(call, ctx)` + cross-agent guard `params.agentName` 必须匹配 `Identity.name` + 30s timeout via `ToolCallConfig` + serve-mode `CountDownLatch` SIGTERM-clean 停机 + `tools/cleanup-ports.sh` SIGTERM→2s grace→SIGKILL 工具;10 文件改动 / 0 新依赖 / 0 新 ErrorCode) |
 | #025 | demo-product | ✅ 合(2026-09-25,15 文件 / +1320 行;`lingshu-examples/demo-product/` HTTP SSE chat 产品组合 8 features — `ChatController` SSE 流式响应 + `AgentEventMapper` ReAct 事件 → JSON + `DemoProductApplication` Spring Boot bootstrap + `ProductTools` / `ProductAgentTools` 业务 + `@AgentTool` 自动注册 + `SessionRegistry` 内存会话 + `mcp.servers[0]` stdio 子进程 + 3 SKILL.md (`clear` / `compact` / `help`);follow-up x2 补 `McpServerProperties` + `echo-stdio.py` + `skills/help.md`;0 新依赖) |
 | #025b | demo-product-a2a-server | ✅ 合(2026-09-25,9090 端口;`lingshu-examples/demo-product-a2a-server/` 跨 JVM translate demo 与 `demo-product` 8080 通过 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 互通;`DemoProductA2aServerApplication` 自起 JDK `HttpServer` 跑简化 JSON-RPC + 调本地 ToolRegistry(stock `A2aServer.handleMessageSend` 不接 dispatch 的事实绕过);Bug fix: AgentCard `ApplicationReadyEvent` 而非 `@PostConstruct` 重建(`AgentToolScanner` 在 `ContextRefreshedEvent` 后才注册 @AgentTool);`HttpJsonRpcA2aTransport.httpBaseUrl` 默认从 yaml `agent.a2a.http-base-url` 读,默认值 9090;0 新依赖) |
+| #025 follow-up | demo-product-sandbox-wiring | ✅ 合(2026-09-26,631 pass / 0 fail / R-13 0 binary delta 第 10 次 / 0 新 ErrorCode;`DemoProductApplication.readSandbox(Environment)` 私有静态 helper 模仿 `readRemoteAgents(env)` 模式 + `readSandboxList` 索引式 list helper + `mergeConfig()` 签名 +1 `AgentConfig.Sandbox` 参数(`@Value` 24-字段构造器位置 5)+ `agentConfig(Environment)` @Bean 真吃 `agent.sandbox:` YAML 5 字段(policy/runtime/working-directory/command-whitelist/domain-whitelist);Spring 启动日志 `agentConfig: sandbox bound from YAML — policy=default runtime=chroot workingDir=<cwd> cmdWhitelist(size=11) domainWhitelist(size=2)` 验证接线;3 文件改动 / ~110 行代码 + ~35 行 YAML + ~3 行 README / 0 新 Maven 依赖;补 demo-product 顶层 `agent.sandbox:` 配置示例缺失 + 接线不对称的根因(Story #025 主 commit 时 `mergeConfig()` 用 `defaults.getSandbox()`,YAML 段从未被消费)) |
 
 ---
 
@@ -65,7 +68,7 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 - 后续 §6 待补若需更多 Story,顺延 #024—
 - 编号规则:`#NNN-<slug>` 与现有 Story 路径(`specs/001-zero-config-bootstrap/` 等)对齐
 
-### 提议 Story 列表(13 个,按依赖顺序)
+### 提议 Story 列表(14 个,按依赖顺序)
 
 | 序 | Story # | slug | dsh § | 范围 | 文件数 | ErrorCode | 依赖 |
 |---:|---|---|---|---|---:|---|---|
@@ -82,8 +85,9 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
 | 10 | ~~**#024 follow-up**~~ | ~~`a2a-server-tool-registry-dispatch`~~ | ~~§5.6.3.1 / §5.6.3.2(实测发现,2026-09-25)~~ | ~~(1) `A2aServer.handleMessageSend` 走 `toolRegistry.lookup(skill)` → `tool.execute(call, ctx)`(2) cross-agent guard `params.agentName` 必须匹配 `Identity.name`(3) 30s timeout via `ToolCallConfig`(4) serve-mode `CountDownLatch` SIGTERM-clean 停机(5) `tools/cleanup-ports.sh` 工具~~ | ~~10 (4 new + 6 modified)~~ | ~~0~~ | **✅ 已合**(2026-09-25,631 pass / 0 fail / R-13 0 binary delta 第 9 次) |
 | 11 | ~~**#025**~~ | ~~`demo-product`~~ | ~~§10.2 (examples 实装)~~ | ~~`lingshu-examples/demo-product/` 新模块,HTTP SSE chat 产品组合 8 features — Spring Boot + SSE 流式响应 + ReAct 事件流 + `@AgentTool` 自动注册 + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置 + 3 SKILL.md (`clear` / `compact` / `help`)~~ | ~~15 + 2(follow-up:`McpServerProperties` + `echo-stdio.py`)+ 1(`skills/help.md` force-add)~~ | ~~0~~ | **✅ 已合**(2026-09-25,15 文件 / +1320 行 / 0 新依赖) |
 | 12 | ~~**#025b**~~ | ~~`demo-product-a2a-server`~~ | ~~§10.2 + §5.6.3.2 (A2A cross-JVM)~~ | ~~`lingshu-examples/demo-product-a2a-server/` 新模块 9090 端口,跨 JVM translate demo 与 `demo-product` 8080 通过 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 互通;`DemoProductA2aServerApplication` 自起 JDK `HttpServer` 跑简化 JSON-RPC + 调本地 ToolRegistry;Bug fix: AgentCard `ApplicationReadyEvent` 而非 `@PostConstruct` 重建(等 `AgentToolScanner` 注册完);`HttpJsonRpcA2aTransport.httpBaseUrl` 默认从 yaml `agent.a2a.http-base-url` 读,默认值 9090;Style A(LLM auto-discovery via RemoteAgentTool)+ Style B(显式 `/agent` slash skill)双路径~~ | ~~N(待补,具体文件数后续 PR body 补全)~~ | ~~0~~ | **✅ 已合**(2026-09-25,9090 端口 / 0 新依赖) |
+| 13 | ~~**#025 follow-up**~~ | ~~`demo-product-sandbox-wiring`~~ | ~~§10.2 (examples 完整性补漏)~~ | ~~`DemoProductApplication.readSandbox(Environment)` 私有静态 helper(模仿 `readRemoteAgents(env)` 模式,5 字段全读 + INFO 日志分支)+ `readSandboxList` 索引式 list helper + `mergeConfig()` 签名 +1 `AgentConfig.Sandbox` 参数(`@Value` 24-字段构造器位置 5)+ `agentConfig(Environment)` @Bean 真吃 `agent.sandbox:` YAML 5 字段(policy/runtime/working-directory/command-whitelist/domain-whitelist);`application.yml` 加 5-字段 sandbox 段(policy + runtime + `${user.dir}` 占位符 working-directory + 11 个 command-whitelist + 2 个 domain-whitelist);`README.md` 8 features → 9 features 加 Sandbox 行 9~~ | ~~3 (application.yml + README.md + DemoProductApplication.java) + 0~~ | ~~0~~ | **✅ 已合**(2026-09-26,~110 行代码 + ~35 行 YAML + ~3 行 README / 631 pass / 0 fail / R-13 0 binary delta 第 10 次) |
 
-**统计**:13 个 Story / **13 已合**(#020a + #020b + #020c + #021a + #021b + #021c + #009e + #022 + #023 + #024 + #024 follow-up + #025 + #025b)/ **0 待补** / ~80+ 个新文件(含 demo-product 15 文件 + demo-product-a2a-server ~5 文件 + `tools/cleanup-ports.sh` 1 文件)/ 实际 +598 测试 case 累计(同前;本批 4 Story 均为 examples / wiring 修补,Stage A demo-product / demo-product-a2a-server 未引入单元测试数 —— product demo 需 `spring-boot:run` 实测,Stage B 黑盒验证待补);R-13 mitigation (d) baseline 镜像第 9 次 PASS 0 binary delta(#024 follow-up `CountDownLatch` java.util.concurrent JDK-built-in / demo-product / demo-product-a2a-server 全部 JDK + Jackson + Lombok + spring-boot starter web 已锁);0 新 Maven 依赖 / 0 新 ErrorCode(自 #023 后);关键不变项:`AgentConfig` 不可变契约不变 / `AgentFactory` SPI 不变 / `Tool` SPI 不变 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容。
+**统计**:14 个 Story / **14 已合**(#020a + #020b + #020c + #021a + #021b + #021c + #009e + #022 + #023 + #024 + #024 follow-up + #025 + #025b + #025 follow-up)/ **0 待补** / ~80+ 个新文件(含 demo-product 15 文件 + demo-product-a2a-server ~5 文件 + `tools/cleanup-ports.sh` 1 文件)/ 实际 +598 测试 case 累计(同前;本批 4 Story 均为 examples / wiring 修补,Stage A demo-product / demo-product-a2a-server 未引入单元测试数 —— product demo 需 `spring-boot:run` 实测,Stage B 黑盒验证待补);R-13 mitigation (d) baseline 镜像第 10 次 PASS 0 binary delta(#024 follow-up `CountDownLatch` java.util.concurrent JDK-built-in / demo-product / demo-product-a2a-server / #025 follow-up `Paths.get` / `AgentConfig.Sandbox @Value` 全部 JDK + Jackson + Lombok + spring-boot starter web 已锁,无新 binary 引入);0 新 Maven 依赖 / 0 新 ErrorCode(自 #023 后);关键不变项:`AgentConfig` 不可变契约不变 / `AgentFactory` SPI 不变 / `Tool` SPI 不变 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容。
 
 ### 实施顺序建议(支持并行)
 
@@ -95,14 +99,15 @@ dsh §6 关键实现章节(L3499-5152)中,**4/6 主章节有未落地子模块**
     ├ ✅ #009e a2a-remote-tool-wiring  ── 已合(wiring 修复,#023 内部依赖)
     ├ ✅ #022 spring-ai-annotation-tool  ── 已合
     └ ✅ #023 delegate-sub-agent          ── 已合(536 tests pass / 0 fail / R-13 0 binary delta 第 8 次 / +LINGS-D01)
-  支链 A1(2026-09-25 增): ✅ #024 → ✅ #024 follow-up → ✅ #025 → ✅ #025b
+  支链 A1(2026-09-26 增): ✅ #024 → ✅ #024 follow-up → ✅ #025 → ✅ #025b → ✅ #025 follow-up
     ├ ✅ #024 tool-schemas-integration        ── 已合(OQ-5 解决,Tool/LLM 视角架构闭环)
     ├ ✅ #024 follow-up a2a-server-tool-registry-dispatch ── 已合(631 pass / 0 fail / R-13 0 binary delta 第 9 次,serve-mode SIGTERM-clean 停机)
     ├ ✅ #025 demo-product                    ── 已合(15 文件 / +1320 行,HTTP SSE chat 产品组合 8 features)
-    └ ✅ #025b demo-product-a2a-server        ── 已合(9090 端口,跨 JVM translate demo 与 demo-product 8080 互通)
+    ├ ✅ #025b demo-product-a2a-server        ── 已合(9090 端口,跨 JVM translate demo 与 demo-product 8080 互通)
+    └ ✅ #025 follow-up demo-product-sandbox-wiring ── 已合(3 文件 / ~110 行代码 + ~35 行 YAML + ~3 行 README / R-13 0 binary delta 第 10 次,`agentConfig(Environment)` @Bean 真吃 `agent.sandbox:` YAML 5 字段)
   支链 B: ✅ #022                       (Spring AI `@AgentTool`,已合 🎉)
   支链 C: ✅ #023                       (Sub-agent,已合 🎉)
-  支链 D: ✅ #025 + ✅ #025b             (Demo 产品,已合 🎉 — HTTP SSE chat + 跨 JVM A2A)
+  支链 D: ✅ #025 + ✅ #025b + ✅ #025 follow-up  (Demo 产品,已合 🎉 — HTTP SSE chat + 跨 JVM A2A + sandbox wiring)
 ```
 
 **R-13 mitigation (d) 假设**:复用 Spring AI `@Tool`(已在 13 项依赖表内)+ 复用 JDK 17+ `java.net.http.HttpClient`(SSE/HTTP)/ JDK 8 `ProcessBuilder`(stdio)/ 复用 Jackson + Lombok(已锁)。**预计 0 新依赖**(MCP stdio 用 JDK 内置 `ProcessBuilder` 即可,无需 `jackson-module-jsonSchema` 等额外包)。
@@ -180,5 +185,6 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 8. **2026-09-25**:**Story #025 demo-product 已合** — `lingshu-examples/demo-product/` 新模块,HTTP SSE chat 产品组合 8 features(Spring Boot + SSE 流式响应 + ReAct 事件流 + `@AgentTool` 自动注册 + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置);15 文件 / +1320 行 / 0 新 Maven 依赖
 9. **2026-09-25**:**Story #025b demo-product-a2a-server 已合** — `lingshu-examples/demo-product-a2a-server/` 新模块(9090 端口),跨 JVM translate demo 与 `demo-product`(8080 端口)通过 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 互通;`A2aServer.handleMessageSend` 不接 dispatch 的事实绕过 = 自起 JDK `HttpServer` 跑简化 JSON-RPC + 调本地 ToolRegistry;Bug fix: AgentCard `ApplicationReadyEvent` 而非 `@PostConstruct` 重建(`AgentToolScanner` 在 `ContextRefreshedEvent` 后才注册 @AgentTool);0 新 Maven 依赖
 10. **2026-09-25**:**Story #025 follow-up x2 已合** — 补 demo-product 主 commit 漏的 2 文件(`McpServerProperties.bindFromEnvironment(...)` POJO + `mcp-servers/echo-stdio.py` Python stdlib MCP server 脚本)+ `skills/help.md` force-add(`.gitignore` `HELP.md` 大小写不敏感吞 `help.md`);0 新依赖;**R-13 mitigation (d) baseline 镜像第 9 次 PASS 0 binary delta**
-11. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
-12. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整
+11. **2026-09-26**:**Story #025 follow-up demo-product-sandbox-wiring 已合** — `DemoProductApplication.readSandbox(Environment)` 私有静态 helper(模仿 `readRemoteAgents(env)` 模式,5 字段全读 + INFO 日志分支)+ `readSandboxList` 索引式 list helper + `mergeConfig()` 签名 +1 `AgentConfig.Sandbox` 参数(`@Value` 24-字段构造器位置 5)+ `agentConfig(Environment)` @Bean 真吃 `agent.sandbox:` YAML 5 字段(policy/runtime/working-directory/command-whitelist/domain-whitelist);3 文件改动 / ~110 行代码 + ~35 行 YAML + ~3 行 README;Spring 启动日志 `agentConfig: sandbox bound from YAML — policy=default runtime=chroot workingDir=<cwd> cmdWhitelist(size=11) domainWhitelist(size=2)` 验证接线成功;0 新 Maven 依赖 / 0 新 ErrorCode / R-13 mitigation (d) baseline 镜像第 10 次 PASS 0 binary delta(`Paths.get` + `AgentConfig.Sandbox @Value` 全部 JDK 内置,无新 binary 引入)
+12. **每个 Story 合入后**:更新本文件「✅ 已完成」表 + dsh §13 changelog + `constitution.md` §10 R-XX 缓解率 + README.md Story 路线图
+13. **每月 1 号**:review 本文件,确认 P0 → P2 升级 / 滞后顺序调整

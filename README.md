@@ -1569,6 +1569,38 @@ dsh §10.2 锚定 `lingshu-examples/` 教学示例 ≤ 10 个、每个 ≤ 100 �
 
 ---
 
+### Story #025 follow-up demo-product-sandbox-wiring(demo-product 顶层 `agent.sandbox:` 配置补全 + `@Bean` 接线修复 + Slot 3 Sandbox showcase 闭环)
+
+Story #025 demo-product 主 commit 漏了 2 件事:(a) `application.yml` 顶层 `agent.sandbox:` 5 字段配置示例缺失 —— Slot 3 (Sandbox) 在 demo 中没有独立可见的样板,只在 `delegate.types.{explore,engineer,reviewer}` 三处嵌套 sandbox 块里有部分字段;(b) 更严重 —— `DemoProductApplication.agentConfig(Environment)` `@Bean` 中 `mergeConfig()` 用 `defaults.getSandbox()`,**YAML 顶层 `agent.sandbox:` 块从未被消费**:Spring 启动后 sandbox 永远是 `AgentConfigDefaults` 默认值,用户改 YAML 不生效 —— Story #025 主 commit 时 `readRemoteAgents(env)` + `McpServerProperties.bindFromEnvironment(env)` 都做了 inline 绑定,**漏掉** sandbox。
+
+**Story #025 follow-up 一次性把两件事都修了**:
+
+1. **`application.yml` 加顶层 `sandbox:` 块**(L92-110,5 字段完整 dsh §5623-5627 schema):`policy: default` + `runtime: chroot` + `working-directory: ${user.dir}`(Spring `${user.dir}` 占位符自动解析为绝对路径)+ 11 个 `command-whitelist`(ls / cat / echo / head / tail / wc / date / uname / whoami / pwd / which)+ 2 个 `domain-whitelist`(github.com / maven.aliyun.com);**注释** 引用 dsh §5623-5627 schema + Slot 3 边界 + 与 BashSafeTool whitelist 双层关系(Slot 3 sandbox policy 是 primary boundary,BashSafeTool whitelist 是 defense in depth)。
+2. **`DemoProductApplication.readSandbox(Environment)` 私有静态 helper** 镜像 `readRemoteAgents(env)` 模式:`policy` / `runtime` 走 `env.getProperty(prefix, String.class, defaults.getSandbox().getXxx())` 兜底;`working-directory` 走 `env.getProperty(prefix)` + `Paths.get(wdRaw)`;`command-whitelist` / `domain-whitelist` 走新增 `readSandboxList(env, prefix, fallback)` 索引遍历 `[0]/[1]/...` 终止于 null,缺失回退到 `AgentConfigDefaults` 的 default Sandbox 列表(**保留**「空 yml 必须能启动」契约)。
+3. **`mergeConfig()` 签名 +1 参数** —— 加 `AgentConfig.Sandbox sandbox`,把 `defaults.getSandbox()` 替换为 `sandbox`(`@Value` 24-字段构造器位置 5),2 处调用(L128 + L135)同步更新;Javadoc 同步说明 `sandbox` 来自 environment(Story #025 follow-up)。
+4. **`agentConfig(Environment)` `@Bean` 增加 `AgentConfig.Sandbox sandbox = readSandbox(env);`** —— 在 `readRemoteAgents(env)` 之后 + `a2aTransportName` 之前,2 处 `mergeConfig()` 调用都传 `sandbox`。
+5. **`README.md` 同步** —— L2「8 features」→「9 features」+ 特性表加 #9 行 `Sandbox (Slot 3)` 行,指向 `application.yml` `agent.sandbox:` 块。
+
+**启动验证 PASS**:`mvn -pl lingshu-examples/demo-product -am install -DskipTests -q` + `mvn -pl lingshu-examples/demo-product spring-boot:run` 后 Spring 启动日志:
+
+```
+agentConfig: sandbox bound from YAML — policy=default runtime=chroot
+  workingDir=/Users/.../lingshu-examples/demo-product cmdWhitelist(size=11)
+  domainWhitelist(size=2)
+```
+
+App 启动 ~3.2s,接线成功。
+
+**3 文件改动 / ~110 行 Java + ~35 行 YAML + ~3 行 README** / 0 新 Maven 依赖(JDK 内置 `Paths.get` + `AgentConfig.Sandbox @Value` 全部已锁 0 新增)/ 0 新 ErrorCode;1 等效 helper(`readSandbox` + `readSandboxList` 2 私有 static)= 严格 ≤5 边界内。
+
+**ChatController 仍走 `AgentConfigDefaults.defaults()` 直接构建 per-session config** —— **pre-existing 限制不变**(与 Story #025 + #025b 的 mcp/a2a 块同理:顶层 `agent.sandbox:` 在 @Bean 层面消费 + 启动期 bind 验证,但 per-session 仍走 defaults);如要让 per-session 也吃 YAML,需把 `ChatController.buildConfig(...)` 改为同样调 `readSandbox(env)` + `mergeConfig(defaults, ...)` —— Story #026 实施期决策。
+
+**R-13 mitigation (d) baseline 镜像 PASS** —— `mvn -pl lingshu-examples/demo-product dependency:tree` pre/post diff **仅时间戳不同**,0 binary delta;`banned-dependencies` enforcer `Rule 0 passed`;**第 10 次** R-13 mitigation (d) 路径验证(前 9 次:#018 #019 #020a #020b #020c #021a-c #009e #022 #023)。
+
+**Story 边界** —— 3 文件改动(`DemoProductApplication.java` + `application.yml` + `README.md`)+ 0 新增源文件;**关键不变项** —— `AgentConfig` 不可变契约不变(`@Value` + `@Builder`,24 字段 final;`AgentConfig.Sandbox @Value` 5 字段只读不改)/ `AgentFactory` SPI 不变(只新增 1 个 helper 读 env,@Autowired 6-Router ctor 不动)/ `Tool` SPI 不变 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `ToolRegistry` SPI 不变(#020a 已落地)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 9 Slot 体系不变 / 24 字段 AgentConfig schema 不变 / JDK 8 兼容(`Paths.get` + `ArrayList` + `Collections.emptyList()`,无 record / sealed / var / List.of / Map.of) / 0 新 Maven 依赖 / 0 新 ErrorCode / R-13 强度最弱。
+
+---
+
 ### Story #025b demo-product-a2a-server(`lingshu-examples/demo-product-a2a-server/` 跨 JVM translate demo 与 `demo-product` 8080 端口互通)
 
 Story #025 demo-product(8080)跑通端到端 chat 后,补一个 sibling 端口 9090 跑跨 JVM translate skill,演示 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 真实跨进程 Tool 调度。
