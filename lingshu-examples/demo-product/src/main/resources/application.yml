@@ -194,21 +194,21 @@ agent:
         sandbox:
           policy: default
           runtime: chroot
-          workingDirectory: "@user.dir"
+          workingDirectory: ${user.dir}
       engineer:
         llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 2048 }
         tools: [read_file, write_file, list_dir, bash_safe]
         sandbox:
           policy: default
           runtime: chroot
-          workingDirectory: "@user.dir"
+          workingDirectory: ${user.dir}
       reviewer:
         llm: { provider: anthropic, model: MiniMax-M3, max-tokens: 1024 }
         tools: [read_file]
         sandbox:
           policy: default
           runtime: chroot
-          workingDirectory: "@user.dir"
+          workingDirectory: ${user.dir}
 
   # ── Compactor (Story #018) — low threshold so the demo triggers it ────
   compactor:
