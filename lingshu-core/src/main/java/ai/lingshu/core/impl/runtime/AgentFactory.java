@@ -343,6 +343,12 @@ public class AgentFactory implements InitializingBean {
     public AgentConfig loadYamlAndValidate(Path ymlPath) throws IOException {
         String content = new String(Files.readAllBytes(ymlPath), StandardCharsets.UTF_8);
         Map<String, Object> root = parseMinimalYaml(content);
+        // 🆕 Story #026 — resolve ${...} placeholders in the parsed tree.
+        // The hand-rolled parser returns ${X} as a literal token; without this
+        // hook, `${user.dir}` would silently become the 13-char string
+        // "${user.dir}" — see PlaceholderResolver Javadoc for the 4-form grammar.
+        // Spring Environment path (demo-product @Bean) already resolves natively
+        // so this hook is only needed for the CLI / YamlWatcher hot-reload path.
         Object agentNode = root.get("agent");
         if (!(agentNode instanceof Map)) {
             throw new IllegalStateException(
@@ -350,6 +356,7 @@ public class AgentFactory implements InitializingBean {
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> agent = (Map<String, Object>) agentNode;
+        agent = (Map<String, Object>) PlaceholderResolver.resolvePlaceholders(agent, ymlPath);
         AgentConfig cfg = toAgentConfig(agent, ymlPath);
         validate(cfg);
         return cfg;

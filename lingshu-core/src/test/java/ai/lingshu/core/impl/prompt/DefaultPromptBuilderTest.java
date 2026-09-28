@@ -1,11 +1,21 @@
 package ai.lingshu.core.impl.prompt;
 
+import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.Message;
 import ai.lingshu.core.message.Prompt;
+import ai.lingshu.core.message.ToolCall;
+import ai.lingshu.core.message.ToolResult;
+import ai.lingshu.core.message.ToolSpec;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.Session;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.slot.MemorySource;
+import ai.lingshu.core.slot.Tool;
+import ai.lingshu.core.slot.ToolExecutionContext;
+import ai.lingshu.core.slot.ToolRegistry;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -354,6 +364,198 @@ class DefaultPromptBuilderTest {
         assertThat(prompt.getHints().getModel()).isEqualTo("claude-3-5-sonnet-latest");
         assertThat(prompt.getHints().getTemperature()).isEqualTo(1.0);
         assertThat(prompt.getHints().getMaxTokens()).isEqualTo(8192);
+    }
+
+    // ── Story #024 — [TOOL SCHEMAS] wiring from shared ToolRegistry ──
+
+    /** Stub {@link Tool} that ignores {@code execute()} — only the schema surface matters here. */
+    private static Tool toolOf(final String name, final String description, final JsonNode schema) {
+        return new Tool() {
+            @Override public String name() { return name; }
+            @Override public String description() { return description; }
+            @Override public JsonNode inputSchema() { return schema; }
+            @Override public ToolResult execute(ToolCall call, ToolExecutionContext c) {
+                throw new UnsupportedOperationException(
+                    "DefaultPromptBuilderTest.toolOf — execute() not exercised in unit tests");
+            }
+        };
+    }
+
+    private static JsonNode emptyObjectSchema() {
+        ObjectMapper m = new ObjectMapper();
+        ObjectNode node = m.createObjectNode();
+        node.put("type", "object");
+        node.put("additionalProperties", true);
+        return node;
+    }
+
+    @Test
+    @DisplayName("build_nullRegistryBackwardCompat_returnsEmptyTools")
+    void build_nullRegistryBackwardCompat_returnsEmptyTools() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        // Legacy 1-arg ctor — no ToolRegistry injected. [TOOL SCHEMAS] must be empty.
+        DefaultPromptBuilder b = new DefaultPromptBuilder(Collections.<MemorySource>emptyList());
+        Prompt prompt = b.build(ctx);
+
+        assertThat(prompt.getTools()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("build_emptyRegistry_returnsEmptyToolsList")
+    void build_emptyRegistry_returnsEmptyToolsList() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.modelVisibleSpecs()).thenReturn(Collections.<ToolSpec>emptyList());
+
+        DefaultPromptBuilder b = new DefaultPromptBuilder(
+            Collections.<MemorySource>emptyList(), registry);
+        Prompt prompt = b.build(ctx);
+
+        assertThat(prompt.getTools()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("build_withRegisteredTools_populatesToolsFromRegistry")
+    void build_withRegisteredTools_populatesToolsFromRegistry() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        // Pre-sorted by name (registry's contract; DefaultPromptBuilder does not re-sort).
+        ToolSpec edit = new ToolSpec("Edit", "Edit a file", emptyObjectSchema());
+        ToolSpec read = new ToolSpec("Read", "Read a file", emptyObjectSchema());
+        ToolSpec write = new ToolSpec("Write", "Write a file", emptyObjectSchema());
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.modelVisibleSpecs()).thenReturn(
+            java.util.Arrays.asList(edit, read, write));
+
+        DefaultPromptBuilder b = new DefaultPromptBuilder(
+            Collections.<MemorySource>emptyList(), registry);
+        Prompt prompt = b.build(ctx);
+
+        assertThat(prompt.getTools())
+            .hasSize(3)
+            .containsExactly(edit, read, write)
+            .extracting(ToolSpec::getName)
+            .containsExactly("Edit", "Read", "Write");
+    }
+
+    @Test
+    @DisplayName("build_skillsAreVisibleAsTools")
+    void build_skillsAreVisibleAsTools() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        // Skill schemas surface the same way as a plain Tool — both indices in
+        // DefaultToolRegistry (#020a dual-index) feed modelVisibleSpecs() identically.
+        ToolSpec commit = new ToolSpec("commit", "Generate a commit message",
+            emptyObjectSchema());
+        ToolSpec review = new ToolSpec("code_review", "Review changed code",
+            emptyObjectSchema());
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.modelVisibleSpecs()).thenReturn(
+            java.util.Arrays.asList(commit, review));
+
+        DefaultPromptBuilder b = new DefaultPromptBuilder(
+            Collections.<MemorySource>emptyList(), registry);
+        Prompt prompt = b.build(ctx);
+
+        assertThat(prompt.getTools())
+            .hasSize(2)
+            .extracting(ToolSpec::getName)
+            .containsExactly("commit", "code_review");
+    }
+
+    @Test
+    @DisplayName("build_withRegistry_reReadsEachBuild (matches dynamic MCP toolchain)")
+    void build_withRegistry_reReadsEachBuild() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        ToolRegistry registry = mock(ToolRegistry.class);
+        // First call returns 1 tool, second returns 2 — simulates MCP server
+        // adding a tool between turns (Story #021b onConnectionStateChange contract).
+        when(registry.modelVisibleSpecs())
+            .thenReturn(java.util.Collections.singletonList(
+                new ToolSpec("Read", "Read a file", emptyObjectSchema())))
+            .thenReturn(java.util.Arrays.asList(
+                new ToolSpec("Read", "Read a file", emptyObjectSchema()),
+                new ToolSpec("Write", "Write a file", emptyObjectSchema())));
+
+        DefaultPromptBuilder b = new DefaultPromptBuilder(
+            Collections.<MemorySource>emptyList(), registry);
+
+        Prompt p1 = b.build(ctx);
+        assertThat(p1.getTools()).hasSize(1);
+
+        Prompt p2 = b.build(ctx);
+        assertThat(p2.getTools()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("build_withTools_otherSegmentsUnaffected")
+    void build_withTools_otherSegmentsUnaffected() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.modelVisibleSpecs()).thenReturn(java.util.Arrays.asList(
+            new ToolSpec("Read", "Read a file", emptyObjectSchema())));
+
+        DefaultPromptBuilder b = new DefaultPromptBuilder(
+            Collections.<MemorySource>emptyList(), registry);
+        Prompt prompt = b.build(ctx);
+
+        // Tools must not leak into the system message text — they live in
+        // Prompt.tools as a separate field (dsh §4.5.1 v1.5.13 invariant).
+        String systemText = ((Message.System) prompt.getMessages().get(0)).getContent();
+        assertThat(systemText)
+            .as("tools must NOT appear in the [SYSTEM] text — they live in Prompt.tools")
+            .doesNotContain("Read")
+            .doesNotContain("Read a file")
+            .doesNotContain("inputSchema");
+        assertThat(prompt.getTools()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("build_withRealDefaultToolRegistry_endToEnd (registers Tool → prompt sees it)")
+    void build_withRealDefaultToolRegistry_endToEnd() {
+        config = buildConfig(AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(), AgentConfig.Memory.defaults());
+        when(ctx.config()).thenReturn(config);
+        when(ctx.userInput()).thenReturn("hi");
+
+        // Real DefaultToolRegistry — register real Tool instances, verify the
+        // prompt builder picks them up via DefaultToolRegistry.modelVisibleSpecs()
+        // (sorted snapshot). End-to-end wiring proof for Story #024.
+        DefaultToolRegistry real = new DefaultToolRegistry();
+        real.register(toolOf("Read", "Read a file", emptyObjectSchema()));
+        real.register(toolOf("Write", "Write a file", emptyObjectSchema()));
+        real.register(toolOf("Edit", "Edit a file", emptyObjectSchema()));
+
+        DefaultPromptBuilder b = new DefaultPromptBuilder(
+            Collections.<MemorySource>emptyList(), real);
+        Prompt prompt = b.build(ctx);
+
+        assertThat(prompt.getTools())
+            .hasSize(3)
+            .extracting(ToolSpec::getName)
+            .containsExactly("Edit", "Read", "Write");  // sorted asc by registry
     }
 
     // ── helpers ──────────────────────────────────────────────────────

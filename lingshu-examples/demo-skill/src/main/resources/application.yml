@@ -1,0 +1,14 @@
+# Story #020a + #020b + #020c demo configuration
+agent:
+  llm:
+    provider: anthropic
+  react:
+    max-steps: 5
+  # Story #019 — 关闭本地 4 个内置 Tool(避免干扰 Skill 演示)
+  tools:
+    enabled: false
+  # Story #020b — SkillSource 配置(classpath 加载 resources/skills/*.md)
+  skills:
+    sources:
+      - type: classpath
+        location: skills

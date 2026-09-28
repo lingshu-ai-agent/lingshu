@@ -7,6 +7,7 @@ import ai.lingshu.core.impl.runtime.AgentFactory;
 import ai.lingshu.core.runtime.Agent;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.RunResult;
+import ai.lingshu.core.slot.ToolRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Story #017 — CLI dispatcher. Receives the original argv via Spring's
@@ -40,24 +42,30 @@ public class CliRunner implements ApplicationRunner {
     private final AgentFactory factory;
     /** 🆕 Story #020c — optional; {@code null} = legacy mode (no /xxx interception, no skill banner). */
     private final SkillCommandDispatcher skillDispatcher;
+    /** 🆕 Story a2a-server-tool-registry-dispatch — local {@link ToolRegistry} for the {@code serve} subcommand;
+     *  {@code null} in legacy handler tests that don't exercise {@code doServe}. */
+    private final ToolRegistry toolRegistry;
     private final PrintStream out;
     private final PrintStream err;
 
     @Autowired
-    public CliRunner(AgentFactory factory, SkillCommandDispatcher skillDispatcher) {
-        this(factory, skillDispatcher, System.out, System.err);
+    public CliRunner(AgentFactory factory, SkillCommandDispatcher skillDispatcher,
+                     ToolRegistry toolRegistry) {
+        this(factory, skillDispatcher, toolRegistry, System.out, System.err);
     }
 
-    /** Legacy 3-arg ctor — used by Story #017 handler tests; delegates with null dispatcher. */
+    /** Legacy 3-arg ctor — used by Story #017 handler tests; delegates with null dispatcher and null registry. */
     CliRunner(AgentFactory factory, PrintStream out, PrintStream err) {
-        this(factory, null, out, err);
+        this(factory, null, null, out, err);
     }
 
-    /** Test-only 4-arg ctor — used by Story #020c CliRunnerSkillTriggerTest. */
+    /** Test-only 5-arg ctor — used by Story #020c CliRunnerSkillTriggerTest
+     *  (null ToolRegistry is acceptable: those tests don't call {@code doServe}). */
     CliRunner(AgentFactory factory, SkillCommandDispatcher skillDispatcher,
-              PrintStream out, PrintStream err) {
+              ToolRegistry toolRegistry, PrintStream out, PrintStream err) {
         this.factory = factory;
         this.skillDispatcher = skillDispatcher;
+        this.toolRegistry = toolRegistry;
         this.out = out;
         this.err = err;
     }
@@ -178,7 +186,12 @@ public class CliRunner implements ApplicationRunner {
         }
         A2aServer server;
         try {
-            server = new A2aServer(cfg);
+            // 🆕 Story a2a-server-tool-registry-dispatch — pass the Spring-managed
+            // ToolRegistry so serve-mode A2aServer advertises skills[] in agent.json
+            // and dispatches message/send to local Tools. Null in legacy handler
+            // tests (ServeHandlerTest doesn't exercise the success path — see
+            // its L17-29 Javadoc note about L5 E2E coverage in MainIntegrationTest).
+            server = new A2aServer(cfg, toolRegistry);
             server.start();
         } catch (LingsA2aServerException e) {
             throw new LingsCliException(e.getErrorCode(),
@@ -191,20 +204,33 @@ public class CliRunner implements ApplicationRunner {
             + " (GET http://127.0.0.1:" + port + "/.well-known/agent.json)");
         out.println("[LINGS-Z99] press Ctrl+C / send SIGTERM to stop");
 
-        // JVM shutdown hook — fires on Ctrl+C / SIGTERM / normal exit
+        // JVM shutdown hook — fires on Ctrl+C / SIGTERM / normal exit.
+        // After server.stop() releases the listen socket, count down the latch so
+        // the main thread below can exit deterministically (otherwise the JVM
+        // would hang on the parked main thread even after stop() succeeds).
+        final CountDownLatch shutdownLatch = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
             @Override
             public void run() {
                 out.println("[LINGS-Z99] shutdown hook firing — stopping A2aServer");
-                server.stop();
+                try {
+                    server.stop();
+                } finally {
+                    shutdownLatch.countDown();
+                }
             }
         }, "lingshu-cli-serve-shutdown"));
 
-        // Block main thread until JVM exit signal arrives
+        // Block main thread until shutdown hook fires (SIGTERM/SIGINT/System.exit)
+        // or the thread is interrupted programmatically (used by tests for clean
+        // teardown). CountDownLatch.await() replaces the previous
+        // Thread.currentThread().join() pattern — equivalent in the "wait forever"
+        // case but properly interruptible and lets the shutdown hook release us.
         try {
-            Thread.currentThread().join();
+            shutdownLatch.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            out.println("[LINGS-Z99] serve interrupted — stopping A2aServer");
             server.stop();
             throw new LingsCliException("LINGS-Z99",
                 "serve interrupted",

@@ -1,7 +1,12 @@
 package ai.lingshu.a2a.server;
 
 import ai.lingshu.core.a2a.client.InProcessA2aRegistry;
+import ai.lingshu.core.message.ToolCall;
+import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.runtime.AgentConfig;
+import ai.lingshu.core.slot.Tool;
+import ai.lingshu.core.slot.ToolExecutionContext;
+import ai.lingshu.core.slot.ToolRegistry;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,9 +86,21 @@ public class A2aServer {
 
     private final AgentConfig cfg;
 
+    /**
+     * 🆕 Story a2a-server-tool-registry-dispatch — local {@link ToolRegistry} for
+     * dispatching inbound {@code message/send} JSON-RPC calls to registered {@link Tool Tools}.
+     *
+     * <p>May be {@code null} when the server is constructed without Spring DI (some
+     * unit tests); in that case {@link RpcDispatcherHandler#handleMessageSend} falls back
+     * to returning JSON-RPC {@code -32601 Method not found} for any skill lookup, and
+     * {@link AgentCardHandler} advertises an empty {@code skills[]} list.
+     */
+    private final ToolRegistry toolRegistry;
+
     @Autowired
-    public A2aServer(AgentConfig cfg) {
+    public A2aServer(AgentConfig cfg, ToolRegistry toolRegistry) {
         this.cfg = cfg;
+        this.toolRegistry = toolRegistry;
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -98,7 +115,11 @@ public class A2aServer {
      */
     public void start() {
         // Step 1: validate Identity.name eagerly so yml typo fails fast (FR-007 / EC-1).
-        AgentCard card = LocalAgentCardGenerator.generate(cfg);
+        // 🆕 Story a2a-server-tool-registry-dispatch — pass toolRegistry so the cached
+        // card carries skills[] scanned at start-time (used by InProcessA2aRegistry).
+        // Note: HTTP path (AgentCardHandler) rebuilds per-request to handle tools
+        // registered AFTER @PostConstruct (AgentToolScanner fires on ContextRefreshedEvent).
+        AgentCard card = LocalAgentCardGenerator.generate(cfg, toolRegistry);
         cardRef.set(card);
 
         // Step 2: validate port range.
@@ -257,7 +278,18 @@ public class A2aServer {
 
     // ── Handlers ────────────────────────────────────────────────────────────
 
-    /** Serve the cached AgentCard as JSON on GET. */
+    /**
+     * Serve the AgentCard as JSON on GET.
+     *
+     * <p>🆕 Story a2a-server-tool-registry-dispatch — the card is rebuilt on every
+     * request via {@link LocalAgentCardGenerator#generate(AgentConfig, ToolRegistry)}
+     * so {@code skills[]} reflects the current {@link ToolRegistry} state. This is
+     * important because {@code AgentToolScanner} registers {@code @AgentTool} methods
+     * in response to {@code ContextRefreshedEvent} — <i>after</i> the {@code @PostConstruct}
+     * cache snapshot in {@link #start()}. Scanning the registry on each request is
+     * O(N) but N is typically small (< 50), so the per-request cost is negligible
+     * compared to network latency.
+     */
     private final class AgentCardHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange ex) throws IOException {
@@ -269,7 +301,7 @@ public class A2aServer {
                         "GET");
                     return;
                 }
-                AgentCard card = cardRef.get();
+                AgentCard card = LocalAgentCardGenerator.generate(cfg, toolRegistry);
                 String body = LocalAgentCardGenerator.toJson(card);
                 byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
                 ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
@@ -391,8 +423,40 @@ public class A2aServer {
         }
 
         /**
-         * {@code message/send}: require params.{agentName, skill, inputJson};
-         * synthesize taskId, store inputJson, return echo.
+         * 🆕 Story a2a-server-tool-registry-dispatch — {@code message/send}:
+         * require {@code params.{agentName, skill, inputJson}}, dispatch the skill to
+         * the local {@link ToolRegistry}, return the {@link ToolResult} content as
+         * {@code resultJson}.
+         *
+         * <p><b>Dispatch flow</b> (mirrors {@code DemoA2aServer.RpcHandler}):
+         * <ol>
+         *   <li>Cross-agent guard — reject if {@code agentName != this server's Identity.name}</li>
+         *   <li>Look up skill in {@code toolRegistry}; miss → JSON-RPC {@code -32601}</li>
+         *   <li>Parse {@code inputJson} (JSON-encoded String) into a {@code JsonNode}</li>
+         *   <li>Invoke {@code tool.execute(new ToolCall(id, skill, input), A2aServerToolExecutionContext)}</li>
+         *   <li>Wrap the {@link ToolResult} as {@code {status, taskId, resultJson}} envelope</li>
+         * </ol>
+         *
+         * <p><b>Output shape</b> (wire-compatible with the JSON-RPC 2.0 envelope
+         * documented in {@code specs/009c-a2a-httpjsonrpc-and-remote-tool/contracts/}):
+         * <pre>{@code
+         * {
+         *   "status":     "COMPLETED" | "FAILED",
+         *   "taskId":     "<uuid>",
+         *   "resultJson": "<verbatim ToolResult.content>"
+         * }
+         * }</pre>
+         *
+         * <p><b>Error code mapping</b>:
+         * <ul>
+         *   <li>{@code ERR_INVALID_PARAMS} (-32602) — missing/empty params fields,
+         *       unparseable {@code inputJson}, or wrong {@code agentName} (cross-agent guard)</li>
+         *   <li>{@code ERR_METHOD_NOT_FOUND} (-32601) — ToolRegistry unavailable, or skill not registered</li>
+         *   <li>JSON-RPC internal error envelope — tool throws RuntimeException (see
+         *       Tool.execute SPI: implementations SHOULD return {@code ToolResult.error}
+         *       instead of throwing, but we belt-and-braces here so an unexpected throw
+         *       doesn't kill the JSON-RPC envelope)</li>
+         * </ul>
          */
         private void handleMessageSend(HttpExchange ex, JsonNode idNode, JsonNode params)
                 throws IOException {
@@ -408,19 +472,94 @@ public class A2aServer {
                     "params.agentName and params.skill must be non-empty");
                 return;
             }
+
+            // Cross-agent guard: this server only serves its own Identity.name.
+            // (Mirrors DemoA2aServer's behavior — defensive even if Identity.name
+            // is unique-enough to never collide in practice.)
+            String identityName = resolveIdentityName();
+            if (identityName != null && !agentName.equals(identityName)) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS,
+                    "this server only serves agentName='" + identityName
+                        + "' (got '" + agentName + "')");
+                return;
+            }
+
+            // ToolRegistry null guard — server constructed without Spring DI
+            // (some unit tests) falls back to method-not-found.
+            if (toolRegistry == null) {
+                writeError(ex, idNode, ERR_METHOD_NOT_FOUND,
+                    "ToolRegistry unavailable — cannot dispatch skill '" + skill + "'");
+                return;
+            }
+
+            // ToolRegistry lookup.
+            Tool tool = toolRegistry.lookup(skill);
+            if (tool == null) {
+                writeError(ex, idNode, ERR_METHOD_NOT_FOUND,
+                    "skill not found in local ToolRegistry: '" + skill + "'");
+                return;
+            }
+
+            // Parse the input JSON into a JsonNode for ToolCall.input.
+            // inputJson arrives as a JSON-encoded String from the client
+            // (HttpJsonRpcA2aTransport.submit() serializes the args object to String).
+            JsonNode toolInput;
+            try {
+                toolInput = SHARED_MAPPER.readTree(inputJson.isEmpty() ? "{}" : inputJson);
+            } catch (IOException jpe) {
+                writeError(ex, idNode, ERR_INVALID_PARAMS,
+                    "params.inputJson is not valid JSON: " + jpe.getMessage());
+                return;
+            }
+
+            // Dispatch — synthesize an id since the JSON-RPC envelope already carries
+            // the request id for correlation; the tool's toolUseId is a separate
+            // opaque field.
+            String toolCallId = UUID.randomUUID().toString();
+            ToolCall call = new ToolCall(toolCallId, skill, toolInput);
+            ToolExecutionContext toolCtx = new A2aServerToolExecutionContext();
+            ToolResult result;
+            try {
+                result = tool.execute(call, toolCtx);
+            } catch (RuntimeException ex2) {
+                // Per §4.10.1 硬规则 2, Tool.execute SHOULD never throw — tool
+                // implementations should return ToolResult.error. We belt-and-braces
+                // here so an unanticipated throw doesn't kill the JSON-RPC envelope.
+                LOG.warn("[A2aServer] tool '{}' threw unexpectedly", skill, ex2);
+                String errContent = ex2.getClass().getSimpleName() + ": " + ex2.getMessage();
+                ObjectNode errObj = SHARED_MAPPER.createObjectNode();
+                errObj.put("status", "FAILED");
+                errObj.put("taskId", toolCallId);
+                errObj.put("error", "tool execution failed: " + errContent);
+                errObj.put("errorCode", "LINGS-T03");
+                errObj.put("resultJson", errContent);
+                taskStore.put(toolCallId, errObj.toString());
+                writeResult(ex, idNode, errObj);
+                return;
+            }
+
             String taskId = UUID.randomUUID().toString();
-            // Store inputJson so tasks/get and tasks/cancel can reference it.
-            taskStore.put(taskId, inputJson);
-            ObjectNode result = SHARED_MAPPER.createObjectNode();
-            result.put("status", "COMPLETED");
-            result.put("taskId", taskId);
-            // Echo the input — sufficient for client-side deserialization tests.
-            result.put("resultJson", SHARED_MAPPER.createObjectNode()
-                .put("agentName", agentName)
-                .put("skill", skill)
-                .put("echo", inputJson)
-                .toString());
-            writeResult(ex, idNode, result);
+            String status = (result.getStatus() == ToolResult.Status.SUCCESS)
+                ? "COMPLETED" : "FAILED";
+
+            ObjectNode resultObj = SHARED_MAPPER.createObjectNode();
+            resultObj.put("status", status);
+            resultObj.put("taskId", taskId);
+            // Embed the ToolResult.content — match the wire shape
+            // HttpJsonRpcA2aTransport.submit() expects (an opaque JSON string inside
+            // resultJson). If the tool returned ERROR, content holds the error message.
+            String content = result.getContent() != null ? result.getContent() : "";
+            resultObj.put("resultJson", content);
+            if (!status.equals("COMPLETED")) {
+                // Mirror the error message at the envelope level too so JSON-RPC
+                // consumers (which may parse resultJson as a string) can still see
+                // it without parsing.
+                resultObj.put("error", content);
+            }
+
+            // Cache so tasks/get has something to return.
+            taskStore.put(taskId, resultObj.toString());
+            writeResult(ex, idNode, resultObj);
         }
 
         /**

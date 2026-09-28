@@ -1,0 +1,21 @@
+# Story #022 + #023 + #024 demo configuration
+agent:
+  llm:
+    provider: demo-delegate          # 用本地 echo provider(Stage A 不调真实 LLM)
+  react:
+    max-steps: 10
+  # Story #019 — 关闭本地 4 个内置 Tool(避免干扰 #022 @AgentTool 演示)
+  tools:
+    enabled: false
+  # Story #023 DelegateTool 必需配置(Stage A 启动期 DelegateAutoConfiguration 校验)
+  delegate:
+    types:
+      explore:
+        llm: { provider: anthropic, model: claude-3-5-haiku-latest, max-tokens: 4096, temperature: 1.0 }
+        sandbox: { policy: default, runtime: chroot, workingDirectory: "@user.dir" }
+      engineer:
+        llm: { provider: anthropic, model: claude-3-5-sonnet-latest, max-tokens: 8192, temperature: 1.0 }
+        sandbox: { policy: default, runtime: chroot, workingDirectory: "@user.dir" }
+      reviewer:
+        llm: { provider: anthropic, model: claude-3-5-sonnet-latest, max-tokens: 8192, temperature: 1.0 }
+        sandbox: { policy: default, runtime: chroot, workingDirectory: "@user.dir" }

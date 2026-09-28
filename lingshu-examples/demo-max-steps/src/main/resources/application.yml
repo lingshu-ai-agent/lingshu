@@ -1,0 +1,9 @@
+# Story #008 max-steps demo configuration
+agent:
+  llm:
+    provider: demo-max-steps      # 反复 emit tool call 触发 max-steps 边界
+  react:
+    max-steps: 3                  # 缩短到 3 步,黑盒测试 ≤ 1s 内可达 MaxStepsExceeded
+  # Story #019 — 默认开启本地 4 个内置 Tool 即可(noop 由 @Component 自注册)
+  tools:
+    enabled: true

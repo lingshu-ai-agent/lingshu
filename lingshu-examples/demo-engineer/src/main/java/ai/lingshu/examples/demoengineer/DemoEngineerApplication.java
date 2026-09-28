@@ -50,9 +50,10 @@ import org.springframework.context.annotation.FilterType;
     //  Spring 6 在双构造器场景下要求显式 `@Autowired` 才能解析,而 YamlWatcher
     //  实现层未加注解 → 启动期会抛 "No default constructor found"。
     //  解决方案:demo-engineer 这里显式排除,YamlHotReloadIT 走 package-private 构造器直构造。
+    // 排除 AgentToolScanner(setApplicationContext 阶段 ctx.getBeansWithAnnotation 自引用 circular ref)
     excludeFilters = @ComponentScan.Filter(
         type = FilterType.ASSIGNABLE_TYPE,
-        classes = YamlWatcher.class))
+        classes = {YamlWatcher.class}))
 public class DemoEngineerApplication implements CommandLineRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DemoEngineerApplication.class);

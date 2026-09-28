@@ -1,0 +1,11 @@
+# Story #003 SPI demo configuration
+# 切换默认 LlmProvider 为 demo-spi 自定义实现,验证 Router 多 Provider 解析
+agent:
+  llm:
+    provider: demo-spi
+    model: claude-3-5-sonnet-latest
+  react:
+    max-steps: 50
+  # Story #019 — 关闭本地 4 个内置 Tool(避免干扰 SPI 演示,本 demo 不验证 tool)
+  tools:
+    enabled: false

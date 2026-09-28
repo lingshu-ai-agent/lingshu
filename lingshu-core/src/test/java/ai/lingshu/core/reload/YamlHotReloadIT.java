@@ -169,6 +169,77 @@ class YamlHotReloadIT {
             .containsExactly("ls", "cat", "git");
     }
 
+    @Test
+    @DisplayName("Story #026: ${user.dir} placeholder resolves across YAML hot-reload")
+    void placeholderEnvVar_resolvesAcrossYamlHotReload() throws Exception {
+        ymlPath = tempDir.resolve("application.yml");
+        // v1 yml: literal /tmp
+        writeYaml(initialYaml());
+
+        registry = new AgentConfigRegistry();
+        RealYamlAgentFactory factory = new RealYamlAgentFactory();
+
+        AgentConfig cfg1 = factory.loadYamlAndValidate(ymlPath);
+        registry.publishInitial(cfg1);
+        assertThat(cfg1.getSandbox().getWorkingDirectory().toString()).isEqualTo("/tmp");
+
+        watcher = new YamlWatcher(ymlPath, registry, factory, 60L);
+        watcher.start();
+
+        // ── Hot-reload: edit yml to use ${user.dir} ────────────────────
+        String expectedUserDir = System.getProperty("user.dir");
+        assertThat(expectedUserDir).as("JVM user.dir must be set for this test").isNotEmpty();
+        writeYaml(placeholderYaml());
+        long bumpedMtime = Files.getLastModifiedTime(ymlPath).toMillis() + 5_000;
+        Files.setLastModifiedTime(ymlPath, java.nio.file.attribute.FileTime.fromMillis(bumpedMtime));
+
+        watcher.poll();
+        AgentConfig cfg2 = registry.current();
+        assertThat(cfg2).isNotSameAs(cfg1);
+        // Cross-path parity check (the bug Story #026 fixes):
+        //   ${user.dir} resolves to the actual user.dir instead of literal "${user.dir}".
+        assertThat(cfg2.getSandbox().getWorkingDirectory().toString())
+            .isEqualTo(expectedUserDir);
+    }
+
+    @Test
+    @DisplayName("Story #026: unresolved ${X} placeholder keeps old config in registry (rollback)")
+    void unresolvedPlaceholder_keepsOldConfigPublished() throws Exception {
+        ymlPath = tempDir.resolve("application.yml");
+        writeYaml(initialYaml());
+
+        registry = new AgentConfigRegistry();
+        RealYamlAgentFactory factory = new RealYamlAgentFactory();
+
+        AgentConfig cfg1 = factory.loadYamlAndValidate(ymlPath);
+        registry.publishInitial(cfg1);
+        long mtimeBefore = Files.getLastModifiedTime(ymlPath).toMillis();
+
+        watcher = new YamlWatcher(ymlPath, registry, factory, 60L);
+        watcher.start();
+        assertThat(watcher.getLastSeen()).isEqualTo(mtimeBefore);
+
+        // Edit yml with unresolved placeholder — ${LINGS_TEST_UNSET_X_NOT_RESOLVED}
+        // is not in env / sys-prop, so the resolver must throw LINGS-C03.
+        writeYaml(unresolvedPlaceholderYaml());
+        Files.setLastModifiedTime(ymlPath, java.nio.file.attribute.FileTime.fromMillis(mtimeBefore + 5_000));
+
+        // Watcher catches the exception (any Exception → log + skip publish)
+        // and rolls back: registry keeps cfg1, lastSeen unchanged so next poll retries.
+        watcher.poll();
+        assertThat(registry.current()).isSameAs(cfg1);
+        assertThat(watcher.getLastSeen()).isEqualTo(mtimeBefore);
+
+        // Fix the yml back to a valid form — next poll should publish cfg2.
+        writeYaml(updatedYaml());
+        Files.setLastModifiedTime(ymlPath, java.nio.file.attribute.FileTime.fromMillis(mtimeBefore + 10_000));
+        watcher.poll();
+        AgentConfig cfg2 = registry.current();
+        assertThat(cfg2).isNotSameAs(cfg1);
+        assertThat(cfg2.getSandbox().getCommandWhitelist())
+            .containsExactly("ls", "cat", "git");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private void writeYaml(String content) throws IOException {
@@ -202,6 +273,37 @@ class YamlHotReloadIT {
             "      - ls\n" +
             "      - cat\n" +
             "      - git\n";
+    }
+
+    /** Story #026 — working-directory uses ${user.dir} placeholder. */
+    private String placeholderYaml() {
+        return "agent:\n" +
+            "  llm:\n" +
+            "    provider: anthropic\n" +
+            "    model: claude-3-5-sonnet-latest\n" +
+            "  sandbox:\n" +
+            "    policy: strict\n" +
+            "    runtime: chroot\n" +
+            "    working-directory: ${user.dir}\n" +
+            "    command-whitelist:\n" +
+            "      - ls\n" +
+            "      - cat\n" +
+            "      - git\n";
+    }
+
+    /** Story #026 — working-directory references an unset placeholder (fail-fast). */
+    private String unresolvedPlaceholderYaml() {
+        return "agent:\n" +
+            "  llm:\n" +
+            "    provider: anthropic\n" +
+            "    model: claude-3-5-sonnet-latest\n" +
+            "  sandbox:\n" +
+            "    policy: strict\n" +
+            "    runtime: chroot\n" +
+            "    working-directory: ${LINGS_TEST_UNSET_X_NOT_RESOLVED}\n" +
+            "    command-whitelist:\n" +
+            "      - ls\n" +
+            "      - cat\n";
     }
 
     /** Records every {@link TurnContext} passed to {@link #runTurn}. */

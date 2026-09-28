@@ -1,0 +1,11 @@
+# Story #007 yaml hot reload demo configuration
+agent:
+  yaml-watcher:
+    poll-interval-seconds: 1   # 测试加速:1s 轮询(默认 5s)
+  llm:
+    provider: anthropic
+  react:
+    max-steps: 10
+  # Story #019 — 关闭本地 4 个内置 Tool(本 demo 不验证 tool)
+  tools:
+    enabled: false

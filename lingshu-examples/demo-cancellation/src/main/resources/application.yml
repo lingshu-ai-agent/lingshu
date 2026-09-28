@@ -1,0 +1,9 @@
+# Story #005 cancellation demo configuration
+agent:
+  llm:
+    provider: demo-cancellation-slow     # 使用 mock slow LLM,future 等待 cancellation
+  react:
+    max-steps: 10
+  # Story #019 — 关闭本地 4 个内置 Tool(本 demo 不验证 tool)
+  tools:
+    enabled: false

@@ -51,7 +51,7 @@ class A2aServerInProcessRegistrationTest {
         );
         server = new A2aServer(configFor(
             new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
-            id));
+            id), null);
         server.start();
 
         // registry must contain this agent with a 12-field card
@@ -80,7 +80,7 @@ class A2aServerInProcessRegistrationTest {
         );
         server = new A2aServer(configFor(
             new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
-            nullNameId));
+            nullNameId), null);
 
         // null name → LocalAgentCardGenerator.generate throws LINGS-T02 (T02 = identity.name blank)
         try {
@@ -105,7 +105,7 @@ class A2aServerInProcessRegistrationTest {
             Collections.<String>emptyList(), null, null);
         A2aServer s1 = new A2aServer(configFor(
             new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
-            id1));
+            id1), null);
         s1.start();
         try {
             // Second server — different name, different OS-assigned port
@@ -114,7 +114,7 @@ class A2aServerInProcessRegistrationTest {
                 Collections.<String>emptyList(), null, null);
             server = new A2aServer(configFor(
                 new AgentConfig.A2a("127.0.0.1", 0, "localhost:50051", java.time.Duration.ofMinutes(5), "http://localhost:8080", java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
-                id2));
+                id2), null);
             server.start();
 
             assertThat(registry.contains("alice")).isTrue();

@@ -114,6 +114,14 @@ class CliRunnerSkillTriggerTest {
             if (t == null) throw new IllegalArgumentException("Unknown tool: " + n);
             return t;
         }
+        // 🆕 Story #021b — unregister: dual-index clear (mirrors DefaultToolRegistry.unregister
+        // + the registerSkill dual-write pattern above). null name → false; unknown name → false.
+        @Override public boolean unregister(String n) {
+            if (n == null) return false;
+            Tool removedTool = tools.remove(n);
+            Skill removedSkill = skills.remove(n);
+            return removedTool != null || removedSkill != null;
+        }
     }
 
     /** Stub {@link ToolExecutor} returning a fixed ToolResult. */
@@ -205,7 +213,7 @@ class CliRunnerSkillTriggerTest {
         factory = new StubAgentFactory(AgentConfigDefaults.defaults(), agent);
         outBuf = new ByteArrayOutputStream();
         errBuf = new ByteArrayOutputStream();
-        runner = new CliRunner(factory, dispatcher, new PrintStream(outBuf), new PrintStream(errBuf));
+        runner = new CliRunner(factory, dispatcher, null, new PrintStream(outBuf), new PrintStream(errBuf));
     }
 
     // ── AC-020c-10: doRun with /xxx prompt dispatches Skill ───────────────
@@ -299,7 +307,7 @@ class CliRunnerSkillTriggerTest {
         // Use TestSupport's real AgentFactory — it has wired Routers so factory.description()
         // works (StubAgentFactory passes null Routers, which makes description() NPE).
         ai.lingshu.core.impl.runtime.AgentFactory realFactory = TestSupport.buildFactory();
-        CliRunner doctorRunner = new CliRunner(realFactory, dispatcher,
+        CliRunner doctorRunner = new CliRunner(realFactory, dispatcher, null,
             new PrintStream(outBuf), new PrintStream(errBuf));
         Path yml = tmp.resolve("app.yml");
         Files.write(yml, VALID_YML.getBytes("UTF-8"));
