@@ -11,6 +11,7 @@ import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutor;
 import ai.lingshu.core.impl.tool.DefaultToolRegistry;
 import ai.lingshu.core.message.LlmResponse;
+import ai.lingshu.core.message.Message;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.Usage;
@@ -250,5 +251,63 @@ class LinearTurnEngineToolDispatchTest {
     void tearDown() throws InterruptedException {
         pool.shutdown();
         pool.awaitTermination(2, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 🆕 Story #027a — {@code LinearTurnEngine.L166} must forward
+     * {@code resp.getToolCalls()} to {@code ctx.appendAssistant}. If this
+     * breaks, the assistant turn persisted in session history would have
+     * {@code toolCalls=[]} (Story #001 hardcoded behavior) and the next
+     * request's {@code messages[]} can't echo back the {@code tool_use}
+     * blocks Anthropic requires for {@code tool_result} pairing.
+     *
+     * <p>Asserts the wire-through end-to-end: after one ReAct step with a
+     * tool call, the assistant message in history has a non-empty
+     * {@code toolCalls} list matching the LLM-emitted id+name.
+     */
+    @Test
+    @DisplayName("L2-027a: engine_passesToolCallsThroughToHistoryAssistantMessage")
+    void engine_passesToolCallsThroughToHistoryAssistantMessage() {
+        DefaultSession session = new DefaultSession();
+        toolRegistry.register(new SleepTool("read_file", 10));
+
+        LlmResponse toolCallResponse = new LlmResponse(
+            "",
+            Arrays.asList(call("c1", "read_file")),
+            StopReason.TOOL_USE,
+            Usage.zero());
+        LlmResponse endTurn = new LlmResponse(
+            "all done",
+            Collections.<ToolCall>emptyList(),
+            StopReason.END_TURN,
+            Usage.zero());
+
+        EchoLlmProvider llm = new EchoLlmProvider(Arrays.asList(toolCallResponse, endTurn));
+        AgentConfig cfg = defaultConfig(1, 5);
+        TurnContext ctx = new DefaultTurnContext(session, cfg,
+            new CapturingSubscriber(), "hi");
+
+        engine(llm).runTurn(ctx, ctx.sink());
+
+        // History must contain the assistant turn with the LLM-emitted tool call.
+        // Trailing entries after the assistant turn will include ToolResult messages
+        // (one per dispatched tool call), so we scan for the assistant turn by type.
+        java.util.List<Message> history = session.history();
+        Message assistantTurn = null;
+        for (Message m : history) {
+            if (m instanceof Message.Assistant) {
+                assistantTurn = m;
+                break;
+            }
+        }
+        assertThat(assistantTurn)
+            .as("session history must contain an Assistant turn before the ToolResult")
+            .isNotNull();
+        Message.Assistant a = (Message.Assistant) assistantTurn;
+        assertThat(a.getToolCalls())
+            .as("Story #027a — LinearTurnEngine.L166 must forward resp.getToolCalls() to history")
+            .hasSize(1);
+        assertThat(a.getToolCalls().get(0).getId()).isEqualTo("c1");
+        assertThat(a.getToolCalls().get(0).getName()).isEqualTo("read_file");
     }
 }
