@@ -3,6 +3,7 @@ package ai.lingshu.core.impl.runtime;
 import ai.lingshu.core.event.AgentEvent;
 import ai.lingshu.core.impl.concurrent.CancellationTokens;
 import ai.lingshu.core.message.Message;
+import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.message.Usage;
 import ai.lingshu.core.runtime.AgentConfig;
@@ -10,6 +11,8 @@ import ai.lingshu.core.runtime.Session;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import org.reactivestreams.Subscriber;
+
+import java.util.List;
 
 /**
  * Minimal {@link TurnContext} implementation (Story #001 default, Story #005 cancellation).
@@ -93,12 +96,28 @@ public class DefaultTurnContext implements TurnContext {
     @Override public void markDone() { this.done = true; }
     @Override public CancellationToken cancellation() { return cancellation; }
 
+    /**
+     * 🆕 Story #027a — {@code toolCalls} now flows through from the
+     * {@link ai.lingshu.core.message.LlmResponse} recorded by
+     * {@link ai.lingshu.core.impl.flow.LinearTurnEngine}. Previously
+     * (Story #001) the call site hardcoded an empty list, which made
+     * the {@code tool_use} round-trip in the ReAct loop impossible.
+     *
+     * <p>{@code stopReason} is still pinned to {@code END_TURN} at this
+     * layer — the {@code Message.Assistant} 4-arg ctor requires it, and the
+     * ReAct loop's {@code LinearTurnEngine.last} reference (set immediately
+     * before this call) carries the authoritative stop reason for the
+     * turn boundary decisions.
+     */
     @Override
-    public void appendAssistant(String text, Usage usage) {
+    public void appendAssistant(String text, List<ToolCall> toolCalls, Usage usage) {
         if (session instanceof DefaultSession) {
+            List<ToolCall> effectiveToolCalls = toolCalls != null
+                ? toolCalls
+                : java.util.Collections.<ToolCall>emptyList();
             Message.Assistant a = new Message.Assistant(
                 text,
-                java.util.Collections.<ai.lingshu.core.message.ToolCall>emptyList(),
+                effectiveToolCalls,
                 ai.lingshu.core.message.StopReason.END_TURN,
                 usage);
             ((DefaultSession) session).append(a);
