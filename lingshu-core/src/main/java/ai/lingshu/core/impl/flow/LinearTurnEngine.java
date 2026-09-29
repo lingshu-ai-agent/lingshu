@@ -163,7 +163,13 @@ public class LinearTurnEngine implements FlowEngine {
                 }
 
                 // Record the assistant turn in history.
-                ctx.appendAssistant(resp.getText(), resp.getUsage());
+                // 🆕 Story #027a — forward `resp.getToolCalls()` so the assistant message
+                // persisted in session history carries every `tool_use` block from the
+                // Anthropic response. Without this, the next request's `messages[]` cannot
+                // echo back the `tool_use`/`tool_result` pairing that Anthropic requires
+                // (see dsh §6.5 (1.5) protocol gap), and Tool-use turns replay as text-only
+                // after the first ReAct step, breaking the round-trip.
+                ctx.appendAssistant(resp.getText(), resp.getToolCalls(), resp.getUsage());
                 totalUsage = totalUsage.plus(resp.getUsage());
                 last = resp;
 
