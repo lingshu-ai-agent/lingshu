@@ -223,6 +223,14 @@ public class AnthropicLlmProvider implements LlmProvider {
 
             ArrayNode messages = root.putArray("messages");
             String systemText = null;
+            // 🆕 Story #027a follow-up — Anthropic requires all tool_result blocks
+            // for a single assistant turn to be emitted as ONE user message with
+            // multiple tool_result blocks (in tool_use order). When ReAct produces
+            // N parallel tool calls, the session history contains N consecutive
+            // Message.ToolResult entries; the provider must merge them into one
+            // role:"user" message so the protocol-level pairing is honored.
+            ObjectNode openToolResultUserMsg = null;
+            ArrayNode openToolResultContent = null;
             for (Message m : ourPrompt.getMessages()) {
                 if (m instanceof Message.System) {
                     // Anthropic's system lives at the top level (dsh §6.5 (1.5) table).
@@ -231,11 +239,24 @@ public class AnthropicLlmProvider implements LlmProvider {
                     String next = ((Message.System) m).getContent();
                     systemText = systemText == null ? next : (systemText + "\n\n" + next);
                 } else if (m instanceof Message.User) {
+                    // A user text message closes any open tool_result block —
+                    // the next user message starts a fresh turn boundary.
+                    openToolResultUserMsg = null;
+                    openToolResultContent = null;
                     appendUserTextMessage(messages, ((Message.User) m).getContent());
                 } else if (m instanceof Message.Assistant) {
+                    // An assistant message closes any open tool_result block —
+                    // assistant text/tool_use comes after, never nested.
+                    openToolResultUserMsg = null;
+                    openToolResultContent = null;
                     appendAssistantMessage(messages, (Message.Assistant) m);
                 } else if (m instanceof Message.ToolResult) {
-                    appendToolResultMessage(messages, (Message.ToolResult) m);
+                    if (openToolResultUserMsg == null) {
+                        openToolResultUserMsg = messages.addObject();
+                        openToolResultUserMsg.put("role", "user");
+                        openToolResultContent = openToolResultUserMsg.putArray("content");
+                    }
+                    appendToolResultBlock(openToolResultContent, (Message.ToolResult) m);
                 }
                 // Message.ToolUse is not stored in session history under the
                 // current MessageAssembler contract — assistant tool calls live
@@ -306,12 +327,13 @@ public class AnthropicLlmProvider implements LlmProvider {
     }
 
     /**
-     * Append a {@code role:"user"} message with one {@code tool_result} block
-     * (Anthropic places tool results under the user role). Required fields
-     * {@code tool_use_id} / {@code content} are validated; missing values throw
-     * {@link LlmErrorCodes#LINGS_L02}.
+     * Append one {@code tool_result} block to an open user message's content array.
+     * Caller is responsible for creating the {@code role:"user"} message wrapper
+     * via {@link #appendUserTextMessage} or {@link #openToolResultMessage}.
+     * Required fields {@code tool_use_id} / {@code content} are validated; missing
+     * values throw {@link LlmErrorCodes#LINGS_L02}.
      */
-    private static void appendToolResultMessage(ArrayNode messages, Message.ToolResult tr) {
+    private static void appendToolResultBlock(ArrayNode content, Message.ToolResult tr) {
         if (tr.getToolUseId() == null || tr.getToolUseId().isEmpty()) {
             throw new LingsLlmProviderException(
                 LlmErrorCodes.LINGS_L02,
@@ -322,9 +344,6 @@ public class AnthropicLlmProvider implements LlmProvider {
                 LlmErrorCodes.LINGS_L02,
                 "Message.ToolResult.content missing — Anthropic /v1/messages requires every tool_result block to carry content (use empty string for empty results)");
         }
-        ObjectNode msg = messages.addObject();
-        msg.put("role", "user");
-        ArrayNode content = msg.putArray("content");
         ObjectNode toolResultBlock = content.addObject();
         toolResultBlock.put("type", "tool_result");
         toolResultBlock.put("tool_use_id", tr.getToolUseId());
