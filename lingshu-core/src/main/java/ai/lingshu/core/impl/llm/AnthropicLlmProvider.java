@@ -5,6 +5,7 @@ import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.Message;
 import ai.lingshu.core.message.StopReason;
 import ai.lingshu.core.message.ToolCall;
+import ai.lingshu.core.message.ToolSpec;
 import ai.lingshu.core.message.Usage;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.slot.LlmProvider;
@@ -24,7 +25,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -167,6 +167,30 @@ public class AnthropicLlmProvider implements LlmProvider {
 
     // ── Wire format: our Prompt → Anthropic /v1/messages JSON ───────────
 
+    /**
+     * 🆕 Story #027a — translate the LingShu prompt to Anthropic's
+     * {@code /v1/messages} JSON. Two gaps closed vs. Story #001:
+     * <ol>
+     *   <li><b>Top-level {@code tools:[]}</b> — populated from {@code Prompt.tools}
+     *       (Story #024 contract: a {@code List<ToolSpec>}). Each entry maps to
+     *       {@code {name, description, input_schema}} per the dsh §6.5 (1.5)
+     *       protocol field table.</li>
+     *   <li><b>{@code messages[].content} as array of blocks</b> — User / Assistant /
+     *       ToolResult messages are serialized with {@code content:[]} shape rather
+     *       than the flat-string {@code content:"..."} that Story #001 used. Assistant
+     *       turns emit a {@code text} block (when non-empty) followed by a
+     *       {@code tool_use} block for each {@code Message.Assistant.toolCalls}
+     *       entry. ToolResult turns emit a {@code tool_result} block under
+     *       {@code role:"user"} (the Anthropic convention).</li>
+     * </ol>
+     *
+     * <p>Defensive checks raise {@link LingsLlmProviderException} with
+     * {@link LlmErrorCodes#LINGS_L01} for {@code tool_use} blocks missing
+     * {@code id}/{@code name} and {@link LlmErrorCodes#LINGS_L02} for
+     * {@code tool_result} blocks missing {@code tool_use_id}/{@code content}.
+     * Failing fast at request-build time surfaces the bug at the original
+     * call site (Anthropic's generic 400 response hides the root cause).
+     */
     private String buildRequestBody(ai.lingshu.core.message.Prompt ourPrompt) {
         try {
             ObjectNode root = MAPPER.createObjectNode();
@@ -177,46 +201,176 @@ public class AnthropicLlmProvider implements LlmProvider {
             if (temperature != null) {
                 root.put("temperature", temperature.doubleValue());
             }
+
+            // Top-level tools:[] — Story #024 Prompt.tools contract.
+            ArrayNode toolsArray = root.putArray("tools");
+            List<ToolSpec> tools = ourPrompt.getTools();
+            if (tools != null) {
+                for (ToolSpec spec : tools) {
+                    ObjectNode t = toolsArray.addObject();
+                    t.put("name", spec.getName());
+                    if (spec.getDescription() != null) {
+                        t.put("description", spec.getDescription());
+                    }
+                    // input_schema is a JsonNode (typically ObjectNode); pass through verbatim.
+                    if (spec.getInputSchema() != null) {
+                        t.set("input_schema", spec.getInputSchema());
+                    } else {
+                        t.putObject("input_schema");
+                    }
+                }
+            }
+
             ArrayNode messages = root.putArray("messages");
             String systemText = null;
             for (Message m : ourPrompt.getMessages()) {
                 if (m instanceof Message.System) {
-                    systemText = ((Message.System) m).getContent();
+                    // Anthropic's system lives at the top level (dsh §6.5 (1.5) table).
+                    // Concatenate multiple System messages into a single block —
+                    // matches Story #001 behavior preserved here.
+                    String next = ((Message.System) m).getContent();
+                    systemText = systemText == null ? next : (systemText + "\n\n" + next);
                 } else if (m instanceof Message.User) {
-                    ObjectNode msg = messages.addObject();
-                    msg.put("role", "user");
-                    msg.put("content", ((Message.User) m).getContent());
+                    appendUserTextMessage(messages, ((Message.User) m).getContent());
                 } else if (m instanceof Message.Assistant) {
-                    String text = ((Message.Assistant) m).getText();
-                    ObjectNode msg = messages.addObject();
-                    msg.put("role", "assistant");
-                    msg.put("content", text == null ? "" : text);
+                    appendAssistantMessage(messages, (Message.Assistant) m);
+                } else if (m instanceof Message.ToolResult) {
+                    appendToolResultMessage(messages, (Message.ToolResult) m);
                 }
-                // Message.ToolUse / Message.ToolResult — skipped in Story #001.
+                // Message.ToolUse is not stored in session history under the
+                // current MessageAssembler contract — assistant tool calls live
+                // on Message.Assistant.toolCalls. Silently skipped if encountered.
             }
             if (systemText != null && !systemText.isEmpty()) {
                 root.put("system", systemText);
             }
             return MAPPER.writeValueAsString(root);
+        } catch (LingsLlmProviderException llpe) {
+            throw llpe;  // don't wrap our own protocol-layer exception
         } catch (Exception e) {
             throw new RuntimeException("Failed to build Anthropic request body", e);
         }
     }
 
+    /** Append a {@code role:"user"} message with one {@code text} block. */
+    private static void appendUserTextMessage(ArrayNode messages, String content) {
+        ObjectNode msg = messages.addObject();
+        msg.put("role", "user");
+        ArrayNode contentArr = msg.putArray("content");
+        ObjectNode textBlock = contentArr.addObject();
+        textBlock.put("type", "text");
+        textBlock.put("text", content == null ? "" : content);
+    }
+
+    /**
+     * Append a {@code role:"assistant"} message with zero or more {@code text} /
+     * {@code tool_use} blocks. Tool calls are validated for required fields;
+     * missing id / name throws {@link LlmErrorCodes#LINGS_L01}.
+     */
+    private static void appendAssistantMessage(ArrayNode messages, Message.Assistant a) {
+        ObjectNode msg = messages.addObject();
+        msg.put("role", "assistant");
+        ArrayNode content = msg.putArray("content");
+
+        String text = a.getText();
+        if (text != null && !text.isEmpty()) {
+            ObjectNode textBlock = content.addObject();
+            textBlock.put("type", "text");
+            textBlock.put("text", text);
+        }
+
+        List<ToolCall> calls = a.getToolCalls();
+        if (calls != null) {
+            for (ToolCall call : calls) {
+                if (call.getId() == null || call.getId().isEmpty()) {
+                    throw new LingsLlmProviderException(
+                        LlmErrorCodes.LINGS_L01,
+                        "Assistant.toolCalls[].id missing — Anthropic /v1/messages requires every tool_use block to carry an id");
+                }
+                if (call.getName() == null || call.getName().isEmpty()) {
+                    throw new LingsLlmProviderException(
+                        LlmErrorCodes.LINGS_L01,
+                        "Assistant.toolCalls[].name missing — Anthropic /v1/messages requires every tool_use block to carry a name (id=" + call.getId() + ")");
+                }
+                ObjectNode toolUseBlock = content.addObject();
+                toolUseBlock.put("type", "tool_use");
+                toolUseBlock.put("id", call.getId());
+                toolUseBlock.put("name", call.getName());
+                if (call.getInput() != null) {
+                    toolUseBlock.set("input", call.getInput());
+                } else {
+                    toolUseBlock.putObject("input");
+                }
+            }
+        }
+    }
+
+    /**
+     * Append a {@code role:"user"} message with one {@code tool_result} block
+     * (Anthropic places tool results under the user role). Required fields
+     * {@code tool_use_id} / {@code content} are validated; missing values throw
+     * {@link LlmErrorCodes#LINGS_L02}.
+     */
+    private static void appendToolResultMessage(ArrayNode messages, Message.ToolResult tr) {
+        if (tr.getToolUseId() == null || tr.getToolUseId().isEmpty()) {
+            throw new LingsLlmProviderException(
+                LlmErrorCodes.LINGS_L02,
+                "Message.ToolResult.toolUseId missing — Anthropic /v1/messages requires every tool_result block to echo back the tool_use id");
+        }
+        if (tr.getContent() == null) {
+            throw new LingsLlmProviderException(
+                LlmErrorCodes.LINGS_L02,
+                "Message.ToolResult.content missing — Anthropic /v1/messages requires every tool_result block to carry content (use empty string for empty results)");
+        }
+        ObjectNode msg = messages.addObject();
+        msg.put("role", "user");
+        ArrayNode content = msg.putArray("content");
+        ObjectNode toolResultBlock = content.addObject();
+        toolResultBlock.put("type", "tool_result");
+        toolResultBlock.put("tool_use_id", tr.getToolUseId());
+        toolResultBlock.put("content", tr.getContent());
+        toolResultBlock.put("is_error", tr.isError());
+    }
+
     // ── Wire format: Anthropic JSON → our LlmResponse ───────────────────
 
+    /**
+     * 🆕 Story #027a — parse {@code content[]} into both the text accumulator
+     * (existing Story #001 behavior, preserved) and a {@code List<ToolCall>}
+     * extracted from {@code tool_use} blocks. Missing id / name on a
+     * {@code tool_use} block raises {@link LlmErrorCodes#LINGS_L01}.
+     */
     private LlmResponse parseResponse(String body, Subscriber<? super AgentEvent> sink) {
         try {
             JsonNode root = MAPPER.readTree(body);
 
-            // Concatenate all text blocks from content[].
             StringBuilder textBuf = new StringBuilder();
+            List<ToolCall> toolCalls = new java.util.ArrayList<>();
             JsonNode content = root.path("content");
             if (content.isArray()) {
                 for (JsonNode block : content) {
-                    if ("text".equals(block.path("type").asText())) {
+                    String type = block.path("type").asText("");
+                    if ("text".equals(type)) {
                         textBuf.append(block.path("text").asText(""));
+                    } else if ("tool_use".equals(type)) {
+                        String id = block.path("id").asText("");
+                        String name = block.path("name").asText("");
+                        if (id.isEmpty()) {
+                            throw new LingsLlmProviderException(
+                                LlmErrorCodes.LINGS_L01,
+                                "Anthropic response content[].tool_use.id missing — Anthropic protocol violation (every tool_use block must carry an id)");
+                        }
+                        if (name.isEmpty()) {
+                            throw new LingsLlmProviderException(
+                                LlmErrorCodes.LINGS_L01,
+                                "Anthropic response content[].tool_use.name missing — Anthropic protocol violation (id=" + id + ")");
+                        }
+                        JsonNode input = block.path("input");
+                        toolCalls.add(new ToolCall(id, name, input));
                     }
+                    // Other block types (e.g. future "thinking", "redacted_thinking")
+                    // are silently ignored — Anthropic may add new content block
+                    // types without breaking existing clients.
                 }
             }
             String text = textBuf.toString();
@@ -237,10 +391,9 @@ public class AnthropicLlmProvider implements LlmProvider {
             if ("tool_use".equalsIgnoreCase(sr)) reason = StopReason.TOOL_USE;
             else if ("max_tokens".equalsIgnoreCase(sr)) reason = StopReason.MAX_TOKENS;
 
-            // Tool calls — Story #001 demo has no tools; Story #009 will parse content[] tool_use blocks.
-            List<ToolCall> ourToolCalls = Collections.emptyList();
-
-            return new LlmResponse(text, ourToolCalls, reason, ourUsage);
+            return new LlmResponse(text, toolCalls, reason, ourUsage);
+        } catch (LingsLlmProviderException llpe) {
+            throw llpe;
         } catch (Exception e) {
             throw new RuntimeException("Failed to parse Anthropic response", e);
         }
