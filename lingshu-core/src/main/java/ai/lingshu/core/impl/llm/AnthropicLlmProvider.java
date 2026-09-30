@@ -380,9 +380,9 @@ public class AnthropicLlmProvider implements LlmProvider {
                     }
                     appendToolResultBlock(openToolResultContent, (Message.ToolResult) m);
                 }
-                // Message.ToolUse is not stored in session history under the
-                // current MessageAssembler contract — assistant tool calls live
-                // on Message.Assistant.toolCalls. Silently skipped if encountered.
+                // Note: tool_use blocks live on Message.Assistant.toolCalls (handled
+                // in the Assistant branch above), not as separate Message.ToolUse
+                // entries — see Message.java class-level JavaDoc.
             }
             if (systemText != null && !systemText.isEmpty()) {
                 root.put("system", systemText);

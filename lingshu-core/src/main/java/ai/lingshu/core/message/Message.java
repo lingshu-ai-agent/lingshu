@@ -1,6 +1,5 @@
 package ai.lingshu.core.message;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
@@ -10,14 +9,18 @@ import java.util.List;
 /**
  * JDK 8 compatible polymorphic message — sealed semantics via abstract + nested final classes.
  *
- * <p>Five kinds cover the full ReAct loop surface:
+ * <p>Four kinds cover the full ReAct loop surface (🆕 v1.5.46 — {@code ToolUse} removed as
+ * dead code; see specs/refactor-remove-message-tooluse/spec.md):
  * <ul>
  *   <li>{@code System} — injected by PromptBuilder (5 段装配的 [ROLE] / [INSTRUCTIONS] / [PROJECT MEMORY])</li>
  *   <li>{@code User} — raw input from CLI / HTTP / Skill trigger</li>
  *   <li>{@code Assistant} — model output (text + tool calls + stop reason + usage)</li>
- *   <li>{@code ToolUse} — model-requested action (id + name + JSON args), see dsh §4.3</li>
  *   <li>{@code ToolResult} — tool return (id echoed + content + error flag)</li>
  * </ul>
+ *
+ * <p><b>Note:</b> Tool-call requests are carried inside {@link Assistant#toolCalls}
+ * (Anthropic protocol wires {@code tool_use} blocks directly into Assistant messages);
+ * no separate {@code Message.ToolUse} subtype exists.
  *
  * <p>Each subtype is immutable; {@code Assistant.timestamp()} is recorded at construction time.
  * Use {@code @RequiredArgsConstructor} + {@code @Getter} rather than {@code @Value} because
@@ -25,7 +28,7 @@ import java.util.List;
  */
 public abstract class Message {
 
-    /** Role tag — "system" / "user" / "assistant" / "tool_use" / "tool_result". */
+    /** Role tag — "system" / "user" / "assistant" / "tool_result". */
     public abstract String role();
 
     /** Wall-clock time the message was created; {@link Instant#EPOCH} for static System. */
@@ -66,19 +69,6 @@ public abstract class Message {
         private final Usage usage;
 
         @Override public String role() { return "assistant"; }
-
-        @Override public Instant timestamp() { return Instant.now(); }
-    }
-
-    // ── ToolUse (model-requested action) ─────────────────────────────────
-    @Getter
-    @RequiredArgsConstructor
-    public static class ToolUse extends Message {
-        private final String id;
-        private final String name;
-        private final JsonNode input;
-
-        @Override public String role() { return "tool_use"; }
 
         @Override public Instant timestamp() { return Instant.now(); }
     }
