@@ -68,6 +68,12 @@ public class AgentConfig {
     CompactorConfig compactorConfig;
     /** 🆕 Story #019 — Built-in local tools (Read/Write/Edit/Bash) toggle + byte caps. Null uses {@link ToolsConfig#defaults()}. */
     ToolsConfig tools;
+    /**
+     * 🆕 Story #029 — PermissionPolicy name (e.g. {@code "default"}, {@code "strict"}).
+     * Resolved via {@code PermissionPolicyRouter} at {@link AgentFactory#create} time.
+     * Default {@code "default"} (allow-all fallback) for back-compat with Story #001.
+     */
+    String permissionPolicy;
 
     // ── Nested config records ───────────────────────────────────────────
 
@@ -170,6 +176,21 @@ public class AgentConfig {
         /** Toggle local tool registration; default {@code true} for zero-config Story #001 AC-01-2. */
         boolean enabled;
 
+        /**
+         * 🆕 Story #029 — Tool allow-list (highest priority). When non-empty,
+         * {@code StrictPermissionPolicy.check()} only allows tools whose name appears in
+         * this list. Empty (the zero-config default) means "no allow-list constraint",
+         * falling back to {@link #denyList} and default-allow.
+         */
+        List<String> allowList;
+
+        /**
+         * 🆕 Story #029 — Tool deny-list. When non-empty, {@code StrictPermissionPolicy.check()}
+         * rejects tools whose name appears in this list. Empty (the zero-config default) means
+         * "no deny-list constraint".
+         */
+        List<String> denyList;
+
         /** Read file size cap; default {@code 200_000} bytes (200KB). */
         int maxReadBytes;
 
@@ -177,11 +198,15 @@ public class AgentConfig {
         int maxWriteBytes;
 
         /**
-         * Zero-config default — all 4 tools enabled, conservative byte caps.
+         * Zero-config default — all 4 tools enabled, conservative byte caps, both
+         * allow-list and deny-list empty (equivalent to AllowAll for the strict policy).
          * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
          */
         public static ToolsConfig defaults() {
-            return new ToolsConfig(true, 200_000, 1_000_000);
+            return new ToolsConfig(true,
+                Collections.<String>emptyList(),
+                Collections.<String>emptyList(),
+                200_000, 1_000_000);
         }
 
         /**

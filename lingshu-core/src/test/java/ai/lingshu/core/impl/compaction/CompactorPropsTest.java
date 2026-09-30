@@ -74,6 +74,7 @@ class CompactorPropsTest {
             base.getA2a(),
             cc,
             base.getTools()  // tools (Story #019) — pass-through
+            , base.getPermissionPolicy()
         );
     }
 }

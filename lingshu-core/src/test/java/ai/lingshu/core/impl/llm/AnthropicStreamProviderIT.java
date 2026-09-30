@@ -204,7 +204,7 @@ class AnthropicStreamProviderIT {
             null, null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
+            AgentConfig.ToolsConfig.defaults(), "default"
         );
         return new DefaultTurnContext(new DefaultSession(), cfg,
             new CapturingSubscriber(), "test");

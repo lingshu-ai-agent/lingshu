@@ -71,7 +71,7 @@ class DelegateToolTest {
             null, null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
+            AgentConfig.ToolsConfig.defaults(), "default"
         );
 
         // Build a complete delegate.types map with one TypeConfig per SubAgentType

@@ -139,7 +139,7 @@ class LocalToolsE2ETest {
             null,                       // tenants
             AgentConfig.A2a.defaults(), // a2a
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
+            AgentConfig.ToolsConfig.defaults(), "default"
         );
     }
 }

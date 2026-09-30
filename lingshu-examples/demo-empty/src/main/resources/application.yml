@@ -23,3 +23,9 @@ logging:
   level:
     root: INFO
     ai.lingshu: INFO
+
+# 🆕 Story #029 — when permission-policy=strict with no `tools.allow-list`,
+# any tool call is denied with `[LINGS-P01] Tool '...' not in allow-list`.
+# Useful for verifying the deny path end-to-end without spinning up custom tools.
+agent:
+  permission-policy: strict

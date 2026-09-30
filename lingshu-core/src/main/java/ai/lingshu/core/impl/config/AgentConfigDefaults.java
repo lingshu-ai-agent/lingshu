@@ -68,7 +68,8 @@ public final class AgentConfigDefaults {
             null,            // tenants (Story #006 — null = single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
+            AgentConfig.ToolsConfig.defaults(),      // tools (Story #019)
+            DEFAULT_NAME);                          // permissionPolicy (Story #029)
     }
 
     /** Static fallback map (used by tests / debug endpoints). */

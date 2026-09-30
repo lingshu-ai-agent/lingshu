@@ -52,7 +52,7 @@ class A2aServerLifecycleTest {
             null,
             a2a,
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults());
+            AgentConfig.ToolsConfig.defaults(), "default");
     }
 
     @Test
