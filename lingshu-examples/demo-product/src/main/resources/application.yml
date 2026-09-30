@@ -68,6 +68,16 @@ agent:
   # 🆕 Story #029 — `allow-list` is the strict PermissionPolicy's allow-list
   # (dsh §5.5 L2168-2189). When `permission-policy: strict`, only tools named
   # here can be invoked; everything else is denied with `[LINGS-P01]`.
+  #
+  # ⚠️ Story #029 retrospective — `allow-list` must enumerate ALL Tool
+  # categories, not just local @Component Tools. demo-product exposes 12
+  # Tools in total: 4 local + 2 MCP (echo-stdio: echo + timestamp) + 4
+  # Skills (agent / help / clear / compact from `skills/*/SKILL.md`) +
+  # 1 A2A remote_agent + 1 Delegate Task. New Story
+  # `permission-policy-pattern-matching` will replace this static list with
+  # glob patterns (`mcp:*`, `skill:*`, `a2a:*`, `delegate:*`) so MCP servers
+  # adding new tools / new SKILL.md files don't require yml edits. Until
+  # then, this list must stay in sync with all Tool sources below.
   tools:
     enabled: true
     read: true
@@ -76,10 +86,24 @@ agent:
     bash: false
     max-file-bytes: 65536
     allow-list:
+      # Local @Component Tools (ProductTools.java)
       - read_file
       - write_file
       - list_dir
       - bash_safe
+      # MCP echo-stdio tools (mcp-servers/echo-stdio.py)
+      - echo
+      - timestamp
+      # Skills (auto-loaded from src/main/resources/skills/*/SKILL.md)
+      - agent
+      - help
+      - clear
+      - compact
+      # A2A RemoteAgent (RemoteAgentTool.TOOL_NAME = "remote_agent";
+      # specific agent = "translator" is a param, not a tool name)
+      - remote_agent
+      # Delegate sub-agent (DelegateTool.TOOL_NAME = "Task"; Claude Code fixed)
+      - Task
 
   # ── Sandbox (Slot 3) — boundary for the 4 fs-touching Tools ──────────
   # demo-product enables 4 local @Component Tools (read_file/write_file/
