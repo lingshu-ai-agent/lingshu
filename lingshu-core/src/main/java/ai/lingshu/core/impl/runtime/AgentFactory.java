@@ -10,6 +10,7 @@ import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import ai.lingshu.core.spi.SlotRouter;
@@ -46,6 +47,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   <li>{@code PermissionPolicy} resolves</li>
  *   <li>{@code PromptBuilder} resolves</li>
  *   <li>{@code FlowEngine} resolves</li>
+ *   <li>🆕 Story #028 — {@code RuntimeSandbox} resolves</li>
  * </ol>
  *
  * <p>dsh §7.1.1: this factory is a stateless singleton; each call to {@code create(config)}
@@ -90,6 +92,8 @@ public class AgentFactory implements InitializingBean {
     private final Routers.PromptBuilderRouter promptBuilderRouter;
     private final Routers.FlowEngineRouter flowRouter;
     private final Routers.MemorySourceRouter memorySourceRouter;
+    /** 🆕 Story #028 — 7th implicit Router for Slot 3 Sandbox (dsh §5.3.1.0). */
+    private final Routers.RuntimeSandboxRouter runtimeSandboxRouter;
 
     @Autowired
     public AgentFactory(Routers.LlmProviderRouter llmRouter,
@@ -97,13 +101,35 @@ public class AgentFactory implements InitializingBean {
                         Routers.PermissionPolicyRouter policyRouter,
                         Routers.PromptBuilderRouter promptBuilderRouter,
                         Routers.FlowEngineRouter flowRouter,
-                        Routers.MemorySourceRouter memorySourceRouter) {
+                        Routers.MemorySourceRouter memorySourceRouter,
+                        Routers.RuntimeSandboxRouter runtimeSandboxRouter) {
         this.llmRouter = llmRouter;
         this.toolRouter = toolRouter;
         this.policyRouter = policyRouter;
         this.promptBuilderRouter = promptBuilderRouter;
         this.flowRouter = flowRouter;
         this.memorySourceRouter = memorySourceRouter;
+        this.runtimeSandboxRouter = runtimeSandboxRouter;
+    }
+
+    /**
+     * 🆕 Story #028 — legacy 6-Router constructor. Sets {@code runtimeSandboxRouter = null}
+     * so test subclasses (e.g. {@code StubAgentFactory} in {@code DelegateToolTest}) can
+     * bypass the Spring wiring without dragging in a 7th stub Router. Production code paths
+     * always use the 7-Router ctor above so the Slot 3 Sandbox is actually resolved.
+     *
+     * <p>The {@link #create(AgentConfig, AgentConfigRegistry)} method's null-guard treats a
+     * null {@code runtimeSandboxRouter} as "no Sandbox configured" — pre-#028 tests that
+     * override {@code create(...)} entirely (rather than calling it) keep working.
+     */
+    public AgentFactory(Routers.LlmProviderRouter llmRouter,
+                        Routers.ToolExecutorRouter toolRouter,
+                        Routers.PermissionPolicyRouter policyRouter,
+                        Routers.PromptBuilderRouter promptBuilderRouter,
+                        Routers.FlowEngineRouter flowRouter,
+                        Routers.MemorySourceRouter memorySourceRouter) {
+        this(llmRouter, toolRouter, policyRouter, promptBuilderRouter, flowRouter,
+            memorySourceRouter, null);
     }
 
     /**
@@ -207,13 +233,20 @@ public class AgentFactory implements InitializingBean {
         PermissionPolicy permissionPolicy = policyRouter.resolve(config.getSandbox().getPolicy(), config);
         PromptBuilder promptBuilder = promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config);
         FlowEngine engine = flowRouter.resolve(config.getFlowEngine(), config);
+        // 🆕 Story #028 — resolve Sandbox runtime (Slot 3 sub-slot via the 7th implicit Router).
+        // Null-guard for the legacy 6-Router ctor path (pre-#028 tests); production paths
+        // always inject the runtimeSandboxRouter via the 7-Router @Autowired ctor above.
+        RuntimeSandbox runtimeSandbox = (runtimeSandboxRouter != null)
+            ? runtimeSandboxRouter.resolve(config.getSandbox().getRuntime(), config)
+            : null;
 
         Session session = new DefaultSession();
-        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{} registry={}",
+        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{} sandbox={} registry={}",
             session.id(),
             config.getFlowEngine(),
             config.getLlm().getProvider(),
             config.getLlm().getModel(),
+            config.getSandbox().getRuntime(),
             registry != null ? "hot-reload (frozen per turn)" : "static");
 
         // Story #001: ToolExecutor / PermissionPolicy / PromptBuilder are resolved but
@@ -223,7 +256,10 @@ public class AgentFactory implements InitializingBean {
         // to auto-register cancellation tokens (FR-011).
         // 🆕 Story #007: registry (if non-null) is held by the Agent and read once per turn
         // at run() entry — provides AC-06 "freeze old config, see new config next turn" semantics.
-        return new DefaultAgent(session, config, engine, registry);
+        // 🆕 Story #028: DefaultAgent.buildContext now passes the resolved RuntimeSandbox to
+        // DefaultToolExecutionContext so the sandbox boundary (fs/http/process) actually fires
+        // per-tool-call (§6.3 + §4.10.1 hard rule 2 pipeline step 4).
+        return new DefaultAgent(session, config, engine, registry, runtimeSandbox);
     }
 
     private static void validate(AgentConfig config) {
@@ -251,6 +287,10 @@ public class AgentFactory implements InitializingBean {
         }
         if (config.getSandbox() == null || config.getSandbox().getPolicy() == null) {
             throw new IllegalArgumentException("config.sandbox.policy is required");
+        }
+        // 🆕 Story #028 — runtime is also required so the Slot 3 Sandbox Router can resolve.
+        if (config.getSandbox().getRuntime() == null || config.getSandbox().getRuntime().isEmpty()) {
+            throw new IllegalArgumentException("config.sandbox.runtime is required");
         }
         if (config.getPrompt() == null || config.getPrompt().getBuilder() == null) {
             throw new IllegalArgumentException("config.prompt.builder is required");
@@ -305,6 +345,13 @@ public class AgentFactory implements InitializingBean {
             .map(s -> "FlowEngine: " + s.trim()).collect(java.util.stream.Collectors.toList()));
         lines.addAll(memorySourceRouter.describe().stream()
             .map(s -> "MemorySource: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        // 🆕 Story #028 — surface the RuntimeSandbox slot in the self-describe output so
+        // users can see which chroot-style provider is active. Null-guard for the legacy
+        // 6-Router ctor path; in production the runtimeSandboxRouter is always non-null.
+        if (runtimeSandboxRouter != null) {
+            lines.addAll(runtimeSandboxRouter.describe().stream()
+                .map(s -> "RuntimeSandbox: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        }
         // Append a placeholder session line so the contract output is complete
         // even when description() is called outside an Agent turn.
         lines.add("Turn=0 Session=" + new DefaultSession().id());

@@ -14,8 +14,10 @@ import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.tenant.TenantContext;
 import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.PermissionPolicy;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutionContext;
+import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutionContext;
 import ai.lingshu.core.slot.ToolExecutor;
 import org.reactivestreams.Subscriber;
@@ -404,15 +406,24 @@ public class LinearTurnEngine implements FlowEngine {
      */
     private ToolResult dispatchWithPolicy(ToolCall call, TurnContext ctx,
                                           Subscriber<? super AgentEvent> sink) {
-        // Bridge per-turn scope (TurnContext) → per-call sandbox scope (ToolExecutionContext)
-        // once per dispatch — the adapter wraps the turn context with no-op defaults for
-        // fs/http/approval/cancellation, deferring the full sandbox to Story #016.
-        DefaultToolExecutionContext toolCtx = new DefaultToolExecutionContext(ctx);
+        // 🆕 Story #028 — bridge per-turn scope (TurnContext) → per-call sandbox scope
+        // (ToolExecutionContext) with the resolved Slot 3 Sandbox. We cast to
+        // DefaultTurnContext to read the sandbox (the impl-only accessor stays off the
+        // TurnContext interface); the cast is safe because the production path
+        // DefaultAgent.buildContext always constructs a DefaultTurnContext.
+        // For legacy ctx implementations (4-arg/5-arg ctor sites from Story #005/#006),
+        // `runtimeSandbox()` returns null and DefaultToolExecutionContext falls back to
+        // its pre-#028 behaviour (default FS + PassThroughHttp stub).
+        RuntimeSandbox sandbox = (ctx instanceof DefaultTurnContext)
+            ? ((DefaultTurnContext) ctx).runtimeSandbox()
+            : null;
+        DefaultToolExecutionContext toolCtx = new DefaultToolExecutionContext(ctx, sandbox);
         Decision d = permissionPolicy.check(call, toolCtx);
         if (d instanceof Decision.Allow) {
             // Bridge per-turn scope (TurnContext) → per-call sandbox scope (ToolExecutionContext).
-            // The adapter wraps the turn context with no-op defaults for fs/http/approval/cancellation,
-            // deferring the full sandbox implementation to Story #016.
+            // The adapter wraps the turn context with the resolved Slot 3 Sandbox for
+            // fs/http/process (Story #028); approval/cancellation still delegate to the
+            // turn context (Story #005).
             return toolExecutor.dispatch(call, toolCtx);
         }
         if (d instanceof Decision.Deny) {
