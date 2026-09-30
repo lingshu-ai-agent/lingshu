@@ -7,6 +7,7 @@ import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.spi.Providers;
 import ai.lingshu.core.spi.SlotRouter;
@@ -138,5 +139,23 @@ public final class Routers {
             }
             return result;
         }
+    }
+
+    /**
+     * 🆕 Story #028 — RuntimeSandbox router. Resolves one {@link RuntimeSandbox}
+     * by {@code cfg.sandbox.runtime} name (e.g. {@code "chroot"}).
+     *
+     * <p>By design NOT in {@code SlotResolver}; {@code AgentFactory} autowires it
+     * directly (dsh §5.3.1.0 "7 个隐式 Router concrete 类") and passes the resolved
+     * instance to {@code DefaultToolExecutionContext} so each {@code Tool.execute(...)}
+     * call can route fs / http / process through the sandbox boundary.
+     */
+    @Component
+    public static class RuntimeSandboxRouter
+            extends SlotRouter<Providers.RuntimeSandboxProvider, RuntimeSandbox> {
+        public RuntimeSandboxRouter(List<Providers.RuntimeSandboxProvider> providers) {
+            super(providers, "RuntimeSandbox", LoggerFactory.getLogger(RuntimeSandboxRouter.class));
+        }
+        @Override protected Class<RuntimeSandbox> getSlotInterface() { return RuntimeSandbox.class; }
     }
 }

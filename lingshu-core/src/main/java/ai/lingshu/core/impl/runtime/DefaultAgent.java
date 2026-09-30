@@ -11,6 +11,7 @@ import ai.lingshu.core.runtime.FlowEngine;
 import ai.lingshu.core.runtime.RunResult;
 import ai.lingshu.core.runtime.Session;
 import ai.lingshu.core.runtime.TurnContext;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -58,22 +59,34 @@ public class DefaultAgent implements Agent {
     private final FlowEngine engine;
     /** 🆕 Story #007 — optional hot-reload source. {@code null} = static (legacy) mode. */
     private final AgentConfigRegistry registry;
+    /** 🆕 Story #028 — resolved Slot 3 Sandbox instance (chroot by default). */
+    private final RuntimeSandbox runtimeSandbox;
 
-    /** Legacy 3-arg constructor — static mode, no hot-reload. */
+    /** Legacy 3-arg constructor — static mode, no hot-reload, no sandbox (pre-#028 callers). */
     public DefaultAgent(Session session, AgentConfig config, FlowEngine engine) {
-        this(session, config, engine, null);
+        this(session, config, engine, null, null);
+    }
+
+    /** Legacy 4-arg constructor — hot-reload mode without sandbox. */
+    public DefaultAgent(Session session, AgentConfig config, FlowEngine engine,
+                        AgentConfigRegistry registry) {
+        this(session, config, engine, registry, null);
     }
 
     /**
-     * 🆕 Story #007 — registry-aware constructor. When {@code registry != null}, every
-     * turn freezes {@code registry.current()} at {@code run} entry (AC-06 freeze semantics).
+     * 🆕 Story #028 — registry + sandbox aware constructor. When {@code registry != null},
+     * every turn freezes {@code registry.current()} at {@code run} entry (AC-06 freeze
+     * semantics). The {@code runtimeSandbox} is propagated to
+     * {@code DefaultToolExecutionContext} so the sandbox boundary actually fires per
+     * {@code Tool.execute(...)} call (dsh §6.3 + §4.10.1 hard rule 2).
      */
     public DefaultAgent(Session session, AgentConfig config, FlowEngine engine,
-                        AgentConfigRegistry registry) {
+                        AgentConfigRegistry registry, RuntimeSandbox runtimeSandbox) {
         this.session = session;
         this.config = config;
         this.engine = engine;
         this.registry = registry;
+        this.runtimeSandbox = runtimeSandbox;
     }
 
     @Override public Session session() { return session; }
@@ -234,7 +247,12 @@ public class DefaultAgent implements Agent {
         // auto-registers with AgentFactory's static broadcast registry. Ctrl-C reaches the
         // JVM shutdown hook → AgentFactory.broadcastCancel() → all in-flight turns see
         // isCancelled() == true within the AC-04 200ms budget.
-        return DefaultTurnContext.createWithBroadcast(session, frozen, null, userInput);
+        // 🆕 Story #028 — pass the resolved Slot 3 Sandbox into the TurnContext so
+        // LinearTurnEngine.dispatchWithPolicy can wire it into DefaultToolExecutionContext
+        // per Tool.execute(...) call. Without this, fs() / http() / process() would never
+        // enforce the chroot / whitelist boundaries (dsh §4.10.1 hard rule 2 pipeline
+        // step 4).
+        return DefaultTurnContext.createWithBroadcast(session, frozen, null, userInput, runtimeSandbox);
     }
 
     // ── BufferedPublisher — synchronous engine replay for lazy subscribers ──
