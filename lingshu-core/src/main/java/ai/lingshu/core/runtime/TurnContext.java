@@ -1,10 +1,13 @@
 package ai.lingshu.core.runtime;
 
 import ai.lingshu.core.event.AgentEvent;
+import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.message.Usage;
 import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import org.reactivestreams.Subscriber;
+
+import java.util.List;
 
 /**
  * Per-turn runtime state shared by every Slot the engine invokes (dsh §4.12.1).
@@ -39,8 +42,20 @@ public interface TurnContext {
     /** Set {@code done = true}. The {@code FlowEngine} polls this each loop iteration. */
     void markDone();
 
-    /** Append an assistant message (model output) to history. */
-    void appendAssistant(String text, Usage usage);
+    /**
+     * Append an assistant message (model output) to history.
+     *
+     * <p>🆕 Story #027a — {@code toolCalls} is now a first-class input (was hardcoded
+     * to an empty list by Story #001). The ReAct loop records every
+     * {@link ai.lingshu.core.message.LlmResponse#getToolCalls()} on the assistant
+     * turn so the next request's {@code messages[]} can echo back the
+     * {@code tool_use} blocks Anthropic requires for tool-result pairing. The
+     * existing {@code Message.Assistant} 4-arg ctor ({@code text, toolCalls,
+     * stopReason, usage}) is preserved by the default implementation —
+     * {@code stopReason} still defaults to {@code END_TURN} at this layer (see
+     * dsh §6.1 ReAct loop for the rationale).
+     */
+    void appendAssistant(String text, List<ToolCall> toolCalls, Usage usage);
 
     /** Append a tool result message to history. */
     void appendToolResult(ToolResult result);
