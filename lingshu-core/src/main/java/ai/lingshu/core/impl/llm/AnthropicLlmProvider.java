@@ -319,6 +319,7 @@ public class AnthropicLlmProvider implements LlmProvider {
             root.put("model", model);
             // 流式返回需要添加，不然会出错
             root.put("stream", true);
+
             if (maxTokens != null) {
                 root.put("max_tokens", maxTokens);
             }
