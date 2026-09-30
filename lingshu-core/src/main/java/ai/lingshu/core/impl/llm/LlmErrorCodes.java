@@ -15,12 +15,13 @@ package ai.lingshu.core.impl.llm;
  * <ul>
  *   <li>{@link #LINGS_L01} — {@code LLM_PROTOCOL_TOOL_USE_INVALID}。
  *       抛出位置:{@link AnthropicLlmProvider#buildRequestBody}(构建请求时
- *       {@code Message.ToolUse} 缺 {@code id} / {@code name})与
+ *       {@link ai.lingshu.core.message.Message.Assistant} 嵌入的 {@code ToolCall}
+ *       缺 {@code id} / {@code name})与
  *       {@link AnthropicLlmProvider#parseResponse}(解析响应时
  *       {@code content[].tool_use} block 缺 {@code id} / {@code name})。
  *       触发条件:Anthropic {@code /v1/messages} 协议要求每个 {@code tool_use}
- *       block 必须带 {@code id} + {@code name};若内部 {@link ai.lingshu.core.message.Message.ToolUse}
- *       缺字段(Story #024 / #020a / #022 等任意 Tool 来源拼接 history 时 bug)
+ *       block 必须带 {@code id} + {@code name};若内部 {@link ai.lingshu.core.message.Message.Assistant#toolCalls}
+ *       元素缺字段(Story #024 / #020a / #022 等任意 Tool 来源拼接 history 时 bug)
  *       或 Anthropic 响应缺字段(LLM 协议越界),必须 fail-fast 抛
  *       {@link LingsLlmProviderException}(<b>不</b>静默丢弃,否则 ReAct Action
  *       阶段 {@code dispatchParallel} 收到残缺 ToolCall 会执行到一半才发现
