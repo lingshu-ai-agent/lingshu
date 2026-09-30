@@ -80,6 +80,19 @@ public final class LlmErrorCodes {
      */
     public static final String LINGS_L02 = "LINGS-L02";
 
+    /**
+     * 🆕 Story #027b reserved — 占位常量,本期 <b>不</b>抛,预留给 dsh §14 N6
+     * <i>graceful shutdown</i> 在 Anthropic SSE 流式连接中途被取消时上报用。
+     *
+     * <p>完整语义待 dsh §14 N6 实施时补 —— 见 dsh §15.6 第 3 行
+     * {@code LINGS-L03 LLM_STREAM_ABORTED_BY_SHUTDOWN}。在 #027b 内,此常量仅
+     * 用于单测与契约文档占位,实现层 <b>不</b>触发。
+     *
+     * <p>编号约束:dsh §15 域字母表新增 {@code L = LlmProvider} 段,L01 / L02
+     * 由 #027a 实装;L03+ 顺延;#027b 锁定 L03 占位但本期不抛。
+     */
+    public static final String LINGS_L03 = "LINGS-L03";
+
     private LlmErrorCodes() {
         // utility class — instantiation is a programming error
         throw new AssertionError("LlmErrorCodes must not be instantiated");

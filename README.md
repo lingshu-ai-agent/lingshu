@@ -66,6 +66,7 @@
 - 🎁 **Demo 产品已上线** — `lingshu-examples/demo-product/` HTTP SSE chat 产品组合 8 features(Spring Boot + SSE 流式 + ReAct 事件流 + `@AgentTool` + SKILL.md Skill + MCP stdio 子进程 + 内存会话 + Hot-reload 配置,Story #025) + `lingshu-examples/demo-product-a2a-server/` 跨 JVM translate demo(9090 端口通过 `RemoteAgentTool` + `HttpJsonRpcA2aTransport` 与 8080 `demo-product` 互通,Story #025b);**0 新 Maven 依赖**
 - 🌱 **YAML `${...}` 占位符跨路径统一** — `PlaceholderResolver` 静态工具类(brace-counting scanner 4-form grammar:`${X}` / `${X:default}` / `${X:${Y}}` 嵌套 / `$${literal}` 转义;env → sys-prop 查找;32 层环检测),`AgentFactory.loadYamlAndValidate` 在 `parseMinimalYaml` 与 `toAgentConfig` 之间 hook 调用,**修跨路径 parity bug** —— 之前 CLI / YamlWatcher hand-rolled 路径下 `${user.dir}` 静默变 13 字符串,Spring Env 路径(demo-product)一直支持;新增 2 ErrorCode `LINGS-C03 YAML_PLACEHOLDER_UNRESOLVED` / `LINGS-C04 YAML_PLACEHOLDER_CYCLE`;**0 新 Maven 依赖**(Story #026)
 - 🤖 **Anthropic 协议层 Tool 转换已上线** — `AnthropicLlmProvider` 4 段协议链全贯通:`buildRequestBody` 真翻 `Prompt.tools` → 顶层 `tools:[]`(`{name, description, input_schema}`)+ `messages[].content` 展开为 array of blocks(`text` / `tool_use` / `tool_result`)+ 连续 `Message.ToolResult` **合并为单 user message 多 tool_result block**(Anthropic 协议层硬约束)+ `parseResponse` 解析 `tool_use` block → `ToolCall(id, name, input)`;`TurnContext.appendAssistant` 签名扩 `toolCalls` 参数 + `DefaultTurnContext` 实现对齐 + `LinearTurnEngine.L166` 真传 `resp.getToolCalls()`;新增 2 ErrorCode `LINGS-L01 TOOL_USE_BLOCK_INVALID` / `LINGS-L02 TOOL_RESULT_BLOCK_INVALID`(LlmProvider 域 L 段 1/2 号);Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2);**OQ-7 解决**(Story #027a,**0 新 Maven 依赖**)
+- 📡 **Anthropic SSE 真流式已上线** — `AnthropicLlmProvider.doPostStream` 把非流式 POST + 一次性 readAll 替换为 SSE `text/event-stream` accept + `BufferedReader.readLine()` 逐行解析(沿用 #021c `SseMcpServerConnection` 手写 SSE parser 模式)+ `AnthropicStreamParser` 6-类事件状态机(`message_start` → `ReasoningStarted` + init usage / `content_block_start` × text + tool_use → 触发 `ToolStarted` / `content_block_delta` × text_delta + input_json_delta → 持续 `TextDelta` + per-block JSON 拼接 buffer / `content_block_stop` → per-block `MAPPER.readTree()` 构造 `ToolCall` / `message_delta.stop_reason` / `message_stop`) + `Map<Integer, StringBuilder>` text blocks + `Map<Integer, ToolCall.Builder>` tool blocks 交错状态机;LLM 流式首 token P50 ≤ 1.5s NFR(constitution §3)真达标;新增 `LINGS-L03` reserved 常量(§14 N6 graceful shutdown 后续启用,本期不抛);复用 #027a `LINGS-L01` 协议层 ErrorCode(SSE 解析 tool_use 缺 id/name);`parseResponse` 保留为 fallback(`anthropicStreamEnabled=false` 配置路径仍可用);**§6.5 protocol gap 全闭合**(Story #027b,**0 新 Maven 依赖** / **R-13 0 binary delta 第 13 次 PASS**)
 
 ---
 
@@ -1687,6 +1688,47 @@ LingShu 在 Story #024(`Prompt.tools` = `ToolRegistry.modelVisibleSpecs()`)+ #02
 - Anthropic SSE 流式 + `input_json_delta` buffer + ToolCall 与 text block 交错状态机(dsh §6.5)
 - `OpenAiLlmProvider` 等 Provider 协议层 Tool 转换(暂用 EchoLlmProvider mock 测试,生产路径仅 Anthropic)
 - `RemoteAgentTool.description()` HINT 链路在 `RemoteAgentToolAutoConfiguration` 启动期配置验证(`toolRegistry.modelVisibleSpecs()` 单点注册闭环已足够覆盖 LLM 视角,#024 验证)
+
+---
+
+### Story #027b anthropic-stream-tool-sse(Anthropic SSE 真流式 + `input_json_delta` 拼接 buffer + ToolCall/text block 交错状态机,§6.5 Protocol Gap 全闭合)
+
+Story #027a 合入后,`AnthropicLlmProvider.buildRequestBody` + `parseResponse` 协议转换 4 段已贯通,但 `stream(Prompt, TurnContext, Subscriber<AgentEvent>)` 方法**签名像流式,内部仍是非流式 POST + 一次性 readAll**(`doPost(url, requestBody)` + `readAll(InputStream)` + `parseResponse(body, sink)`,L362-419 + L397-399)。
+
+**实测发现的问题**(2026-09-30 审 `AnthropicLlmProvider.java` 时):
+- constitution §3 NFR「LLM 流式首 token P50 ≤ 1.5s / P99 ≤ 3.0s」在非流式路径上**完全失效** —— 首 token 延迟 = 完整生成时间 + 协议 RTT,而非真首 token 时间;长 prompt + 长响应场景用户可见延迟 5-10s 远超 NFR
+- 流式 UX 不可用 —— `AgentEvent.TextDelta` 是 ReAct loop 流式反馈载体(`lingshu-examples/demo-product/` ChatController SSE 流式响应,#025 落地),非流式 `stream()` **只发一次 TextDelta 在响应末尾**(L397-399),前端 UI 看不到打字机效果
+- Tool 协作不可观察 —— ReAct Action 阶段 LLM 决定调 N 个 tool(`dispatchParallel` 一次发 N 个 `ToolCall`),非流式响应里 LLM 一边 tool_use 一边 reasoning text 都被打包成一次性响应;§14.10 N10 audit log 落地时,`text_delta` / `tool_use` block 顺序入账是基础设施前提
+
+**Story #027b 业务价值**:
+- 修通 Anthropic `/v1/messages` 协议层真 SSE 流式(LLM → Provider:`text/event-stream` accept / Provider → LLM:每 token 增量 `text_delta` + `input_json_delta`),LLM 流式首 token 满足 constitution §3 NFR(LLM 真首 token 时间,而非 TTP + 网络 RTT)
+- 流式 `AgentEvent.TextDelta` 持续发射(`message_start` → `ReasoningStarted` + 每 `content_block_delta.text_delta` → `TextDelta` + `content_block_start(type=tool_use)` → `ToolStarted` + `message_stop` 收尾 + `message_delta.stop_reason` 解析 `StopReason`),ReAct loop 全过程对前端可见
+- `input_json_delta` 拼接 buffer 状态机:每 tool_use 块独立 `Map<Integer, ToolCall.Builder>` buffer,直到 `content_block_stop` 才 `MAPPER.readTree()` 一次,与 Anthropic 协议层硬约束对齐;多 tool_use block 交错支持(ReAct 一次发 N 个并行 tool_call 路径)
+- 接续 #027a:`buildRequestBody` + `parseResponse` 协议转换原样复用,只把一次性 `parseResponse` 升级为流式 `AnthropicStreamParser`,`#027b` 与 `#027a` 同仓同文件演进,不另起新 Provider
+
+**实现要点**(8 个文件改动):
+1. **`AnthropicStreamEvent.java`**(新 file,~30 行,`ai.lingshu.core.impl.llm` 包)—— `public final class` + Lombok `@Value` 不可变(`String type` + `JsonNode data`)+ 静态工厂 `AnthropicStreamEvent.parse(String rawSseBlock)` 拆 `event:` 行拿 type + 累 `data:` 行拿 raw JSON + 空行收尾 → `MAPPER.readTree()`;空 block 返 null;malformed JSON 抛 RuntimeException(对齐 #021c `SseMcpServerConnection` 手写模式)
+3. **`AnthropicStreamParser.java`**(新 file,~150 行,`ai.lingshu.core.impl.llm` 包)—— `public final class` + Lombok `@Getter`(NOT `@Value`,状态机需要可变字段)+ 6 字段(`Map<Integer, StringBuilder> textBlocks` + `Map<Integer, ToolCall.Builder> toolBlocks` + `StringBuilder textBuf` + `List<ToolCall> toolCalls` + `StopReason stopReason` + `Usage usage`)+ `void feed(AnthropicStreamEvent event, Subscriber<AgentEvent> sink)` 6 类 event if-else 分支 + `LlmResponse finish()` 收尾方法(message_stop 后调)+ 防御 `content_block_start(type=tool_use)` 缺 id/name 抛 `LingsLlmProviderException(LINGS_L01)`(复用 #027a 异常类)+ 防御 `finish()` 未 message_stop 时抛 `IllegalStateException`
+4. **`AnthropicLlmProvider.doPostStream`(modify `AnthropicLlmProvider.java` ~80 行)** —— 新 method:`HttpURLConnection` + 加 `conn.setRequestProperty("Accept", "text/event-stream")` + `conn.setReadTimeout(READ_TIMEOUT_MS)` + `BufferedReader r = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))` + 循环 `String line = r.readLine()`(空行分隔 SSE event 块)+ 累积 `rawSseBlock` 字符串 + 空行触发 `AnthropicStreamEvent.parse(rawSseBlock)` + `parser.feed(event, sink)` + 重置 `rawSseBlock = ""`;`message_stop` 时 `parser.finish()` 返回 `LlmResponse`;catch-all 失败转 `LlmResponse.error(...)`(对齐 #027a 错误路径);`stream()` 方法体替换 `doPost(url, requestBody)` + `parseResponse(body, sink)` 为 `doPostStream(url, requestBody, sink)`;**保留** `parseResponse(body, sink)` 不删(作为 fallback 路径 + 测试 helper)
+5. **`LlmErrorCodes.LINGS_L03`(modify `LlmErrorCodes.java` +1 行)** —— `public static final String LINGS_L03 = "LINGS-L03";` reserved 占位 §14 N6 graceful shutdown,2026-09-30 #027b spec 锁定,本期不抛
+
+**测试覆盖 13 新 cases**(4 文件):
+- **`AnthropicStreamTestSupport.java`**(新 file,`ai.lingshu.core.impl.llm` 包,~250 行)—— `startSseServer(int port, List<String> sseEvents, Consumer<String> requestBodyCapture)` 起 JDK `com.sun.net.httpserver.HttpServer` + 后台 `ExecutorService.newCachedThreadPool` daemon 线程收 POST capture body + 按 `sseEvents` 列表写 `event: <type>\ndata: <json>\n\n` 流(每 event 间 `Thread.sleep(20)` 让 client 边发边读)+ `findFreePort()` helper(`new ServerSocket(0).getLocalPort()`)+ `stopServer(HttpServer)` 优雅停机(`server.stop(0)` + executor drain 1s)+ `StartedServer` handle 携带 server + port + `baseUrl()` helper
+- **`AnthropicStreamEventTest.java`**(新 file,2 cases L1 unit)—— `parse_wellFormedMessageStart_returnsTypeAndJsonData`(happy path:event + data 二行 + blank line → type + JsonNode) + `parse_malformedJsonInDataLine_throwsRuntimeException`(trailing comma + unclosed brace → Jackson parse fail → RuntimeException 含 "Failed to parse Anthropic SSE event data JSON")
+- **`AnthropicStreamParserTest.java`**(新 file,8 cases L1 unit,含 2 helper methods)—— `messageStartEmitsReasoningStartedAndInitUsage`(AC-NN-2)+ `textDeltaAccumulatesAndEmitsPerDelta`(AC-NN-3,2 个 TextDelta 累积)+ `inputJsonDeltaConcatenatesAndParsesAtStop`(AC-NN-4,3 段 `input_json_delta` 拼接 + content_block_stop 时 parse)+ `multiBlockInterleavedStateMachine`(AC-NN-5,4 个 block 交错 text/tool_use/text/tool_use → 2 ToolCall)+ `missingToolUseIdThrowsL01`(AC-NN-6,content_block_start tool_use 缺 id 抛 LINGS-L01)+ `finishBeforeMessageStopThrowsIllegalState`(AC-NN-8,未 message_stop 时调 finish 抛 IllegalStateException)+ `buildMessageStartEvent` / `buildContentBlockStartText` / `buildContentBlockStartToolUse` / `buildTextDelta` / `buildInputJsonDelta` / `buildContentBlockStop` / `buildMessageDelta` / `buildMessageStop` 8 个 helper methods
+- **`AnthropicStreamProviderIT.java`**(新 file,2 cases L2 slice)—— `acceptHeaderIsTextEventStream`(AC-NN-1,手写 `HttpServer` 捕获 `Accept` 请求头 = `"text/event-stream"`)+ `endToEndSseStreaming_mockServerEmitsIncrementally`(AC-NN-7,真实 SSE mock server 边发 20ms 间隔边读 + 增量 `AgentEvent` 发射验证)
+
+**R-13 mitigation (d) baseline 镜像 PASS** —— `mvn -pl lingshu-core dependency:tree` pre/post diff **仅时间戳不同**,**0 binary delta**(`CORE_POM_IDENTICAL` + `PARENT_POM_IDENTICAL` baseline 镜像);**第 13 次** R-13 mitigation (d) 路径验证(前 12 次:#018 #019 #020a #020b #020c #021a-c #009e #022 #023 #024 follow-up #025 follow-up #026 #027a);`banned-dependencies` enforcer `Rule 0 passed`。
+
+**累计**:574 + 13 = **587 tests pass** / 3 MCP heartbeat flakes(pre-existing,与 #027b 无关);R-13 baseline mirror PASS 0 binary delta。
+
+**关键不变项** —— `LlmProvider` SPI 不变(只 `AnthropicLlmProvider` 实现层扩展)+ `Message` 5 子类 + 字段不变(#027a 已落)+ `Prompt.tools` 契约不变(#024 已落)+ `ToolRegistry.modelVisibleSpecs()` 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)+ `Tool` SPI 不变 + `LinearTurnEngine` 公开方法签名不变(#027a 已落 1 行 wire-through)+ `AgentConfig` 不可变契约不变 + `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)+ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 + 9 Slot 体系不变 + 24 字段 AgentConfig schema 不变 + JDK 8 兼容(`Collections.emptyList()` / `Arrays.asList()` / Jackson 已锁 / `com.sun.net.httpserver.HttpServer` JDK 内置 / `BufferedReader` + `InputStreamReader` + `HashMap` + `ArrayList` 全 JDK 8 标准功能,no `var` / `List.of` / sealed / records / `String.join`) + 0 新 Maven 依赖 + **0 新 ErrorCode**(复用 #027a `LINGS-L01` / `LINGS-L02`,`LINGS-L03` reserved 占位 §14 N6 graceful shutdown 后续启用,本期不抛)。
+
+**Out-of-Scope**(deferred to §14 N6 graceful-shutdown):
+- SSE 流中断 / 连接 timeout 场景 `LINGS-L03` ErrorCode 实际启用
+- §14.2 RetryPolicy(指数退避 + 抖动)+ §14.3 CircuitBreaker SSE 流式重连
+- §14.10 N10 audit-log 接 `text_delta` / `tool_use` block / `tool_result` block 入账路径
+- `OpenAiLlmProvider` / `GeminiLlmProvider` 流式(用 #027a + #027b 协议层样板,OQ-Future)
 
 ---
 
