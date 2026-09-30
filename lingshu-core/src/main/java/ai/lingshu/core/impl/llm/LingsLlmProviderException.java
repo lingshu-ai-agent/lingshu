@@ -11,8 +11,8 @@ import ai.lingshu.core.exception.LingsConfigException;
  *
  * <ul>
  *   <li><b>Outbound</b>({@link AnthropicLlmProvider#buildRequestBody}) —
- *       a {@link ai.lingshu.core.message.Message.ToolUse} is missing
- *       {@code id} / {@code name}, or a {@link ai.lingshu.core.message.Message.ToolResult}
+ *       an Assistant message with {@code toolCalls} is missing {@code id} / {@code name}
+ *       on one of its embedded {@code ToolCall} entries, or a {@link ai.lingshu.core.message.Message.ToolResult}
  *       is missing {@code toolUseId} / {@code content}. Failing fast at request-build
  *       time surfaces the bug at the original call site rather than letting
  *       Anthropic return a generic {@code 400 Bad Request}.</li>

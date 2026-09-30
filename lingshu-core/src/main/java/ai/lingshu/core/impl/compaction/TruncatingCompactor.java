@@ -22,9 +22,12 @@ import java.util.List;
  *       {@code head + "… [truncated N bytes] …" + tail} so the model still sees a hint
  *       of what came back, but the prompt shrinks dramatically.</li>
  *   <li><b>Sliding-window drop</b> — if step 1 was not enough to bring the prompt under
- *       {@code maxPromptTokens}, drop the oldest assistant+tool_use+tool_result triples
- *       beyond the most recent {@code keepRecentTurns} assistant turns. System + User
- *       messages are preserved.</li>
+ *       {@code maxPromptTokens}, drop the oldest {@link Message.Assistant} messages
+ *       (plus their trailing {@link Message.ToolResult} blocks) beyond the most recent
+ *       {@code keepRecentTurns} assistant turns. System + User messages are preserved.
+ *       <br>🆕 v1.5.46: pre-{@code Message.ToolUse} removal — Assistant messages
+ *       embed {@code toolCalls} directly, so the sliding window only needs to track
+ *       Assistant + ToolResult pairs.</li>
  * </ol>
  *
  * <p>Idempotent: if neither step changes the history, {@code compact} returns silently.
@@ -136,8 +139,8 @@ public class TruncatingCompactor implements Compactor {
 
     /**
      * Keep only the most recent {@code keepRecentTurns} {@link Message.Assistant}
-     * messages together with their paired {@link Message.ToolUse} / {@link Message.ToolResult}
-     * triples (the user prompt immediately preceding the oldest kept assistant is also kept).
+     * messages together with their paired {@link Message.ToolResult} blocks
+     * (the user prompt immediately preceding the oldest kept assistant is also kept).
      * {@link Message.System} blocks at the head are preserved verbatim.
      *
      * <p>Algorithm: walk from the tail counting Assistant messages. The first
@@ -239,12 +242,6 @@ public class TruncatingCompactor implements Compactor {
                     n += tc.getInput() == null ? 0 : tc.getInput().toString().length();
                 }
             }
-            return n;
-        }
-        if (m instanceof Message.ToolUse) {
-            Message.ToolUse tu = (Message.ToolUse) m;
-            long n = tu.getName() == null ? 0 : tu.getName().length();
-            n += tu.getInput() == null ? 0 : tu.getInput().toString().length();
             return n;
         }
         if (m instanceof Message.ToolResult) {
