@@ -50,7 +50,8 @@ class McpTransportAutoConfigurationTest {
             base.getTenants(),
             base.getA2a(),
             base.getCompactorConfig(),
-            base.getTools());
+            base.getTools(),
+            base.getPermissionPolicy());
     }
 
     @Test

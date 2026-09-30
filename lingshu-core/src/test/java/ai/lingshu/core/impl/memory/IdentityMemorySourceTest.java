@@ -91,7 +91,7 @@ class IdentityMemorySourceTest {
             base.getTenants(),
             base.getA2a(),                                    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),     // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());         // tools (Story #019)
+            AgentConfig.ToolsConfig.defaults(), "default");         // tools (Story #019)
     }
 
     /** Unused — ensures TurnContext import is recognized. */

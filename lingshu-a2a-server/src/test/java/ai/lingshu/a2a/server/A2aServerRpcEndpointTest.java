@@ -64,7 +64,7 @@ class A2aServerRpcEndpointTest {
                 java.time.Duration.ofMinutes(5), "http://localhost:8080",
                 java.time.Duration.ofSeconds(30), java.util.Collections.emptyList(), 10),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults());
+            AgentConfig.ToolsConfig.defaults(), "default");
     }
 
     /**

@@ -574,8 +574,22 @@ public class AgentFactory implements InitializingBean {
             sandboxPolicy, sandboxRuntime, java.nio.file.Paths.get(sandboxWd),
             whitelist, Collections.emptyList());
 
-        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={})",
-            ymlPath.getFileName(), llmProvider, llmModel, whitelist);
+        // ── Story #029 ── PermissionPolicy (top-level) + ToolsConfig allow/deny lists.
+        // Default permissionPolicy="default" preserves Story #001 zero-config back-compat;
+        // demo yml may opt into `permission-policy: strict` to switch Slot 4 router target.
+        String permissionPolicy = stringOr(agent, "permission-policy", "default");
+        Map<String, Object> toolsMap = agent.get("tools") instanceof Map
+            ? (Map<String, Object>) agent.get("tools") : Collections.<String, Object>emptyMap();
+        List<String> toolAllowList = stringListOr(toolsMap, "allow-list", Collections.<String>emptyList());
+        List<String> toolDenyList = stringListOr(toolsMap, "deny-list", Collections.<String>emptyList());
+        boolean toolsEnabled = booleanOr(toolsMap, "enabled", true);
+        AgentConfig.ToolsConfig toolsCfg = new AgentConfig.ToolsConfig(
+            toolsEnabled, toolAllowList, toolDenyList,
+            intOr(toolsMap, "max-file-bytes", 200_000),
+            intOr(toolsMap, "max-write-bytes", 1_000_000));
+
+        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={} permissionPolicy={} allowList={} denyList={})",
+            ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList);
 
         return new AgentConfig(
             flowEngine,
@@ -601,7 +615,8 @@ public class AgentFactory implements InitializingBean {
             null,                       // tenants (Story #006 — null = single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
+            toolsCfg,                                // tools (Story #019 + #029 allow/deny lists)
+            permissionPolicy);                       // permissionPolicy (Story #029)
     }
 
     @SuppressWarnings("unchecked")
@@ -623,6 +638,23 @@ public class AgentFactory implements InitializingBean {
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    /**
+     * Story #029 — boolean scalar reader for YAML map. Treats {@code "true"} (case-insensitive),
+     * {@code true}, {@code 1} as {@code true}; everything else {@code false}.
+     * Tolerates missing keys (returns fallback).
+     */
+    @SuppressWarnings("unchecked")
+    private static boolean booleanOr(Object parentObj, String key, boolean fallback) {
+        if (!(parentObj instanceof Map)) return fallback;
+        Map<String, Object> parent = (Map<String, Object>) parentObj;
+        Object v = parent.get(key);
+        if (v == null) return fallback;
+        String s = v.toString().trim().toLowerCase();
+        if ("true".equals(s) || "1".equals(s) || "yes".equals(s)) return true;
+        if ("false".equals(s) || "0".equals(s) || "no".equals(s)) return false;
+        return fallback;
     }
 
     @SuppressWarnings("unchecked")

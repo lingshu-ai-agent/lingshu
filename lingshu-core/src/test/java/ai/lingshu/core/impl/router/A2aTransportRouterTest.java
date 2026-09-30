@@ -72,7 +72,7 @@ class A2aTransportRouterTest {
             null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()  // tools (Story #019)
+            AgentConfig.ToolsConfig.defaults(), "default"    // tools (Story #019)
         );
     }
 
@@ -88,6 +88,7 @@ class A2aTransportRouterTest {
             name,                          // new a2aTransport
             cfg.getTenants(), cfg.getA2a(), cfg.getCompactorConfig(),
             cfg.getTools()                   // tools (Story #019)
+            , cfg.getPermissionPolicy()      // permissionPolicy (Story #029)
         );
     }
 

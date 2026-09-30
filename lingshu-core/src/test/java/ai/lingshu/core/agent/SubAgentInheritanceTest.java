@@ -68,7 +68,7 @@ class SubAgentInheritanceTest {
             null, null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
+            AgentConfig.ToolsConfig.defaults(), "default"
         );
     }
 
@@ -87,7 +87,8 @@ class SubAgentInheritanceTest {
             null, // <-- null identity
             baseline.getInstructions(), baseline.getMemory(),
             baseline.getA2aTransport(), baseline.getTenants(), baseline.getA2a(),
-            baseline.getCompactorConfig(), baseline.getTools()
+            baseline.getCompactorConfig(), baseline.getTools(),
+            baseline.getPermissionPolicy()
         );
     }
 
@@ -99,7 +100,7 @@ class SubAgentInheritanceTest {
             0, 0, 0, 0, 0, 0,
             null, null, null,
             null, null, null,
-            null, null
+            null, null, null
         );
     }
 
@@ -110,7 +111,7 @@ class SubAgentInheritanceTest {
             0, 0, 0, 0, 0, 0,
             id, inst, mem,
             null, null, null,
-            null, null
+            null, null, null
         );
     }
 
@@ -234,7 +235,8 @@ class SubAgentInheritanceTest {
             parent.getLlmTimeoutSeconds(), parent.getReactMaxSteps(),
             null, null, null,
             null, null, parent.getA2a(),
-            parent.getCompactorConfig(), parent.getTools()
+            parent.getCompactorConfig(), parent.getTools(),
+            parent.getPermissionPolicy()
         );
         AgentConfig childAllNull = makeEmptyChild();
 

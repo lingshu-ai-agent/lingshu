@@ -64,6 +64,10 @@ agent:
   # in ai.lingshu.examples.demoproduct.ProductTools and are auto-scanned via
   # Spring's @ComponentScan. We disable the engine's built-in bash tool so
   # the demo's whitelist (BashSafeTool) is the only shell path.
+  #
+  # 🆕 Story #029 — `allow-list` is the strict PermissionPolicy's allow-list
+  # (dsh §5.5 L2168-2189). When `permission-policy: strict`, only tools named
+  # here can be invoked; everything else is denied with `[LINGS-P01]`.
   tools:
     enabled: true
     read: true
@@ -71,6 +75,11 @@ agent:
     edit: false
     bash: false
     max-file-bytes: 65536
+    allow-list:
+      - read_file
+      - write_file
+      - list_dir
+      - bash_safe
 
   # ── Sandbox (Slot 3) — boundary for the 4 fs-touching Tools ──────────
   # demo-product enables 4 local @Component Tools (read_file/write_file/
@@ -223,3 +232,9 @@ agent:
   turn-timeout-seconds: 120
   llm-timeout-seconds: 30
   tool-timeout-seconds: 30
+
+  # 🆕 Story #029 — PermissionPolicy provider name. Switches Slot 4 router target.
+  # `default` = AllowAllPermissionPolicy (zero-config back-compat, Story #001).
+  # `strict`  = StrictPermissionPolicy (enforces tools.allow-list + tools.deny-list,
+  #             emits [LINGS-P01] deny reason; see dsh §4.7 + §5.5 L2168-2189).
+  permission-policy: strict

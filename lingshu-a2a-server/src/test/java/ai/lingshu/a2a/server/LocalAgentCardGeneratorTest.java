@@ -36,7 +36,7 @@ class LocalAgentCardGeneratorTest {
             null,                              // tenants
             AgentConfig.A2a.defaults(),       // a2a
             AgentConfig.CompactorConfig.defaults(),  // 🆕 Story #018
-            AgentConfig.ToolsConfig.defaults());     // 🆕 Story #019
+            AgentConfig.ToolsConfig.defaults(), "default");     // 🆕 Story #019
     }
 
     @Test

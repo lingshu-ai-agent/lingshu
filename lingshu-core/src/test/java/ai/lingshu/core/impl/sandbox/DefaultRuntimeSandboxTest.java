@@ -189,6 +189,6 @@ class DefaultRuntimeSandboxTest {
             null,                                              // tenants
             AgentConfig.A2a.defaults(),                        // a2a
             AgentConfig.CompactorConfig.defaults(),            // compactorConfig
-            AgentConfig.ToolsConfig.defaults());               // tools
+            AgentConfig.ToolsConfig.defaults(), "default");               // tools
     }
 }

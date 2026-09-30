@@ -157,7 +157,8 @@ public final class SubAgentInheritance {
             /* tenants         */ optRef(child.getTenants(), parent.getTenants()),
             /* a2a             */ optRef(child.getA2a(), parent.getA2a()),
             /* compactorConfig */ optRef(child.getCompactorConfig(), parent.getCompactorConfig()),
-            /* tools           */ optRef(child.getTools(), parent.getTools())
+            /* tools           */ optRef(child.getTools(), parent.getTools()),
+            /* permissionPolicy */ optString(child.getPermissionPolicy(), parent.getPermissionPolicy())
         );
     }
 

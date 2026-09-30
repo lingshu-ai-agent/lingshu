@@ -260,7 +260,8 @@ public final class DelegateTool implements Tool {
             /* tenants         */ null,
             /* a2a             */ null,
             /* compactorConfig */ null,
-            /* tools           */ null
+            /* tools           */ null,
+            /* permissionPolicy */ null
         );
     }
 

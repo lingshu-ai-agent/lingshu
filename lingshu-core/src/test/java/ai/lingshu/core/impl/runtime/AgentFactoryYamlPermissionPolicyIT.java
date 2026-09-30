@@ -1,0 +1,131 @@
+package ai.lingshu.core.impl.runtime;
+
+import ai.lingshu.core.impl.router.Routers;
+import ai.lingshu.core.runtime.AgentConfig;
+import ai.lingshu.core.runtime.FlowEngine;
+import ai.lingshu.core.slot.LlmProvider;
+import ai.lingshu.core.slot.MemorySource;
+import ai.lingshu.core.slot.PermissionPolicy;
+import ai.lingshu.core.slot.PromptBuilder;
+import ai.lingshu.core.slot.RuntimeSandbox;
+import ai.lingshu.core.slot.ToolExecutor;
+import ai.lingshu.core.spi.Providers;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Collections;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Story #029 — L2 slice test for {@link AgentFactory#loadYamlAndValidate}
+ * parsing the new {@code agent.permission-policy} top-level key and the
+ * {@code agent.tools.allow-list} / {@code agent.tools.deny-list} sub-keys.
+ *
+ * <p>Locks the YAML → {@link AgentConfig} contract so demo-product and
+ * demo-empty's {@code application.yml} continue to bind correctly.
+ */
+class AgentFactoryYamlPermissionPolicyIT {
+
+    private static Path writeTemp(String content) throws IOException {
+        Path tmp = Files.createTempFile("agent-yml-perm-", ".yml");
+        Files.write(tmp, content.getBytes("UTF-8"));
+        tmp.toFile().deleteOnExit();
+        return tmp;
+    }
+
+    /** Minimal AgentFactory with 7 stub routers; loadYamlAndValidate only uses toAgentConfig + validate. */
+    private static AgentFactory stubFactory() {
+        Providers.LlmProviderProvider llm = new Providers.LlmProviderProvider() {
+            @Override public String name() { return "anthropic"; }
+            @Override public int priority() { return 10; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public LlmProvider create(AgentConfig cfg) { return null; }
+        };
+        Providers.ToolExecutorProvider tool = new Providers.ToolExecutorProvider() {
+            @Override public String name() { return "default"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public ToolExecutor create(AgentConfig cfg) { return null; }
+        };
+        Providers.PermissionPolicyProvider policy = new Providers.PermissionPolicyProvider() {
+            @Override public String name() { return "default"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public PermissionPolicy create(AgentConfig cfg) { return null; }
+        };
+        Providers.PromptBuilderProvider prompt = new Providers.PromptBuilderProvider() {
+            @Override public String name() { return "default"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public PromptBuilder create(AgentConfig cfg) { return null; }
+        };
+        Providers.FlowEngineProvider flow = new Providers.FlowEngineProvider() {
+            @Override public String name() { return "linear"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public FlowEngine create(AgentConfig cfg) { return null; }
+        };
+        Providers.MemorySourceProvider memory = new Providers.MemorySourceProvider() {
+            @Override public String name() { return "project-claude-md"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public MemorySource create(AgentConfig cfg) { return null; }
+        };
+        Providers.RuntimeSandboxProvider sandbox = new Providers.RuntimeSandboxProvider() {
+            @Override public String name() { return "chroot"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public RuntimeSandbox create(AgentConfig cfg) { return null; }
+        };
+        return new AgentFactory(
+            new Routers.LlmProviderRouter(Collections.singletonList(llm)),
+            new Routers.ToolExecutorRouter(Collections.singletonList(tool)),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policy)),
+            new Routers.PromptBuilderRouter(Collections.singletonList(prompt)),
+            new Routers.FlowEngineRouter(Collections.singletonList(flow)),
+            new Routers.MemorySourceRouter(Collections.singletonList(memory)),
+            new Routers.RuntimeSandboxRouter(Collections.singletonList(sandbox)));
+    }
+
+    @Test
+    @DisplayName("AC-029-14: yml_permissionPolicyStrict_bindsTopLevel")
+    void yml_permissionPolicyStrict_bindsTopLevel() throws IOException {
+        Path yml = writeTemp(
+            "agent:\n" +
+            "  permission-policy: strict\n");
+        AgentConfig cfg = stubFactory().loadYamlAndValidate(yml);
+        assertThat(cfg.getPermissionPolicy()).isEqualTo("strict");
+    }
+
+    @Test
+    @DisplayName("AC-029-15: yml_permissionPolicyDefault_backCompat")
+    void yml_permissionPolicyDefault_backCompat() throws IOException {
+        Path yml = writeTemp(
+            "agent:\n" +
+            "  llm:\n" +
+            "    provider: anthropic\n" +
+            "    model: claude-3-5-sonnet-latest\n");
+        AgentConfig cfg = stubFactory().loadYamlAndValidate(yml);
+        // Absent → defaults to "default"
+        assertThat(cfg.getPermissionPolicy()).isEqualTo("default");
+    }
+
+    @Test
+    @DisplayName("AC-029-16: yml_toolsAllowList_bindsIntoToolsConfig")
+    void yml_toolsAllowList_bindsIntoToolsConfig() throws IOException {
+        Path yml = writeTemp(
+            "agent:\n" +
+            "  tools:\n" +
+            "    enabled: true\n" +
+            "    allow-list:\n" +
+            "      - read_file\n" +
+            "      - write_file\n");
+        AgentConfig cfg = stubFactory().loadYamlAndValidate(yml);
+        assertThat(cfg.getTools().getAllowList()).containsExactly("read_file", "write_file");
+        assertThat(cfg.getTools().getDenyList()).isEmpty();
+    }
+}
