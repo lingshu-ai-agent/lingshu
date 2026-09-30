@@ -143,6 +143,76 @@ class AnthropicLlmProviderTest {
         return root.toString();
     }
 
+    /**
+     * Build a canned Anthropic <b>SSE</b> event stream (Story #027b wire
+     * format) equivalent to a single tool_use response. Emits the 6-event
+     * sequence: message_start → content_block_start → content_block_delta →
+     * content_block_stop → message_delta → message_stop, separated by blank
+     * lines per the SSE spec.
+     */
+    private static String buildMockToolUseSseResponse(String id, String name, String path) {
+        StringBuilder sse = new StringBuilder();
+
+        // 1. message_start — emit input+output usage.
+        ObjectNode startData = MAPPER.createObjectNode();
+        startData.put("type", "message_start");
+        ObjectNode startMsg = startData.putObject("message");
+        startMsg.put("id", "msg_test");
+        startMsg.put("type", "message");
+        startMsg.put("role", "assistant");
+        ObjectNode startUsage = startMsg.putObject("usage");
+        startUsage.put("input_tokens", 42);
+        startUsage.put("output_tokens", 0);
+        sse.append("event: message_start\n");
+        sse.append("data: ").append(startData.toString()).append("\n\n");
+
+        // 2. content_block_start — open tool_use block.
+        ObjectNode startBlock = MAPPER.createObjectNode();
+        startBlock.put("type", "content_block_start");
+        startBlock.put("index", 0);
+        ObjectNode cb = startBlock.putObject("content_block");
+        cb.put("type", "tool_use");
+        cb.put("id", id);
+        cb.put("name", name);
+        sse.append("event: content_block_start\n");
+        sse.append("data: ").append(startBlock.toString()).append("\n\n");
+
+        // 3. content_block_delta — partial_json for the input object.
+        ObjectNode deltaBlock = MAPPER.createObjectNode();
+        deltaBlock.put("type", "content_block_delta");
+        deltaBlock.put("index", 0);
+        ObjectNode delta = deltaBlock.putObject("delta");
+        delta.put("type", "input_json_delta");
+        delta.put("partial_json", "{\"path\":\"" + path + "\"}");
+        sse.append("event: content_block_delta\n");
+        sse.append("data: ").append(deltaBlock.toString()).append("\n\n");
+
+        // 4. content_block_stop — close the tool_use block.
+        ObjectNode stopBlock = MAPPER.createObjectNode();
+        stopBlock.put("type", "content_block_stop");
+        stopBlock.put("index", 0);
+        sse.append("event: content_block_stop\n");
+        sse.append("data: ").append(stopBlock.toString()).append("\n\n");
+
+        // 5. message_delta — final stop_reason + output_tokens update.
+        ObjectNode msgDelta = MAPPER.createObjectNode();
+        msgDelta.put("type", "message_delta");
+        ObjectNode stopReasonDelta = msgDelta.putObject("delta");
+        stopReasonDelta.put("stop_reason", "tool_use");
+        ObjectNode finalUsage = msgDelta.putObject("usage");
+        finalUsage.put("output_tokens", 7);
+        sse.append("event: message_delta\n");
+        sse.append("data: ").append(msgDelta.toString()).append("\n\n");
+
+        // 6. message_stop — terminator.
+        ObjectNode msgStop = MAPPER.createObjectNode();
+        msgStop.put("type", "message_stop");
+        sse.append("event: message_stop\n");
+        sse.append("data: ").append(msgStop.toString()).append("\n\n");
+
+        return sse.toString();
+    }
+
     private AgentConfig defaultConfig() {
         return new AgentConfig(
             "linear",
@@ -353,9 +423,15 @@ class AnthropicLlmProviderTest {
     @Test
     @DisplayName("AC-NN-7: endToEnd_mockHttpServer_requestBodyAndResponseParsing")
     void endToEnd_mockHttpServer_requestBodyAndResponseParsing() throws Exception {
-        // Mock server captures the request body and returns a canned tool_use response.
+        // Mock server captures the request body and returns a canned tool_use
+        // response. Story #027b now uses SSE — emit the 6-event sequence
+        // (message_start → content_block_start → content_block_delta →
+        // content_block_stop → message_delta → message_stop) so the parser
+        // assembles a complete LlmResponse.
         final String[] capturedBody = new String[1];
+        final String[] capturedAccept = new String[1];
         server.createContext("/v1/messages", exchange -> {
+            capturedAccept[0] = exchange.getRequestHeaders().getFirst("Accept");
             java.io.BufferedReader br = new java.io.BufferedReader(
                 new java.io.InputStreamReader(
                     exchange.getRequestBody(), java.nio.charset.StandardCharsets.UTF_8));
@@ -367,11 +443,11 @@ class AnthropicLlmProviderTest {
                 br.close();
             }
             capturedBody[0] = sb.toString();
-            byte[] resp = buildMockToolUseResponse(
+            byte[] resp = buildMockToolUseSseResponse(
                 "tu_99", "read_file", "/tmp/y")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, resp.length);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);  // chunked transfer encoding
             exchange.getResponseBody().write(resp);
             exchange.close();
         });
@@ -382,6 +458,9 @@ class AnthropicLlmProviderTest {
 
         CompletableFuture<LlmResponse> future = provider.stream(prompt, ctx, null);
         LlmResponse r = future.get(5, TimeUnit.SECONDS);
+
+        // Captured request must include Accept: text/event-stream header
+        assertThat(capturedAccept[0]).isEqualTo("text/event-stream");
 
         // Captured request body should have top-level tools:[] and messages[0].content block shape
         JsonNode sentRoot = MAPPER.readTree(capturedBody[0]);

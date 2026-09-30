@@ -97,14 +97,16 @@ public class AnthropicLlmProvider implements LlmProvider {
         String url = baseUrl + "/v1/messages";
         final String requestBody = buildRequestBody(ourPrompt);
 
-        LOG.info("AnthropicLlmProvider calling {} model={}", url, model);
+        LOG.info("AnthropicLlmProvider calling {} model={} (stream=true)", url, model);
 
         return CompletableFuture.supplyAsync(() -> {
             long t0 = System.currentTimeMillis();
-            String body = doPost(url, requestBody);
+            LlmResponse resp = doPostStream(url, requestBody, sink);
             long elapsed = System.currentTimeMillis() - t0;
-            LOG.info("AnthropicLlmProvider.call returned in {}ms ({} bytes)", elapsed, body.length());
-            return parseResponse(body, sink);
+            LOG.info("AnthropicLlmProvider.stream completed in {}ms (textLen={}, toolCalls={})",
+                elapsed, resp.getText() == null ? 0 : resp.getText().length(),
+                resp.getToolCalls() == null ? 0 : resp.getToolCalls().size());
+            return resp;
         }, ioExecutor);
     }
 
@@ -163,6 +165,126 @@ public class AnthropicLlmProvider implements LlmProvider {
             sb.append(line).append('\n');
         }
         return sb.toString();
+    }
+
+    // ── 🆕 Story #027b — true SSE streaming transport ───────────────────
+
+    /**
+     * 🆕 Story #027b — POST to Anthropic's <code>/v1/messages</code> with
+     * <code>Accept: text/event-stream</code> and consume the response as a
+     * line-delimited SSE stream, feeding each parsed event into
+     * {@link AnthropicStreamParser} which in turn pushes
+     * {@link AgentEvent.TextDelta} / {@link AgentEvent.ToolStarted} / etc.
+     * down to {@code sink}.
+     *
+     * <p>Compared with the legacy {@link #doPost} +
+     * {@link #parseResponse(String, Subscriber)} (Story #001 — kept as the
+     * fallback path for the {@code anthropicStreamEnabled=false} config
+     * branch and as a test helper for unit tests that don't need real-time
+     * emission), this method:
+     * <ul>
+     *   <li>Reads one event at a time (no full body buffering), so the
+     *       caller observes the LLM's first text byte as soon as Anthropic
+     *       sends it (LLM NFR §14.15.1 first-token P50 ≤ 1.5 s).</li>
+     *   <li>Forwards {@link AgentEvent.TextDelta} per delta — UI subscribers
+     *       get a live stream rather than a single dump at completion.</li>
+     *   <li>Buffers {@code input_json_delta.partial_json} fragments per
+     *       tool-use block and only emits a complete {@link ToolCall} when
+     *       {@code content_block_stop} arrives for that block — matching
+     *       the Anthropic protocol requirement that {@code tool_use.input}
+     *       must be a fully assembled JSON value.</li>
+     * </ul>
+     *
+     * <p><b>Failure handling</b> — HTTP non-2xx reads the error stream
+     * verbatim (the legacy path's behavior), wraps the message in a
+     * {@link RuntimeException} so the caller sees a clear protocol-level
+     * failure rather than a parser exception deep inside the SSE loop.
+     * {@link LingsLlmProviderException} thrown by the parser (defensive
+     * {@link LlmErrorCodes#LINGS_L01} check on tool_use missing
+     * id / name) propagates unwrapped so callers can branch on
+     * {@code getCode()} per the Story #027a convention.
+     */
+    private LlmResponse doPostStream(String url, String body, Subscriber<? super AgentEvent> sink) {
+        HttpURLConnection conn = null;
+        AnthropicStreamParser parser = new AnthropicStreamParser();
+        try {
+            URL u = new URL(url);
+            conn = (HttpURLConnection) u.openConnection();
+            if (conn instanceof HttpsURLConnection) {
+                // default SSL config is fine; keep the cast explicit for future tweaks.
+            }
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json");
+            // 🆕 Story #027b — request SSE response shape. Without this header
+            // Anthropic returns its full JSON body on the connection and
+            // there is no event stream to read incrementally.
+            conn.setRequestProperty("Accept", "text/event-stream");
+            conn.setRequestProperty("x-api-key", apiKey);
+            conn.setRequestProperty("anthropic-version", anthropicVersion);
+
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+            OutputStream os = conn.getOutputStream();
+            try {
+                os.write(payload);
+                os.flush();
+            } finally {
+                os.close();
+            }
+
+            int status = conn.getResponseCode();
+            if (status / 100 != 2) {
+                InputStream es = conn.getErrorStream();
+                String errBody = es != null ? readAll(es) : "";
+                throw new RuntimeException("Anthropic HTTP " + status + ": " + errBody);
+            }
+
+            // Read the SSE stream line-by-line. Anthropic closes the
+            // connection after sending the final `message_stop` event;
+            // readLine() returns null at EOF, ending the loop.
+            InputStream is = conn.getInputStream();
+            BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+            StringBuilder rawSseBlock = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.isEmpty()) {
+                    // Blank line = end of one SSE event block. Parse and
+                    // dispatch if the buffer is non-empty (skip heartbeats
+                    // / pure whitespace lines).
+                    if (rawSseBlock.length() > 0) {
+                        AnthropicStreamEvent event = AnthropicStreamEvent.parse(rawSseBlock.toString());
+                        parser.feed(event, sink);
+                        rawSseBlock.setLength(0);
+                    }
+                } else {
+                    if (rawSseBlock.length() > 0) {
+                        rawSseBlock.append('\n');
+                    }
+                    rawSseBlock.append(line);
+                }
+            }
+            // Flush any trailing event block that wasn't terminated by a
+            // blank line before the connection closed.
+            if (rawSseBlock.length() > 0) {
+                AnthropicStreamEvent event = AnthropicStreamEvent.parse(rawSseBlock.toString());
+                parser.feed(event, sink);
+            }
+
+            // parser.finish() throws IllegalStateException if message_stop was
+            // never seen (e.g. truncated stream) — that propagates as a
+            // RuntimeException, matching the legacy doPost path's failure
+            // semantics.
+            return parser.finish();
+        } catch (RuntimeException re) {
+            throw re;
+        } catch (Exception e) {
+            throw new RuntimeException("Anthropic SSE stream failed: " + e.getMessage(), e);
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     // ── Wire format: our Prompt → Anthropic /v1/messages JSON ───────────
