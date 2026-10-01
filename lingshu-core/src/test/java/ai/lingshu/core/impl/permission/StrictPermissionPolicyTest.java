@@ -88,7 +88,9 @@ class StrictPermissionPolicyTest {
         String reason = ((Decision.Deny) d).getReason();
         assertThat(reason).startsWith("[" + PermissionErrorCodes.LINGS_P01 + "]");
         assertThat(reason).contains("dangerous_tool");
-        assertThat(reason).contains("in deny-list");
+        // 🆕 Story #031 — reason upgraded from "in deny-list" to "matches deny pattern"
+        // (pattern form, even when the pattern is the exact tool name).
+        assertThat(reason).contains("matches deny pattern");
     }
 
     @Test
