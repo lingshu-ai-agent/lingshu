@@ -1,6 +1,9 @@
 package ai.lingshu.a2a.client;
 
+import ai.lingshu.core.runtime.AgentConfig;
+import ai.lingshu.core.runtime.AgentRef;
 import ai.lingshu.core.spi.Providers;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -8,7 +11,11 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,11 +70,14 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
             }
         }
         assertThat(foundProviderBean).isTrue();
-        // 🆕 Story #009e: only 1 @Bean (the provider) — remoteAgentTool + remoteAgentSchemaBuilder
-        // have moved to RemoteAgentToolAutoConfiguration.
+        // 🆕 Story #009e: 1 provider @Bean (remoteAgentTool + remoteAgentSchemaBuilder
+        // have moved to RemoteAgentToolAutoConfiguration).
+        // 🆕 Story #034: 2nd @Bean is HttpJsonRpcA2aTransportFactory for sandbox
+        // domain-whitelist aggregation.
         assertThat(totalBeanMethods)
-            .as("HttpJsonRpcA2aTransportAutoConfiguration now exposes exactly 1 @Bean (provider)")
-            .isEqualTo(1);
+            .as("HttpJsonRpcA2aTransportAutoConfiguration exposes 2 @Beans "
+                + "(provider + HttpJsonRpcA2aTransportFactory) post-#034")
+            .isEqualTo(2);
     }
 
     @Test
@@ -126,5 +136,78 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
             }
         }
         return null;
+    }
+
+    // ─── Story #034 — factory dispatch + union whitelist ──────────────────
+
+    @Test
+    @DisplayName("TC-AC-HTTP-4: factory_build_unionsDomainWhitelistAcrossAllAgentRefs")
+    void factory_build_unionsDomainWhitelistAcrossAllAgentRefs() {
+        // 🆕 Story #034 — verify HttpJsonRpcA2aTransportFactory.build() unions
+        // domainWhitelist across N configured AgentRefs (deduped).
+        AgentRef refA = new AgentRef("alice", "http://alice:8080", 10,
+            Arrays.asList("a.com", "b.com"));
+        AgentRef refB = new AgentRef("bob", "http://bob:8080", 5,
+            Arrays.asList("b.com", "c.com"));  // "b.com" duplicates refA
+        AgentRef refC = new AgentRef("carol", null, 1,
+            null);  // null whitelist — must not NPE, just no-op
+
+        AgentConfig cfg = buildCfgWithRemoteAgents(Arrays.asList(refA, refB, refC));
+        AgentCardCache cache = new AgentCardCache(Duration.ofMinutes(5));
+
+        HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory factory =
+            new HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory(
+                cfg, new ObjectMapper(), cache);
+
+        // previewWhitelistUnion is the test-only accessor; build() is exercised
+        // implicitly by union computation here.
+        List<String> union = factory.previewWhitelistUnion();
+
+        // Deduped across A+B; C contributes nothing; order undefined (HashSet-backed).
+        assertThat(union)
+            .as("factory must dedupe whitelists across AgentRefs and skip null/empty ones")
+            .containsExactlyInAnyOrder("a.com", "b.com", "c.com")
+            .hasSize(3);
+
+        // build() returns a transport whose whitelist matches the union.
+        HttpJsonRpcA2aTransport transport = factory.build();
+        assertThat(transport.getDomainWhitelist())
+            .as("factory.build() must wire the unioned whitelist into the transport")
+            .containsExactlyInAnyOrder("a.com", "b.com", "c.com")
+            .hasSize(3);
+    }
+
+    /**
+     * Minimal {@link AgentConfig} carrying three A2A customisations. Mirrors
+     * {@code RemoteAgentToolAutoConfigurationTest#buildDefaultAgentConfig} shape.
+     */
+    private static AgentConfig buildCfgWithRemoteAgents(List<AgentRef> remoteAgents) {
+        AgentConfig.A2a a2a = new AgentConfig.A2a(
+            "0.0.0.0", 8080,
+            "localhost:50051", Duration.ofMinutes(5),
+            "http://localhost:8080", Duration.ofSeconds(30),
+            remoteAgents, 10
+        );
+        return new AgentConfig(
+            "linear",
+            new AgentConfig.Llm("anthropic", "test-model", null, null),
+            new AgentConfig.Prompt("default", Collections.<String>emptyList(), null),
+            "default",
+            new AgentConfig.Sandbox("default", "noop",
+                java.nio.file.Paths.get("."), Collections.<String>emptyList(),
+                Collections.<String>emptyList()),
+            "default", "default",
+            null, null, null,
+            1, 5, 0, 0, 0, 10,
+            AgentConfig.Identity.defaults(),
+            AgentConfig.Instructions.empty(),
+            AgentConfig.Memory.defaults(),
+            null,
+            null,
+            a2a,
+            AgentConfig.CompactorConfig.defaults(),
+            AgentConfig.ToolsConfig.defaults(),
+            "default"
+        );
     }
 }

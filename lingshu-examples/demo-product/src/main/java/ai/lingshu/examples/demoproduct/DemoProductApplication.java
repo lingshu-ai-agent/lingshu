@@ -173,7 +173,13 @@ public class DemoProductApplication {
             }
             String url = env.getProperty(prefix + ".url");
             int priority = env.getProperty(prefix + ".priority", Integer.class, 0);
-            out.add(new AgentRef(name, url, priority));
+            // 🆕 Story #034 — per-remote-agent sandbox domain whitelist (strict mode).
+            // Read as indexed nested list via readSandboxList (mirrors how
+            // agent.sandbox.domain-whitelist is parsed). Absent → null → AgentRef
+            // getDomainWhitelistOrEmpty() maps to empty list → deny all outgoing
+            // HTTP (mirrors McpServerConfig.domainWhitelist default from #033).
+            List<String> domainWhitelist = readSandboxList(env, prefix + ".domain-whitelist", null);
+            out.add(new AgentRef(name, url, priority, domainWhitelist));
         }
         if (!out.isEmpty()) {
             LOG.info("agentConfig: remote A2A agents bound from YAML — {} agent(s): {}",

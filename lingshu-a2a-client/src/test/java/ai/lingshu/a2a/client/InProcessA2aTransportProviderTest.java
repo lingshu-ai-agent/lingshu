@@ -85,7 +85,8 @@ class InProcessA2aTransportProviderTest {
             null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
+            AgentConfig.ToolsConfig.defaults(),
+            "default"
         );
     }
 }

@@ -41,11 +41,23 @@ public class RemoteAgentToolAutoConfiguration {
     public RemoteAgentTool remoteAgentTool(A2aTransportRouter router,
                                            AgentConfig cfg,
                                            ObjectMapper json,
-                                           RemoteAgentSchemaBuilder schemaBuilder) {
+                                           RemoteAgentSchemaBuilder schemaBuilder,
+                                           // 🆕 Story #034 — factory is required so we can wire
+                                           // sandbox domain-whitelist for the http-jsonrpc
+                                           // transport (which makes real HTTP calls); for grpc
+                                           // and in-process transports we still use
+                                           // router.resolve(...) since they don't touch the network.
+                                           HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory httpJsonRpcFactory) {
         String transportName = cfg != null && cfg.getA2aTransport() != null
             ? cfg.getA2aTransport()
             : "http-jsonrpc-1.0.0";
-        A2aTransport transport = router.resolve(transportName, cfg);
+        A2aTransport transport;
+        if ("http-jsonrpc-1.0.0".equals(transportName)) {
+            // 🆕 Story #034 — use factory to honor per-remote-agent domainWhitelist
+            transport = httpJsonRpcFactory.build();
+        } else {
+            transport = router.resolve(transportName, cfg);
+        }
 
         List<AgentRef> remoteAgents = (cfg != null && cfg.getA2a() != null
             && cfg.getA2a().getRemoteAgents() != null)
