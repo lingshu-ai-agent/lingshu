@@ -107,7 +107,9 @@ agent:
   #   working-directory   → fs ops must resolve under this Path
   #   command-whitelist   → only enforced when built-in bash=true (here: false,
   #                           BashSafeTool enforces its own whitelist instead)
-  #   domain-whitelist    → only enforced by WebFetch (not in this demo)
+  #   domain-whitelist    → 🆕 Story #032 — enforced by WebFetchTool via
+  #                           ctx.http().get(url) → WhitelistedHttpClient.check().
+  #                           Built-in web_fetch Tool is GET-only; HTTPS transparent.
   #
   # Consumed by the `agentConfig(Environment)` @Bean (Story #025 follow-up).
   # ChatController builds per-session configs from defaults directly —
@@ -128,9 +130,24 @@ agent:
       - whoami
       - pwd
       - which
+    # 🆕 Story #032 — domain-whitelist now enforced for local web_fetch Tool
+    # (Claude Code parity, Read/Bash/WebFetch triplet complete); HTTPS supported
+    # transparently. The local Tool path goes through WhitelistedHttpClient,
+    # which checks the host against this list before opening any connection;
+    # domain miss → [LINGS-S01] AccessDeniedException → ToolResult.error.
+    #
+    # MCP HTTP transports stay untouched per Story #033 Path B (check-only hook).
+    #
+    # `localhost` is included so the Story #032 L3 blackbox IT can hit a mock
+    # HTTP server started in-test (DemoProductWebFetchIT). Remove for prod.
     domain-whitelist:
       - github.com
       - maven.aliyun.com
+      - api.openai.com
+      - api.anthropic.com
+      - raw.githubusercontent.com
+      - huggingface.co
+      - localhost
 
   # ── MCP (Story #021a/b/c) — all 3 transports wired ────────────────────
   # Each server gets its own `name` + `transport` + matching fields. The
