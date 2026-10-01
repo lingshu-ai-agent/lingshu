@@ -193,7 +193,8 @@ class RemoteAgentTransportWiringIT {
                 null,
                 ai.lingshu.core.runtime.AgentConfig.A2a.defaults(),
                 ai.lingshu.core.runtime.AgentConfig.CompactorConfig.defaults(),
-                ai.lingshu.core.runtime.AgentConfig.ToolsConfig.defaults()));
+                ai.lingshu.core.runtime.AgentConfig.ToolsConfig.defaults(),
+                "default"));
         c.register(RemoteAgentToolAutoConfiguration.class);
         c.refresh();
         return c;

@@ -80,7 +80,8 @@ class HttpJsonRpcA2aTransportProviderTest {
             null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
+            AgentConfig.ToolsConfig.defaults(),
+            "default"
         );
     }
 
@@ -96,7 +97,8 @@ class HttpJsonRpcA2aTransportProviderTest {
             c.getA2aTransport(), c.getTenants(),
             a2a,
             c.getCompactorConfig(),
-            c.getTools()
+            c.getTools(),
+            c.getPermissionPolicy()
         );
     }
 }

@@ -1,6 +1,7 @@
 package ai.lingshu.a2a.client;
 
 import ai.lingshu.core.message.ToolResult;
+import ai.lingshu.core.mcp.McpHttpSupport;
 import ai.lingshu.core.slot.A2aTransport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,8 +14,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -65,16 +68,24 @@ public class HttpJsonRpcA2aTransport implements A2aTransport {
     private final AgentCardCache cardCache;
     private final Duration callTimeout;
     private final HttpClient http;
+    /** 🆕 Story #034 — sandbox domain whitelist (defensive copy); empty list = deny ALL outgoing HTTP. */
+    private final List<String> domainWhitelist;
 
     /**
-     * @param httpBaseUrl HTTP base URL (no trailing slash); e.g. {@code "http://localhost:8080"}.
-     * @param json        Jackson ObjectMapper (must not be null).
-     * @param cardCache   TTL cache for fetched cards (Contract A3, #009a; must not be null).
-     * @param callTimeout HTTP call timeout (must not be null).
+     * 🆕 Story #034 — 5-arg ctor with sandbox domain whitelist.
+     *
+     * @param httpBaseUrl     HTTP base URL (no trailing slash); e.g. {@code "http://localhost:8080"}.
+     * @param json            Jackson ObjectMapper (must not be null).
+     * @param cardCache       TTL cache for fetched cards (Contract A3, #009a; must not be null).
+     * @param callTimeout     HTTP call timeout (must not be null).
+     * @param domainWhitelist sandbox domain whitelist (must not be null; empty = deny all
+     *                        outgoing HTTP, mirrors {@code McpServerConfig.domainWhitelist}
+     *                        strict-mode default from Story #033).
      * @throws IllegalArgumentException if any arg is null, or if httpBaseUrl is empty.
      */
     public HttpJsonRpcA2aTransport(String httpBaseUrl, ObjectMapper json,
-                                   AgentCardCache cardCache, Duration callTimeout) {
+                                   AgentCardCache cardCache, Duration callTimeout,
+                                   List<String> domainWhitelist) {
         if (httpBaseUrl == null || httpBaseUrl.isEmpty()) {
             throw new IllegalArgumentException("httpBaseUrl must not be null/empty");
         }
@@ -87,6 +98,9 @@ public class HttpJsonRpcA2aTransport implements A2aTransport {
         if (callTimeout == null) {
             throw new IllegalArgumentException("callTimeout must not be null");
         }
+        if (domainWhitelist == null) {
+            throw new IllegalArgumentException("domainWhitelist must not be null");
+        }
         // strip trailing slash to avoid "<base>//.well-known/..." double slash
         this.httpBaseUrl = httpBaseUrl.endsWith("/")
             ? httpBaseUrl.substring(0, httpBaseUrl.length() - 1)
@@ -97,6 +111,23 @@ public class HttpJsonRpcA2aTransport implements A2aTransport {
         this.http = HttpClient.newBuilder()
             .connectTimeout(callTimeout)
             .build();
+        // 🆕 Story #034 — defensive copy so callers cannot mutate our whitelist post-construction
+        this.domainWhitelist = new ArrayList<>(domainWhitelist);
+    }
+
+    /**
+     * Backward-compat 4-arg ctor (Story #009c signature) — defaults to {@code domainWhitelist=[]} (deny all HTTP).
+     *
+     * <p>Existing call sites in tests / RemoteAgentToolAutoConfiguration keep working without
+     * changes, but the resulting transport will throw {@code AccessDeniedException[LINGS-S01]}
+     * on the very first HTTP attempt — by design (strict mode). New code should prefer the
+     * 5-arg ctor and explicitly populate {@code domainWhitelist}.</p>
+     *
+     * @throws IllegalArgumentException if any arg is null, or if httpBaseUrl is empty.
+     */
+    public HttpJsonRpcA2aTransport(String httpBaseUrl, ObjectMapper json,
+                                   AgentCardCache cardCache, Duration callTimeout) {
+        this(httpBaseUrl, json, cardCache, callTimeout, Collections.<String>emptyList());
     }
 
     // ─── fetchCard ───────────────────────────────────────────────────────
@@ -114,6 +145,9 @@ public class HttpJsonRpcA2aTransport implements A2aTransport {
         }
         // 2) HTTP GET /.well-known/agent.json
         URI uri = URI.create(httpBaseUrl + AGENT_CARD_PATH);
+        // 🆕 Story #034 — sandbox domain guard (mirrors MCP #033 hook point).
+        // Throws AccessDeniedException[LINGS-S01] without issuing the request.
+        McpHttpSupport.checkOrThrow(uri.toString(), this.domainWhitelist);
         HttpRequest req = HttpRequest.newBuilder(uri)
             .timeout(callTimeout)
             .GET()
@@ -283,6 +317,9 @@ public class HttpJsonRpcA2aTransport implements A2aTransport {
         body.put("method", method);
         body.set("params", params);
         URI uri = URI.create(httpBaseUrl + RPC_PATH);
+        // 🆕 Story #034 — sandbox domain guard (mirrors MCP #033 hook point).
+        // Throws AccessDeniedException[LINGS-S01] without issuing the request.
+        McpHttpSupport.checkOrThrow(uri.toString(), this.domainWhitelist);
         try {
             HttpRequest req = HttpRequest.newBuilder(uri)
                 .timeout(callTimeout)
@@ -331,6 +368,8 @@ public class HttpJsonRpcA2aTransport implements A2aTransport {
     ObjectMapper getJson() { return json; }
     AgentCardCache getCardCache() { return cardCache; }
     Duration getCallTimeout() { return callTimeout; }
+    /** 🆕 Story #034 — defensive-copy snapshot of domainWhitelist (tests + factory wiring). */
+    List<String> getDomainWhitelist() { return new ArrayList<>(domainWhitelist); }
 
     // ─── nested exception type (LINGS-S08 A2A_HTTP_RPC_FAILED) ────────────
 
