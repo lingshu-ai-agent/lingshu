@@ -290,6 +290,16 @@ public final class DelegateTool implements Tool {
         return INPUT_SCHEMA;
     }
 
+    /**
+     * 🆕 Story #031 — Delegate sub-agent tool reports {@code "delegate"} as its source
+     * category so operators can write {@code "delegate:*"} in
+     * {@link AgentConfig.ToolsConfig#getAllowList()} to allow the {@code Task} tool (dsh §6.6 + §4.7).
+     */
+    @Override
+    public String sourceCategory() {
+        return "delegate";
+    }
+
     @Override
     public ToolResult execute(ToolCall call, ToolExecutionContext ctx) {
         JsonNode input = call.getInput();

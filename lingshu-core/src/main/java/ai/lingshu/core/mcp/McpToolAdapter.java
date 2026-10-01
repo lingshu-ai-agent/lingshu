@@ -95,6 +95,16 @@ public class McpToolAdapter implements Tool {
     }
 
     /**
+     * 🆕 Story #031 — MCP-wrapped tools report {@code "mcp"} as their source category so
+     * operators can write {@code "mcp:*"} in {@link AgentConfig.ToolsConfig#getAllowList()}
+     * to allow every tool exposed by every MCP server (dsh §6.5 (2) + §4.7).
+     */
+    @Override
+    public String sourceCategory() {
+        return "mcp";
+    }
+
+    /**
      * 转发 tool call 到 MCP server。**永不抛异常** —— 所有失败路径转
      * {@link ToolResult.Status#ERROR}(§4.10.1 硬规则 2)。
      */

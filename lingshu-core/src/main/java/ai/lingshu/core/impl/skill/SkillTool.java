@@ -74,6 +74,17 @@ public class SkillTool implements Skill {
     @Override public JsonNode inputSchema() { return inputSchema; }
 
     /**
+     * 🆕 Story #031 — Skill-typed tools report {@code "skill"} as their source category so
+     * operators can write {@code "skill:*"} in {@link AgentConfig.ToolsConfig#getAllowList()}
+     * to allow every skill (dsh §6.4 + §4.7). Covers both SKILL.md-derived Skills (this class
+     * via {@link #fromMarkdown}) and {@code @Component implements Skill} subtypes.
+     */
+    @Override
+    public String sourceCategory() {
+        return "skill";
+    }
+
+    /**
      * Run the Skill. Returns {@link ToolResult#success} with {@code content + optional User input}.
      *
      * <p>The dispatcher (CLI or {@code LinearTurnEngine}) is responsible for deciding what
