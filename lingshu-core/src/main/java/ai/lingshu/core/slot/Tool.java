@@ -21,6 +21,32 @@ import com.fasterxml.jackson.databind.JsonNode;
  * <p>The {@link ToolExecutor} never calls {@code tool.execute()} directly; it dispatches through
  * the 5-step pipeline (permission → registry lookup → timeout → sandbox → execute → checkpoint).
  * Direct invocation is reserved for tests only.
+ *
+ * <p><b>🆕 Story #031 — {@link #sourceCategory()} default method</b> (zero-intrusion SPI extension).
+ * Returns the source category of this {@link Tool} so {@link ai.lingshu.core.slot.PermissionPolicy}
+ * implementations can apply category-prefix patterns (e.g. {@code "mcp:*"}, {@code "skill:*"})
+ * when matching {@link AgentConfig.tools#getAllowList() allow-list} / {@link AgentConfig.tools#getDenyList()
+ * deny-list} entries (dsh §5.5 + §4.7 + §15.4 P 段).
+ *
+ * <p><b>Built-in category namespace</b> (5 reserved strings):
+ * <ul>
+ *   <li>{@code "local"}    — hand-written {@code @Component} Tools (Read / Write / Edit / Bash / 4 demo-product
+ *       local Tools / Spring AI {@code @AgentTool} adapter etc.)</li>
+ *   <li>{@code "mcp"}      — {@link ai.lingshu.core.mcp.McpToolAdapter} (Story #021b)</li>
+ *   <li>{@code "skill"}    — {@link Skill} typed tools, including {@link ai.lingshu.core.impl.skill.SkillTool}
+ *       and {@code @Component implements Skill} (Story #020a/b/c)</li>
+ *   <li>{@code "a2a"}      — {@link ai.lingshu.a2a.client.RemoteAgentTool} (Story #009c/d + #009e)</li>
+ *   <li>{@code "delegate"} — {@link ai.lingshu.core.agent.DelegateTool} (Story #023)</li>
+ * </ul>
+ *
+ * <p><b>Plugin author freedom:</b> plugin authors are free to use custom category strings
+ * (e.g. {@code "rag"}, {@code "browser"}, {@code "git"}) — {@code StrictPermissionPolicy}
+ * does not validate the string; the framework only checks String equality. Categories are
+ * matched as exact strings; case-sensitive.
+ *
+ * <p><b>Back-compat:</b> default returns {@code "local"} so existing {@link Tool}
+ * implementations (4 built-in + Spring AI adapters + custom user Tools) continue to work
+ * without modification. New code may override to assign a more specific category.
  */
 public interface Tool {
 
@@ -46,4 +72,19 @@ public interface Tool {
      * progress events and respect cancellation.
      */
     ToolResult execute(ToolCall call, ToolExecutionContext ctx);
+
+    /**
+     * 🆕 Story #031 — Source category of this Tool, for category-prefix pattern matching in
+     * {@link ai.lingshu.core.slot.PermissionPolicy} allow/deny lists. See class-level Javadoc
+     * for the 5 built-in category strings + plugin-author freedom.
+     *
+     * <p>Default returns {@code "local"} for back-compat — existing {@link Tool} implementations
+     * do not need to override. {@link McpToolAdapter} / {@link Skill} (and its subclasses) /
+     * {@link RemoteAgentTool} / {@link DelegateTool} override to return their respective categories.
+     *
+     * @return a non-null, non-empty category string; case-sensitive
+     */
+    default String sourceCategory() {
+        return "local";
+    }
 }
