@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -44,6 +45,7 @@ class StreamableHttpMcpServerConnectionReconnectTest {
                 .heartbeatIntervalMs(30_000L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(60_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         assertThat(conn.computeBackoffMs(0)).isEqualTo(1_000L);
         assertThat(conn.computeBackoffMs(1)).isEqualTo(1_000L);
@@ -67,6 +69,7 @@ class StreamableHttpMcpServerConnectionReconnectTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(2_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(3))
@@ -89,6 +92,7 @@ class StreamableHttpMcpServerConnectionReconnectTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))

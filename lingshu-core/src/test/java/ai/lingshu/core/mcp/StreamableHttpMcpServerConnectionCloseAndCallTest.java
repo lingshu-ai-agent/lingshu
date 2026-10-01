@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -47,6 +48,7 @@ class StreamableHttpMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(30_000L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.close();
         assertThat(conn.state()).isIn(
@@ -65,6 +67,7 @@ class StreamableHttpMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -85,6 +88,7 @@ class StreamableHttpMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(30_000L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         ObjectMapper m = new ObjectMapper();
         ObjectNode args = m.createObjectNode();
@@ -107,6 +111,7 @@ class StreamableHttpMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(10_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -132,6 +137,7 @@ class StreamableHttpMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         // close immediately while the initial POST is still in flight / had failed

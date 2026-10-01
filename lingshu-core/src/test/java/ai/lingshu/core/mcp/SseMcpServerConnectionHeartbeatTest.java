@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -54,6 +55,7 @@ class SseMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -83,6 +85,7 @@ class SseMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(10_000L) // long cap keeps it in RECONNECTING
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -108,6 +111,7 @@ class SseMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(300L)
                 .reconnectCapMs(10_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         // Start has a 50ms grace before CONNECTED; so the 1st heartbeat tick won't
@@ -130,6 +134,7 @@ class SseMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -53,6 +54,7 @@ class SseMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(30_000L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         // Should not throw even before start()
         conn.close();
@@ -72,6 +74,7 @@ class SseMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -92,6 +95,7 @@ class SseMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(30_000L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         ObjectMapper m = new ObjectMapper();
         ObjectNode args = m.createObjectNode();
@@ -114,6 +118,7 @@ class SseMcpServerConnectionCloseAndCallTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(10_000L) // long, keeps it RECONNECTING
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
