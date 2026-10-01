@@ -96,6 +96,20 @@ public class DefaultToolRegistry implements ToolRegistry {
         return Collections.unmodifiableCollection(registry.keySet());
     }
 
+    /**
+     * 🆕 Story #031 — Live snapshot of all registered {@link Tool Tools} (including
+     * {@link Skill Skills}). Used by {@code StrictPermissionPolicyProvider} to build
+     * the {@code name → sourceCategory} map for pattern matching.
+     *
+     * <p>Returns a fresh snapshot each call (mirrors the snapshot semantics of
+     * {@link #names()}); the underlying map is a {@link ConcurrentHashMap} so concurrent
+     * registration between {@code findAll()} and iteration is tolerated as best-effort.
+     */
+    @Override
+    public Collection<Tool> findAll() {
+        return new ArrayList<>(registry.values());
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     //  🆕 Story #020a — Skill-aware extensions
     // ─────────────────────────────────────────────────────────────────────

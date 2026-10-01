@@ -279,6 +279,16 @@ public class RemoteAgentTool implements Tool {
         return root;
     }
 
+    /**
+     * 🆕 Story #031 — Remote-agent-wrapped tools report {@code "a2a"} as their source category so
+     * operators can write {@code "a2a:*"} in {@link AgentConfig.ToolsConfig#getAllowList()}
+     * to allow every skill exposed by every configured remote A2A agent (dsh §5.6.3 + §4.7).
+     */
+    @Override
+    public String sourceCategory() {
+        return "a2a";
+    }
+
     @Override
     public ToolResult execute(ToolCall call, ToolExecutionContext ctx) {
         Objects.requireNonNull(call, "call");

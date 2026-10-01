@@ -68,6 +68,18 @@ agent:
   # 🆕 Story #029 — `allow-list` is the strict PermissionPolicy's allow-list
   # (dsh §5.5 L2168-2189). When `permission-policy: strict`, only tools named
   # here can be invoked; everything else is denied with `[LINGS-P01]`.
+  #
+  # 🆕 Story #031 — pattern matching replaces the Story #029 static 12-line
+  # enumeration. The yml entry below uses `*` (the wildcard pattern) so the
+  # strict policy allows ALL registered Tools regardless of source category
+  # (local / mcp / skill / a2a / delegate). New MCP servers / Skill files /
+  # RemoteAgents / Delegate sub-agents are auto-included without yml edits.
+  # Other supported patterns (PermissionPatterns.matches):
+  #   - "<exact-name>"           → strict-equals tool.name()
+  #   - "<category>:*"           → every tool whose Tool.sourceCategory() matches
+  #   - "*"                      → every tool (used here)
+  # See `lingshu-core/src/main/java/ai/lingshu/core/impl/permission/PermissionPatterns.java`
+  # + dsh §4.7 + §15.4 P 段.
   tools:
     enabled: true
     read: true
@@ -75,11 +87,13 @@ agent:
     edit: false
     bash: false
     max-file-bytes: 65536
+    # 🆕 Story #031 — wildcard pattern (replaces Story #029 12-line static list).
+    # When permission-policy: strict (below), every registered Tool is allowed
+    # by name regardless of category. New MCP servers / Skills / RemoteAgents
+    # added after this yml edit are auto-included.
     allow-list:
-      - read_file
-      - write_file
-      - list_dir
-      - bash_safe
+      - "*"
+    deny-list: []
 
   # ── Sandbox (Slot 3) — boundary for the 4 fs-touching Tools ──────────
   # demo-product enables 4 local @Component Tools (read_file/write_file/
