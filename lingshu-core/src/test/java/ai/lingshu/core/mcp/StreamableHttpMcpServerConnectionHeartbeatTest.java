@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -49,6 +50,7 @@ class StreamableHttpMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -76,6 +78,7 @@ class StreamableHttpMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(10_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -99,6 +102,7 @@ class StreamableHttpMcpServerConnectionHeartbeatTest {
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(300L)
                 .reconnectCapMs(10_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(8))

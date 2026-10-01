@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -56,6 +57,7 @@ class SseMcpServerConnectionListenerTest {
                 .heartbeatIntervalMs(10_000L) // long — keep relay focused on SSE
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -88,6 +90,7 @@ class SseMcpServerConnectionListenerTest {
                 .heartbeatIntervalMs(10_000L)
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -116,6 +119,7 @@ class SseMcpServerConnectionListenerTest {
                 .heartbeatIntervalMs(10_000L) // long — won't dominate
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(5_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         // First reaches CONNECTED …

@@ -2,6 +2,7 @@ package ai.lingshu.core.mcp;
 
 import ai.lingshu.core.impl.mcp.McpErrorCodes;
 import ai.lingshu.core.runtime.McpTransportType;
+import ai.lingshu.core.slot.AccessDeniedException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -72,6 +73,9 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
     private final AtomicBoolean closing = new AtomicBoolean(false);
     private final List<McpToolDescriptor> cachedTools = new ArrayList<>();
 
+    /** Story #033 — domain guard whitelist (immutable copy from cfg, see ctor). */
+    private final List<String> domainWhitelist;
+
     private ScheduledExecutorService hbExecutor;
     private volatile ScheduledFuture<?> hbFuture;
     private volatile ScheduledFuture<?> reconnectFuture;
@@ -100,6 +104,12 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         this.hbIntervalMs = hbIntervalMs < 0 ? cfg.getHeartbeatIntervalMs() : hbIntervalMs;
         this.hbTimeoutMs = hbTimeoutMs < 0 ? cfg.getHeartbeatTimeoutMs() : hbTimeoutMs;
         this.reconnectCapMs = reconnectCapMs < 0 ? cfg.getReconnectCapMs() : reconnectCapMs;
+        // Story #033 — copy whitelist defensively (cfg is immutable but the list
+        // itself could in principle be shared across builders; take an ArrayList
+        // copy so McpHttpSupport.checkOrThrow's contains() is safe).
+        this.domainWhitelist = cfg.getDomainWhitelist() != null
+            ? new ArrayList<>(cfg.getDomainWhitelist())
+            : new ArrayList<>();
     }
 
     // ── Public API ──────────────────────────────────────────────────────
@@ -147,8 +157,13 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         long id = nextRequestId.incrementAndGet();
         ObjectNode envelope = McpHttpSupport.wrapJsonRpc(id, "tools/call", params);
         try {
+            // Story #033 — Path B + Mitigation 1: check-only domain guard before any
+            // outbound HTTP. Same [LINGS-S01] semantics as WebFetchTool (Story #032).
+            McpHttpSupport.checkOrThrow(url, domainWhitelist);
             JsonNode resp = McpHttpSupport.postJsonRpc(url, envelope, hbTimeoutMs);
             return McpHttpSupport.parseCallResult(resp);
+        } catch (AccessDeniedException e) {
+            return McpCallResult.error("[LINGS-S01] " + e.getMessage());
         } catch (McpTransportException e) {
             return McpCallResult.error(
                 "tools/call " + McpErrorCodes.LINGS_M03 + ": " + e.getMessage());
@@ -210,16 +225,20 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         long initId = nextRequestId.incrementAndGet();
         JsonNode initParams = McpHttpSupport.buildInitializeParams();
         ObjectNode initEnv = McpHttpSupport.wrapJsonRpc(initId, "initialize", initParams);
+        // Story #033 — check-only domain guard before each outbound HTTP call.
+        McpHttpSupport.checkOrThrow(base + sep + "initialize", domainWhitelist);
         McpHttpSupport.postJsonRpc(base + sep + "initialize", initEnv, hbTimeoutMs);
 
         long notifId = nextRequestId.incrementAndGet();
         ObjectNode notifEnv = McpHttpSupport.wrapJsonRpc(notifId,
             "notifications/initialized", mapper.createObjectNode());
+        McpHttpSupport.checkOrThrow(base + sep + "notifications/initialized", domainWhitelist);
         McpHttpSupport.postNotification(base + sep + "notifications/initialized", notifEnv, hbTimeoutMs);
 
         long listId = nextRequestId.incrementAndGet();
         ObjectNode listEnv = McpHttpSupport.wrapJsonRpc(listId,
             "tools/list", mapper.createObjectNode());
+        McpHttpSupport.checkOrThrow(base + sep + "tools/list", domainWhitelist);
         JsonNode listResp = McpHttpSupport.postJsonRpc(base + sep + "tools/list", listEnv, hbTimeoutMs);
         List<McpToolDescriptor> tools = McpHttpSupport.parseToolList(listResp);
         synchronized (cachedTools) {
@@ -281,6 +300,11 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         }
         try {
             String healthUrl = cfg.getUrl() + (cfg.getUrl().endsWith("/") ? "" : "/") + "health";
+            // Story #033 — check-only domain guard for health probe (Story #032
+            // parity). AccessDeniedException bubbles up to handleDisconnect via
+            // the outer catch (Throwable t) below — non-whitelisted host = drop
+            // connection (same as LINGS-M03 timeout).
+            McpHttpSupport.checkOrThrow(healthUrl, domainWhitelist);
             String body = McpHttpSupport.getJson(healthUrl, hbTimeoutMs);
             if (body == null) {
                 handleDisconnect("health null");

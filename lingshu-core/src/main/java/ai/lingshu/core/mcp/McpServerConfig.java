@@ -66,4 +66,12 @@ public class McpServerConfig {
     /** Exponential backoff cap (ms); default {@code 60_000}. */
     @Builder.Default
     long reconnectCapMs = 60_000L;
+
+    /**
+     * Story #033 — domain guard whitelist for MCP HTTP requests.
+     * Empty (default) → {@link McpHttpSupport#checkOrThrow} rejects every host.
+     * For STDIO (subprocess transport) this field has no effect.
+     */
+    @Builder.Default
+    List<String> domainWhitelist = new ArrayList<>();
 }

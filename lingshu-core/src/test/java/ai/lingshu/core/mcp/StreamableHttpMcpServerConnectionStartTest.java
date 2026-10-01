@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -52,6 +53,7 @@ class StreamableHttpMcpServerConnectionStartTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -71,6 +73,7 @@ class StreamableHttpMcpServerConnectionStartTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(500L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -89,6 +92,7 @@ class StreamableHttpMcpServerConnectionStartTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(500L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))
@@ -108,6 +112,7 @@ class StreamableHttpMcpServerConnectionStartTest {
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(1_000L)
+                .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
         conn.start();
         await().atMost(Duration.ofSeconds(5))

@@ -1,6 +1,7 @@
 package ai.lingshu.core.mcp;
 
 import ai.lingshu.core.impl.mcp.McpErrorCodes;
+import ai.lingshu.core.slot.AccessDeniedException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -10,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -316,6 +318,53 @@ public final class McpHttpSupport {
             if (conn != null) {
                 conn.disconnect();
             }
+        }
+    }
+
+    // ── Story #033 — Domain guard hook (Path B + Mitigation 1) ──────────
+
+    /**
+     * Check-only domain guard hook for MCP HTTP transports. Extracts the URL
+     * host via {@link URI#getHost()} and verifies it against {@code whitelist}
+     * (case-sensitive exact match — mirrors {@link WhitelistedHttpClient#check}
+     * semantics from Story #028).
+     *
+     * <p><b>Caller contract</b> — invoke immediately before any MCP HTTP request
+     * (raw {@link HttpURLConnection#openConnection()} or via
+     * {@link #postJsonRpc}/{@link #getJson}/{@link #postNotification}). Throws
+     * {@link AccessDeniedException} carrying the {@code [LINGS-S01]} prefix if
+     * the host is not whitelisted — same ErrorCode as
+     * {@link WhitelistedHttpClient} (Story #028) and {@code WebFetchTool}
+     * (Story #032), keeping the sandbox-domain contract in one place.
+     *
+     * <p><b>Why static helper, not full {@link WhitelistedHttpClient}</b> —
+     * MCP HTTP transports own their connection lifecycle (5-step handshake,
+     * exponential-backoff reconnect, SSE long-lived stream). Path A
+     * (Story #032 WebFetchTool) delegates to {@code ctx.http().get(url)} which
+     * routes through {@link WhitelistedHttpClient}. Path B (this Story) keeps
+     * the raw JDK {@link HttpURLConnection} flow unchanged — only adds a
+     * check-only hook before each request, minimising risk to SSE streaming,
+     * MCP handshake, and JSON-RPC framing.
+     *
+     * @param url       full HTTP/HTTPS URL to validate
+     * @param whitelist case-sensitive host list; null/empty → every host denied
+     * @throws AccessDeniedException with {@code [LINGS-S01]} prefix if host missing
+     */
+    public static void checkOrThrow(String url, List<String> whitelist) {
+        if (url == null || url.isEmpty()) {
+            throw new AccessDeniedException("URL must not be null/empty");
+        }
+        String host;
+        try {
+            host = URI.create(url).getHost();
+        } catch (IllegalArgumentException e) {
+            throw new AccessDeniedException("Malformed URL: " + url);
+        }
+        if (host == null || host.isEmpty()) {
+            throw new AccessDeniedException("URL has no host: " + url);
+        }
+        if (whitelist == null || whitelist.isEmpty() || !whitelist.contains(host)) {
+            throw new AccessDeniedException("Domain not whitelisted: " + host);
         }
     }
 
