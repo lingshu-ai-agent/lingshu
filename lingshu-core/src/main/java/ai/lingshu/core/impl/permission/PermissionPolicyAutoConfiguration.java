@@ -1,6 +1,8 @@
 package ai.lingshu.core.impl.permission;
 
+import ai.lingshu.core.slot.ToolRegistry;
 import ai.lingshu.core.spi.Providers.PermissionPolicyProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -26,9 +28,20 @@ import org.springframework.context.annotation.Configuration;
  * lives in {@code spring-boot-autoconfigure}, which the
  * {@code lingshu-core} module does not depend on directly — Spring Boot 3.2.5
  * transitive resolution is enough).
+ *
+ * <p><b>🆕 Story #031 — {@link ToolRegistry} injection</b>: the strict provider
+ * now needs the registry at construction time so {@link StrictPermissionPolicyProvider#create}
+ * can populate the {@code name → sourceCategory} map. Spring's
+ * {@code @Autowired} set-field is used to wire the singleton registry into
+ * the {@code @Bean} method (avoids changing the {@code @Bean} method's
+ * signature).
  */
 @Configuration
 public class PermissionPolicyAutoConfiguration {
+
+    /** 🆕 Story #031 — wired from {@code DefaultToolRegistry} via Spring context. */
+    @Autowired
+    private ToolRegistry toolRegistry;
 
     /**
      * Registers the {@link StrictPermissionPolicyProvider} under the
@@ -38,6 +51,6 @@ public class PermissionPolicyAutoConfiguration {
      */
     @Bean(name = "permissionPolicyProvider_strict-1.0.0")
     public PermissionPolicyProvider strictPermissionPolicyProvider() {
-        return new StrictPermissionPolicyProvider();
+        return new StrictPermissionPolicyProvider(toolRegistry);
     }
 }
