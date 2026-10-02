@@ -56,7 +56,9 @@ class AgentFactoryPatternMatchingIT {
 
     private static AgentConfig.ToolsConfig toolsAllowStar() {
         return new AgentConfig.ToolsConfig(
-            true, Arrays.asList("*"), Collections.<String>emptyList(), 200_000, 1_000_000);
+            true, Arrays.asList("*"), Collections.<String>emptyList(),
+            Collections.<String>emptyList(),  // 🆕 Story #030 — askList
+            200_000, 1_000_000);
     }
 
     private static AgentConfig.ToolsConfig toolsAllowMcpSkillsAndLocalRead() {
@@ -64,6 +66,7 @@ class AgentFactoryPatternMatchingIT {
             true,
             Arrays.asList("mcp:*", "skill:*", "read_file"),
             Collections.<String>emptyList(),
+            Collections.<String>emptyList(),  // 🆕 Story #030 — askList
             200_000, 1_000_000);
     }
 

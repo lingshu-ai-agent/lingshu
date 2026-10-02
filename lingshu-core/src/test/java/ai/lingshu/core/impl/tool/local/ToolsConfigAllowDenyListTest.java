@@ -34,6 +34,7 @@ class ToolsConfigAllowDenyListTest {
             true,
             Arrays.asList("read_file", "write_file"),
             Collections.<String>emptyList(),
+            Collections.<String>emptyList(),  // 🆕 Story #030 — askList
             1024, 2048);
 
         assertThat(tc.getAllowList()).containsExactly("read_file", "write_file");
@@ -47,6 +48,7 @@ class ToolsConfigAllowDenyListTest {
             true,
             Arrays.asList("read_file"),
             Arrays.asList("dangerous_tool", "rm"),
+            Collections.<String>emptyList(),  // 🆕 Story #030 — askList
             1024, 2048);
 
         assertThat(tc.getAllowList()).containsExactly("read_file");

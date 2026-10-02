@@ -53,4 +53,18 @@ public class PermissionPolicyAutoConfiguration {
     public PermissionPolicyProvider strictPermissionPolicyProvider() {
         return new StrictPermissionPolicyProvider(toolRegistry);
     }
+
+    /**
+     * 🆕 Story #030 — registers the {@link AskUserPermissionPolicyProvider} under
+     * the {@code "permissionPolicyProvider_ask-1.0.0"} Bean name. User selects via
+     * {@code agent.permission-policy: ask} in {@code application.yml}; the
+     * {@code PermissionPolicyRouter} (v1.5.28 multi-Provider pattern) resolves
+     * {@code "ask"} → this Bean → {@link AskUserPermissionPolicy}, which adds
+     * a 3rd input list {@code ask-list} for tools that should pause the turn and
+     * route to human approval rather than auto-allow / auto-deny.
+     */
+    @Bean(name = "permissionPolicyProvider_ask-1.0.0")
+    public PermissionPolicyProvider askUserPermissionPolicyProvider() {
+        return new AskUserPermissionPolicyProvider(toolRegistry);
+    }
 }

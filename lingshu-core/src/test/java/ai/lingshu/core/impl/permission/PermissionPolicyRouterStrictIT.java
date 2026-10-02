@@ -41,7 +41,7 @@ class PermissionPolicyRouterStrictIT {
     }
 
     private static AgentConfig.ToolsConfig toolsWith(List<String> allow) {
-        return new AgentConfig.ToolsConfig(true, allow, Collections.<String>emptyList(), 200_000, 1_000_000);
+        return new AgentConfig.ToolsConfig(true, allow, Collections.<String>emptyList(), Collections.<String>emptyList(), 200_000, 1_000_000);
     }
 
     private static AgentConfig cfgWith(List<String> allow) {
