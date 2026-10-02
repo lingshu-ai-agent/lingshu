@@ -35,6 +35,14 @@ import org.springframework.context.annotation.Configuration;
  * {@code @Autowired} set-field is used to wire the singleton registry into
  * the {@code @Bean} method (avoids changing the {@code @Bean} method's
  * signature).
+ *
+ * <p><b>🆕 v1.5.53 Story #037 — AllowAll also goes explicit {@code @Bean} mode</b>:
+ * Prior to Story #037, {@link AllowAllPermissionPolicyProvider} was registered via
+ * {@code @Component} (Story #001), which produced the camelCase Bean name
+ * {@code "allowAllPermissionPolicyProvider"} — inconsistent with the v1.5.28 §5.5
+ * multi-Provider {@code @Bean(name = "<slot>Provider_<name>-<version>")} naming
+ * convention used by the strict / ask providers below. Story #037 aligns all
+ * 3 Providers to the same registration style; behavior is unchanged.
  */
 @Configuration
 public class PermissionPolicyAutoConfiguration {
@@ -44,10 +52,29 @@ public class PermissionPolicyAutoConfiguration {
     private ToolRegistry toolRegistry;
 
     /**
+     * 🆕 v1.5.53 Story #037 — registers the {@link AllowAllPermissionPolicyProvider}
+     * under the {@code "permissionPolicyProvider_default-1.0.0"} Bean name. User
+     * selects via {@code agent.permission-policy: default} (or absent — falls back
+     * to allow-all by default, see Story #001 back-compat).
+     *
+     * <p>Before Story #037 this Provider was registered via {@code @Component} (Story #001),
+     * which produced the camelCase Bean name {@code "allowAllPermissionPolicyProvider"}
+     * — inconsistent with the v1.5.28 §5.5 multi-Provider
+     * {@code @Bean(name = "<slot>Provider_<name>-<version>")} naming convention used by
+     * siblings {@link StrictPermissionPolicyProvider} and {@link AskUserPermissionPolicyProvider}.
+     *
+     * <p>Behavior is unchanged: {@code PermissionPolicyRouter} resolves by {@code name()}
+     * ({@code "default"}), which still maps to {@link AllowAllPermissionPolicy}. The migration
+     * is a registration-path alignment, not a behavior change.
+     */
+    @Bean(name = "permissionPolicyProvider_default-1.0.0")
+    public PermissionPolicyProvider defaultPermissionPolicyProvider() {
+        return new AllowAllPermissionPolicyProvider();
+    }
+
+    /**
      * Registers the {@link StrictPermissionPolicyProvider} under the
-     * {@code "permissionPolicyProvider_strict-1.0.0"} Bean name. The sibling
-     * {@code "default"} Provider comes from
-     * {@link AllowAllPermissionPolicyProvider} (Story #001).
+     * {@code "permissionPolicyProvider_strict-1.0.0"} Bean name.
      */
     @Bean(name = "permissionPolicyProvider_strict-1.0.0")
     public PermissionPolicyProvider strictPermissionPolicyProvider() {
