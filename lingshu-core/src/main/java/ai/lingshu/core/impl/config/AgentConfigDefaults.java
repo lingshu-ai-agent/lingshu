@@ -57,7 +57,7 @@ public final class AgentConfigDefaults {
             null,    // skills
             8,       // toolParallelism
             60,      // toolTimeoutSeconds
-            300,     // approvalTimeoutSeconds
+            0,       // 🆕 Story #030 — approvalTimeoutSeconds: 0 = wait indefinitely (matches Claude Code overnight behavior)
             0,       // turnTimeoutSeconds (no limit)
             60,      // llmTimeoutSeconds
             50,      // reactMaxSteps

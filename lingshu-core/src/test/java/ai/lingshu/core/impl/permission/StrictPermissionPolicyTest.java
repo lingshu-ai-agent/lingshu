@@ -28,7 +28,7 @@ class StrictPermissionPolicyTest {
     }
 
     private static AgentConfig.ToolsConfig toolsWith(java.util.List<String> allow, java.util.List<String> deny) {
-        return new AgentConfig.ToolsConfig(true, allow, deny, 200_000, 1_000_000);
+        return new AgentConfig.ToolsConfig(true, allow, deny, Collections.<String>emptyList(), 200_000, 1_000_000);
     }
 
     @Test

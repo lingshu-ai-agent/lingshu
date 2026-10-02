@@ -94,6 +94,16 @@ agent:
     allow-list:
       - "*"
     deny-list: []
+    # 🆕 Story #030 — ask-list: when permission-policy: ask (set below), tools
+    # matching any pattern here pause the turn and emit AgentEvent.ApprovalRequired;
+    # the host UI delivers the human's answer via POST /api/approvals/{sessionId}/{approvalId}.
+    # Demo entry points write_file + bash_safe — both are "scary" enough to merit
+    # approval but not "deny-by-default" (i.e. read_file is auto-allowed via the
+    # wildcard allow-list above). For a tighter demo set `permission-policy: ask`
+    # below and switch to ask-list-only.
+    ask-list:
+      - "write_file"
+      - "bash_safe"
 
   # ── Sandbox (Slot 3) — boundary for the 4 fs-touching Tools ──────────
   # demo-product enables 4 local @Component Tools (read_file/write_file/
@@ -263,9 +273,17 @@ agent:
   turn-timeout-seconds: 120
   llm-timeout-seconds: 30
   tool-timeout-seconds: 30
+  # 🆕 Story #030 — Approval timeout. `0` (zero-config default) means wait
+  # indefinitely so an overnight approval still works when the human returns
+  # next morning (matches Claude Code's behavior). Set >0 to bound the wait;
+  # timeout triggers Decision.Deny with [LINGS-P02] embedded. The demo leaves
+  # it at 0 so testers can verify the indefinite-wait behavior end-to-end.
+  approval-timeout: 0
 
   # 🆕 Story #029 — PermissionPolicy provider name. Switches Slot 4 router target.
   # `default` = AllowAllPermissionPolicy (zero-config back-compat, Story #001).
   # `strict`  = StrictPermissionPolicy (enforces tools.allow-list + tools.deny-list,
   #             emits [LINGS-P01] deny reason; see dsh §4.7 + §5.5 L2168-2189).
+  # `ask`     = AskUserPermissionPolicy (Story #030) — adds tools.ask-list which
+  #             pauses the turn and routes to the human via /api/approvals/{sessionId}/{approvalId}.
   permission-policy: strict

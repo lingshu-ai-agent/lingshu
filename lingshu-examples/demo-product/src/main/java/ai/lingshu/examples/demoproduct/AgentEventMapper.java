@@ -72,6 +72,11 @@ public class AgentEventMapper {
         } else if (event instanceof AgentEvent.ApprovalRequired) {
             AgentEvent.ApprovalRequired e = (AgentEvent.ApprovalRequired) event;
             out.put("type", "approval");
+            // 🆕 Story #030 — include stable approvalId so the host UI can correlate
+            // an inbound POST /api/approvals/{sessionId}/{approvalId} back to this
+            // pending approval (the engine's continuation Consumer<Decision> is bound
+            // to this id in the ApprovalRegistry).
+            out.put("approvalId", e.getApprovalId());
             out.set("ask", mapper.valueToTree(e.getAsk()));
         } else if (event instanceof AgentEvent.Compacted) {
             // R-1 workaround: AgentEvent.Compacted has no payload. Estimate tokens freed.

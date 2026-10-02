@@ -42,7 +42,7 @@ class AgentConfigToolsConfigTest {
     @Test
     @DisplayName("AC-019-3: validate_positiveCaps_succeeds")
     void validate_positiveCaps_succeeds() {
-        AgentConfig.ToolsConfig tc = new AgentConfig.ToolsConfig(true, Collections.<String>emptyList(), Collections.<String>emptyList(), 1024, 2048);
+        AgentConfig.ToolsConfig tc = new AgentConfig.ToolsConfig(true, Collections.<String>emptyList(), Collections.<String>emptyList(), Collections.<String>emptyList(), 1024, 2048);
 
         assertThatCode(tc::validate).doesNotThrowAnyException();
     }
@@ -50,7 +50,7 @@ class AgentConfigToolsConfigTest {
     @Test
     @DisplayName("EC-019-2: validate_negativeCap_aggregatesAndThrowsC02")
     void validate_negativeCap_aggregatesAndThrowsC02() {
-        AgentConfig.ToolsConfig tc = new AgentConfig.ToolsConfig(true, Collections.<String>emptyList(), Collections.<String>emptyList(), 0, 0);
+        AgentConfig.ToolsConfig tc = new AgentConfig.ToolsConfig(true, Collections.<String>emptyList(), Collections.<String>emptyList(), Collections.<String>emptyList(), 0, 0);
 
         // LingsConfigException carries the structured code in getCode() — the
         // message only contains the human-readable per-field diagnostics.

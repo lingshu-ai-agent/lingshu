@@ -1,8 +1,10 @@
 package ai.lingshu.examples.demoproduct;
 
+import ai.lingshu.core.decision.Decision;
 import ai.lingshu.core.event.AgentEvent;
 import ai.lingshu.core.impl.config.AgentConfigDefaults;
 import ai.lingshu.core.impl.runtime.AgentFactory;
+import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.reload.YamlWatcher;
 import ai.lingshu.core.runtime.Agent;
 import ai.lingshu.core.runtime.AgentConfig;
@@ -26,6 +28,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * HTTP API for the demo-product chat.
@@ -34,6 +37,7 @@ import java.util.Map;
  * <ul>
  *   <li>{@code POST /api/sessions} → create session, returns {@code {sessionId}}</li>
  *   <li>{@code POST /api/chat/{sessionId}} (Accept: text/event-stream) → SSE stream of {@link AgentEvent}s</li>
+ *   <li>{@code POST /api/approvals/{sessionId}/{approvalId}} → deliver human approval decision (Story #030)</li>
  *   <li>{@code GET /api/sessions/{sessionId}/history} → JSON array of session messages</li>
  *   <li>{@code GET /api/sessions} → list of live sessions with age (ms)</li>
  *   <li>{@code DELETE /api/sessions/{sessionId}} → evict session</li>
@@ -42,6 +46,14 @@ import java.util.Map;
  * <p><b>Reactive subscribe (Story #025 milestone):</b> this controller is the
  * first caller in the codebase to subscribe to {@link Agent#run(String)}'s
  * {@code Publisher<AgentEvent>}. All other demos use {@code runBlocking}.
+ *
+ * <p><b>🆕 Story #030 — ApprovalEndpoint</b>: when the engine emits an
+ * {@code AgentEvent.ApprovalRequired} event, the host UI presents the prompt to
+ * the human; the human's answer is delivered back via
+ * {@code POST /api/approvals/&#123;sessionId&#125;/&#123;approvalId&#125;} with body
+ * {@code {"decision": "allow"|"deny", "reason": "<optional>"}}. This endpoint
+ * looks up the pending continuation in {@link ApprovalRegistry}, invokes it
+ * with the resolved {@link Decision}, and the engine unblocks.
  *
  * <p><b>Scanner exclusion:</b> excludeFilters {@link YamlWatcher} for the same
  * reason as {@code demo-empty}: this demo keeps the embedded Tomcat running,
@@ -60,14 +72,18 @@ public class ChatController {
     private final AgentFactory agentFactory;
     private final SessionRegistry sessions;
     private final AgentEventMapper mapper;
+    /** 🆕 Story #030 — Spring-injected approval registry; non-null when demo-product runs. */
+    private final ApprovalRegistry approvals;
     private final ObjectMapper json = new ObjectMapper();
 
     public ChatController(AgentFactory agentFactory,
                           SessionRegistry sessions,
-                          AgentEventMapper mapper) {
+                          AgentEventMapper mapper,
+                          ApprovalRegistry approvals) {
         this.agentFactory = agentFactory;
         this.sessions = sessions;
         this.mapper = mapper;
+        this.approvals = approvals;
     }
 
     @PostMapping("/api/sessions")
@@ -99,7 +115,63 @@ public class ChatController {
         // before we drop the Agent reference.
         agentFactory.broadcastCancel();
         sessions.evict(sessionId);
+        // 🆕 Story #030 — drop any pending approvals belonging to the dropped session.
+        // Without this the registry would leak Consumer<Decision> entries forever
+        // (engine thread blocks until the continuation fires; if no UI answer ever
+        // arrives, the timeout fallback fires LINGS-P02 but the consumer reference
+        // stays in the map).
+        int evicted = approvals.evictBySessionPrefix(sessionId);
+        LOG.info("deleteSession session={} evicted-approvals={}", sessionId, evicted);
         return Map.of("status", "evicted");
+    }
+
+    /**
+     * 🆕 Story #030 — Human approval delivery endpoint. Body: {@code {"decision": "allow"|"deny", "reason": "..."}}.
+     * Looks up the pending continuation by {@code approvalId} in the {@link ApprovalRegistry},
+     * invokes it with the resolved {@link Decision}. Engine unblocks from
+     * {@code LinearTurnEngine.dispatchWithPolicy}'s AskUser branch and resumes the turn.
+     *
+     * <p>Returns:
+     * <ul>
+     *   <li>{@code {"status": "delivered"}} on success</li>
+     *   <li>{@code {"status": "expired"}} if no pending approval under that id (timeout, double-click, or wrong id)</li>
+     * </ul>
+     */
+    @PostMapping("/api/approvals/{sessionId}/{approvalId}")
+    public Map<String, String> deliverApproval(@PathVariable String sessionId,
+                                               @PathVariable String approvalId,
+                                               @RequestBody Map<String, String> body) {
+        // Verify session exists — defense-in-depth so we don't accidentally drive a
+        // non-existent session's blocked thread (the registry is global, but the
+        // approvalId came from a session-scoped SSE event).
+        Agent agent = sessions.touch(sessionId);
+        if (agent == null) {
+            throw new NotFoundException("session not found: " + sessionId);
+        }
+        String answer = body.get("decision");
+        String reason = body.get("reason");
+        if (answer == null) {
+            throw new BadRequestException("missing 'decision' field (allowed: allow|deny)");
+        }
+        Consumer<Decision> continuation = approvals.consume(approvalId);
+        if (continuation == null) {
+            // Could be: already delivered, timed out (engine returned LINGS-P02 error),
+            // or client replayed an old id. Idempotent — 200 with "expired" so the UI
+            // doesn't retry.
+            LOG.info("approval id={} not found in registry (already consumed or expired)", approvalId);
+            return Map.of("status", "expired");
+        }
+        Decision resolved;
+        if ("allow".equalsIgnoreCase(answer)) {
+            resolved = new Decision.Allow(reason != null ? reason : "user-approved");
+        } else if ("deny".equalsIgnoreCase(answer)) {
+            resolved = new Decision.Deny(reason != null ? reason : "[LINGS-P01] user-denied");
+        } else {
+            throw new BadRequestException("invalid 'decision' value: " + answer + " (allowed: allow|deny)");
+        }
+        LOG.info("approval id={} session={} decision={}", approvalId, sessionId, answer);
+        continuation.accept(resolved);
+        return Map.of("status", "delivered");
     }
 
     /**

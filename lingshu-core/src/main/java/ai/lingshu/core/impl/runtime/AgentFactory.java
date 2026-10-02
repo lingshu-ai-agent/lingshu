@@ -563,7 +563,7 @@ public class AgentFactory implements InitializingBean {
 
         int toolParallelism = intOr(agent, "toolParallelism", 8);
         int toolTimeoutSeconds = intOr(agent, "toolTimeoutSeconds", 30);
-        int approvalTimeoutSeconds = intOr(agent, "approvalTimeoutSeconds", 60);
+        int approvalTimeoutSeconds = intOr(agent, "approvalTimeoutSeconds", 0);
         int turnTimeoutSeconds = intOr(agent, "turnTimeoutSeconds", 120);
         int llmTimeoutSeconds = intOr(agent, "llmTimeoutSeconds", 30);
         int reactMaxSteps = intOr(agent, "reactMaxSteps", 50);
@@ -574,22 +574,26 @@ public class AgentFactory implements InitializingBean {
             sandboxPolicy, sandboxRuntime, java.nio.file.Paths.get(sandboxWd),
             whitelist, Collections.emptyList());
 
-        // ── Story #029 ── PermissionPolicy (top-level) + ToolsConfig allow/deny lists.
+        // ── Story #029 + 🆕 Story #030 ── PermissionPolicy (top-level) + ToolsConfig allow/deny/ask lists.
         // Default permissionPolicy="default" preserves Story #001 zero-config back-compat;
-        // demo yml may opt into `permission-policy: strict` to switch Slot 4 router target.
+        // demo yml may opt into `permission-policy: strict` or `permission-policy: ask` (Story #030)
+        // to switch Slot 4 router target. askList triggers AskUser → host UI approval flow.
         String permissionPolicy = stringOr(agent, "permission-policy", "default");
         Map<String, Object> toolsMap = agent.get("tools") instanceof Map
             ? (Map<String, Object>) agent.get("tools") : Collections.<String, Object>emptyMap();
         List<String> toolAllowList = stringListOr(toolsMap, "allow-list", Collections.<String>emptyList());
         List<String> toolDenyList = stringListOr(toolsMap, "deny-list", Collections.<String>emptyList());
+        // 🆕 Story #030 — ask-list (kebab-case `ask-list` mirrors allow-list/deny-list);
+        // empty default means AskUserPermissionPolicy falls through to default-allow path.
+        List<String> toolAskList = stringListOr(toolsMap, "ask-list", Collections.<String>emptyList());
         boolean toolsEnabled = booleanOr(toolsMap, "enabled", true);
         AgentConfig.ToolsConfig toolsCfg = new AgentConfig.ToolsConfig(
-            toolsEnabled, toolAllowList, toolDenyList,
+            toolsEnabled, toolAllowList, toolDenyList, toolAskList,
             intOr(toolsMap, "max-file-bytes", 200_000),
             intOr(toolsMap, "max-write-bytes", 1_000_000));
 
-        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={} permissionPolicy={} allowList={} denyList={})",
-            ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList);
+        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={} permissionPolicy={} allowList={} denyList={} askList={})",
+            ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList, toolAskList);
 
         return new AgentConfig(
             flowEngine,

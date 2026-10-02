@@ -123,7 +123,7 @@ class LinearTurnEngineProviderTest {
             4, r -> { Thread t = new Thread(r, "test-pool"); t.setDaemon(true); return t; });
 
         LinearTurnEngineProvider provider = new LinearTurnEngineProvider(
-            prompt, llm, tool, policy, pool);
+            prompt, llm, tool, policy, pool, null);  // 🆕 Story #030 — null ApprovalRegistry
 
         AgentConfig cfg = defaultConfig();
         FlowEngine engine = provider.create(cfg);
@@ -161,7 +161,7 @@ class LinearTurnEngineProviderTest {
         ExecutorService pool = Executors.newFixedThreadPool(2);
 
         LinearTurnEngineProvider provider = new LinearTurnEngineProvider(
-            prompt, llm, tool, policy, pool);
+            prompt, llm, tool, policy, pool, null);  // 🆕 Story #030 — null ApprovalRegistry
 
         // Wire a config whose toolExecutor name is unknown — Router.resolve() must throw.
         AgentConfig bad = new AgentConfig(

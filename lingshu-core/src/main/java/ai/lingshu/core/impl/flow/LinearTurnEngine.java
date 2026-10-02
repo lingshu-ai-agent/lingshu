@@ -17,6 +17,7 @@ import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutionContext;
+import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutionContext;
 import ai.lingshu.core.slot.ToolExecutor;
@@ -25,12 +26,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * Linear ReAct loop — fixed sequence prompt → llm → tool → loop (dsh §6.1).
@@ -74,10 +78,35 @@ public class LinearTurnEngine implements FlowEngine {
     private final PermissionPolicy permissionPolicy;
     /** 🆕 Story #004 — shared thread pool for {@link CompletableFuture} parallel dispatch. */
     private final ExecutorService toolPool;
+    /**
+     * 🆕 Story #030 — optional Spring-injected registry that maps
+     * {@code approvalId → continuation} so an external HTTP endpoint (e.g.
+     * {@code POST /api/approvals/{sessionId}/{approvalId}} in demo-product's
+     * {@code ChatController}) can deliver the human's {@link Decision} back to
+     * the engine thread. {@code null} is tolerated for test fixtures (Story
+     * #001–#029) that drive the engine end-to-end without an HTTP layer — the
+     * continuation is still carried on the {@code ApprovalRequired} event so the
+     * test can invoke it directly.
+     */
+    private final ApprovalRegistry approvalRegistry;
 
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool) {
+        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool, null);
+    }
+
+    /**
+     * 🆕 Story #030 — 6-arg constructor that wires the optional
+     * {@link ApprovalRegistry}. Production paths (via
+     * {@code LinearTurnEngineProvider}) pass a Spring-injected singleton; tests
+     * that don't need cross-thread continuation lookup use the 5-arg constructor
+     * (registry = null).
+     */
+    public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
+                            ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
+                            ExecutorService toolPool,
+                            ApprovalRegistry approvalRegistry) {
         if (promptBuilder == null) throw new IllegalArgumentException("promptBuilder must not be null");
         if (llmProvider == null) throw new IllegalArgumentException("llmProvider must not be null");
         if (toolExecutor == null) throw new IllegalArgumentException("toolExecutor must not be null");
@@ -88,6 +117,7 @@ public class LinearTurnEngine implements FlowEngine {
         this.toolExecutor = toolExecutor;
         this.permissionPolicy = permissionPolicy;
         this.toolPool = toolPool;
+        this.approvalRegistry = approvalRegistry;
     }
 
     @Override
@@ -435,13 +465,116 @@ public class LinearTurnEngine implements FlowEngine {
                 .build();
         }
         if (d instanceof Decision.AskUser) {
-            // Story #005 will replace this stub with the full ApprovalGate flow.
-            return ToolResult.builder()
-                .status(ToolResult.Status.ERROR)
-                .toolUseId(call.getId())
-                .content("AskUser approval flow is wired in Story #005 follow-up")
-                .isError(true)
-                .build();
+            // 🆕 Story #030 — real AskUser branch. Emit AgentEvent.ApprovalRequired
+            // with a stable approvalId so the host UI (e.g. demo-product
+            // ChatController) can correlate an inbound POST /api/approvals/{sessionId}/{approvalId}
+            // back to this pending approval. Block on the CompletableFuture with a
+            // configurable timeout (AgentConfig.approvalTimeoutSeconds; default 0 =
+            // wait indefinitely to match Claude Code overnight approval behavior).
+            //
+            // Fallback on timeout: Decision.Deny with [LINGS-P02] embedded (Story #030
+            // new ErrorCode) so the tool result surfaces the failure rather than
+            // crashing the turn.
+            Decision.AskUser ask = (Decision.AskUser) d;
+            String approvalId = UUID.randomUUID().toString();
+            final CompletableFuture<Decision> decisionFuture = new CompletableFuture<Decision>();
+            final AtomicBoolean alreadyResolved = new AtomicBoolean(false);
+
+            // The continuation Consumer<Decision> is invoked by the host UI when the
+            // human answers. We use an AtomicBoolean guard so a late or duplicate
+            // answer (e.g. user double-clicks Allow) doesn't NPE on future.complete
+            // being called twice — the second call is silently ignored.
+            Consumer<Decision> continuation = new Consumer<Decision>() {
+                @Override public void accept(Decision decision) {
+                    if (alreadyResolved.compareAndSet(false, true)) {
+                        decisionFuture.complete(decision);
+                    } else {
+                        LOG.warn("Approval {} already resolved; ignoring duplicate answer", approvalId);
+                    }
+                }
+            };
+
+            // 🆕 Story #030 — register the continuation in the (Spring-injected) registry
+            // so an external HTTP endpoint (ChatController.approval) can deliver the
+            // human's answer back. Tests that pass a null registry skip this step
+            // because they invoke the continuation directly off the ApprovalRequired event.
+            if (approvalRegistry != null) {
+                approvalRegistry.register(approvalId, continuation);
+            }
+
+            // Emit ApprovalRequired event so the host UI can present the prompt.
+            // The sink is the Subscriber<? super AgentEvent> from runTurn.
+            if (sink != null) {
+                sink.onNext(new AgentEvent.ApprovalRequired(ask, continuation, approvalId));
+            } else {
+                // No sink → can't pause for human input. Fall back to Deny with
+                // a clear ErrorCode so the failure is observable rather than a hang.
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(call.getId())
+                    .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
+                        + "] Approval required but no event sink registered; AskUser cannot be presented to human")
+                    .isError(true)
+                    .build();
+            }
+
+            // Block on the human's answer with a timeout. approvalTimeoutSeconds=0
+            // (the zero-config default) means wait indefinitely so an overnight
+            // approval still works when the human returns the next morning.
+            long approvalTimeoutSeconds = ctx.config().getApprovalTimeoutSeconds();
+            long timeoutMs = (approvalTimeoutSeconds <= 0)
+                ? Long.MAX_VALUE
+                : approvalTimeoutSeconds * 1000L;
+            Decision resolved;
+            try {
+                resolved = decisionFuture.get(timeoutMs, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                String reason = "[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
+                    + "] Permission approval timed out after " + approvalTimeoutSeconds
+                    + "s (default policy: ask user)";
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(call.getId())
+                    .content(reason)
+                    .isError(true)
+                    .build();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(call.getId())
+                    .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
+                        + "] Approval flow interrupted")
+                    .isError(true)
+                    .build();
+            } catch (ExecutionException ee) {
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(call.getId())
+                    .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
+                        + "] Approval flow failed: " + ee.getCause())
+                    .isError(true)
+                    .build();
+            }
+
+            // Apply the human's response. Allow → proceed (DefaultToolExecutor's
+            // defensive re-check returns AskUser again deterministically but
+            // Story #030 made that a proceed path; see DefaultToolExecutor.dispatchInternal).
+            // Deny → return error with the human-provided reason.
+            // Anything else is a contract violation.
+            if (resolved instanceof Decision.Allow) {
+                return toolExecutor.dispatch(call, toolCtx);
+            }
+            if (resolved instanceof Decision.Deny) {
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(call.getId())
+                    .content(((Decision.Deny) resolved).getReason())
+                    .isError(true)
+                    .build();
+            }
+            throw new IllegalStateException("Unknown Decision subtype from approval continuation: "
+                + (resolved == null ? "null" : resolved.getClass()));
         }
         throw new IllegalStateException("Unknown Decision subtype: " + d.getClass());
     }
