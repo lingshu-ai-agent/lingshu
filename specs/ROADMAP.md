@@ -200,6 +200,7 @@ dsh §14 N1—N13 生产增强章节(L6594-7126)中,**仅 N8(yaml-hot-reload →
 | OQ-1 | §5.6.3 / §6.5 | N-tool Bean 模式(每 skill 1 `Tool` Bean)| 🟡 OQ-Future | OpenAI / Anthropic 2025+ tool spec 广泛支持 `oneOf` + nested union |
 | OQ-2 | §5.6.3.0 | `AgentSkill` 加 `inputSchema` / `outputSchema` 字段 | 🟡 OQ-Future | 用户提具体 use case(目前 `additionalProperties: true` fallback 够用) |
 | OQ-7 | §6.5 | Anthropic 协议层 LLM 视角看不到 Tool(`AnthropicLlmProvider.buildRequestBody` skip `Message.ToolUse`/`ToolResult` + `parseResponse` 永返空 `ToolCall` + `DefaultTurnContext.appendAssistant` 硬编码空 list)| ✅ **已解决**(Story #027a 合入 2026-09-29)| → OQ-Resolved 段 |
+| OQ-8 | §4.5 + §6.5 | RAG(检索增强生成)接入方案决策 | 🟡 OQ-Future(✅ **方案决策已锁**:走 MCP RAG server,**不**走 MemorySource SPI 直连)| 企业接入向量库具体 use case 出现时(Qdrant / pgvector / Pinecone / Milvus 等)+ embedding model 选型 → 启动 Story `#035-rag-via-mcp`(仅外部 MCP server 一方改动,Agent 端 0 改动,复用 Story #021a/b/c + #033 沙箱守卫 + #021c MCP HTTP 链路;若需要无感 RAG 自动注入 [PROJECT MEMORY] 段再开 `#036-rag-memory-source` 作为 MemorySourceProvider 备选路径,扩展 `AgentConfig.Memory` 加 `RagConfig` 子段) |
 
 ---
 
