@@ -9,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -33,7 +34,9 @@ class StrictPermissionPolicyReasonTest {
     void denyReason_includesMatchedPattern() {
         // Use category-prefix pattern "mcp:*" as the deny pattern — non-trivial case.
         AgentConfig.ToolsConfig tools = new AgentConfig.ToolsConfig(
-            true, Arrays.asList("read_file"), Arrays.asList("mcp:*"), 200_000, 1_000_000);
+            true, Arrays.asList("read_file"), Arrays.asList("mcp:*"),
+            Collections.<String>emptyList(),  // 🆕 Story #030 — askList
+            200_000, 1_000_000);
         Map<String, String> map = new HashMap<String, String>();
         map.put("echo", "mcp");
         StrictPermissionPolicy policy = new StrictPermissionPolicy(tools, map);

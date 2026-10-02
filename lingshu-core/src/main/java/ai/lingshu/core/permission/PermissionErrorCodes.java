@@ -16,13 +16,31 @@ package ai.lingshu.core.permission;
  * AssertJ {@code assertThat(decision.getReason()).contains("LINGS-P01")} works
  * out of the box.
  *
- * <p>Future P02+ (e.g. {@code LINGS-P02 PERMISSION_ASK_USER_TIMEOUT},
- * {@code LINGS-P03 PERMISSION_CONFIG_INVALID}) are reserved for later Stories.
+ * <p><b>🆕 Story #030 — adds {@link #LINGS_P02} {@code PERMISSION_APPROVAL_TIMEOUT}:</b>
+ * emitted when {@link ai.lingshu.core.permission.ApprovalGate#ask} blocks past
+ * {@code AgentConfig.approvalTimeoutSeconds} (default {@code 0} = wait indefinitely
+ * to match Claude Code overnight approval behavior; {@code >0} = timeout triggers
+ * {@code Decision.Deny} with this code embedded). The slot-4 AskUser outcome path
+ * is now real wiring (replaces 3 dead stubs in
+ * {@code DefaultToolExecutionContext} / {@code DefaultToolExecutor} /
+ * {@code LinearTurnEngine.dispatchWithPolicy}).
+ *
+ * <p>Future P03+ (e.g. {@code LINGS-P03 PERMISSION_CONFIG_INVALID}) are reserved
+ * for later Stories.
  */
 public final class PermissionErrorCodes {
 
     /** {@code PERMISSION_DENIED} — tool call rejected by allow-list or deny-list. */
     public static final String LINGS_P01 = "LINGS-P01";
+
+    /**
+     * 🆕 Story #030 — {@code PERMISSION_APPROVAL_TIMEOUT}: the {@link
+     * ai.lingshu.core.permission.ApprovalGate#ask} blocking call exceeded
+     * {@code AgentConfig.approvalTimeoutSeconds}; the policy fell back to
+     * {@code Decision.Deny} with reason
+     * {@code "[LINGS-P02] Permission approval timed out after Ns (default policy: ask user)"}.
+     */
+    public static final String LINGS_P02 = "LINGS-P02";
 
     private PermissionErrorCodes() {}
 }

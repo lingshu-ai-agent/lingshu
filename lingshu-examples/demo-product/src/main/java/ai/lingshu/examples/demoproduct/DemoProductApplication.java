@@ -343,7 +343,7 @@ public class DemoProductApplication {
                 + "allow(size={}) deny(size={})", allowList.size(), denyList.size());
         }
         return new AgentConfig.ToolsConfig(
-            fallback.isEnabled(), allowList, denyList,
+            fallback.isEnabled(), allowList, denyList, java.util.Collections.<String>emptyList(),
             fallback.getMaxReadBytes(), fallback.getMaxWriteBytes());
     }
 

@@ -36,7 +36,7 @@ class StrictPermissionPolicyPatternTest {
     }
 
     private static AgentConfig.ToolsConfig toolsWith(List<String> allow, List<String> deny) {
-        return new AgentConfig.ToolsConfig(true, allow, deny, 200_000, 1_000_000);
+        return new AgentConfig.ToolsConfig(true, allow, deny, java.util.Collections.<String>emptyList(), 200_000, 1_000_000);
     }
 
     private static Map<String, String> categories(Object... pairs) {

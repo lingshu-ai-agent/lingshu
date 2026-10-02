@@ -191,6 +191,22 @@ public class AgentConfig {
          */
         List<String> denyList;
 
+        /**
+         * 🆕 Story #030 — Tool ask-list. When non-empty, {@code AskUserPermissionPolicy.check()}
+         * returns {@link ai.lingshu.core.decision.Decision.AskUser} for tools whose name matches
+         * one of these patterns, pausing the turn and routing to
+         * {@link ai.lingshu.core.slot.ToolExecutionContext.ApprovalGate#ask}. The engine then
+         * emits {@code AgentEvent.ApprovalRequired} with a stable {@code approvalId} so the
+         * host UI can correlate the human's eventual answer (Allow / Deny) back to the pending
+         * continuation. Empty (the zero-config default) means "no ask-list constraint".
+         *
+         * <p>Pattern grammar (reuses Story #031 {@code PermissionPatterns.matches}): {@code "*"}
+         * matches all tools, {@code "<category>:*"} matches all tools of a category
+         * ({@code local / mcp / skill / a2a / delegate}), {@code "<exact-name>"} matches a
+         * single tool.
+         */
+        List<String> askList;
+
         /** Read file size cap; default {@code 200_000} bytes (200KB). */
         int maxReadBytes;
 
@@ -201,9 +217,14 @@ public class AgentConfig {
          * Zero-config default — all 4 tools enabled, conservative byte caps, both
          * allow-list and deny-list empty (equivalent to AllowAll for the strict policy).
          * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
+         *
+         * <p><b>🆕 Story #030 — askList default is empty</b>, meaning the
+         * {@code AskUserPermissionPolicy} falls through to the allow-list / deny-list
+         * default-allow path (no human-in-the-loop prompts in the zero-config case).
          */
         public static ToolsConfig defaults() {
             return new ToolsConfig(true,
+                Collections.<String>emptyList(),
                 Collections.<String>emptyList(),
                 Collections.<String>emptyList(),
                 200_000, 1_000_000);
