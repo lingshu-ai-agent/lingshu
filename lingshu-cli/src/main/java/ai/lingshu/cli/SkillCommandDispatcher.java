@@ -368,6 +368,11 @@ public class SkillCommandDispatcher {
         @Override public ApprovalGate approval() {
             // No approval flow in CLI single-shot mode — user-initiated commands are
             // implicitly user-approved.
+            //
+            // 🆕 Story #041 — AC-041-08 verifies this fail-safe contract:
+            // {@code ask(...)} must return Deny immediately (well under 1s, no blocking),
+            // and the Deny reason must contain "CLI Skill dispatch" + "AskUser approval"
+            // + "Story #020c MVP". See {@code SkillCommandDispatcherStubApprovalTest}.
             return new ApprovalGate() {
                 @Override public Decision ask(Decision.AskUser ask) {
                     return new Decision.Deny(

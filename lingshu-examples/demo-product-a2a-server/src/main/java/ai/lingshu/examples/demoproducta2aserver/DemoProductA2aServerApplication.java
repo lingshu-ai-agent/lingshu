@@ -89,7 +89,8 @@ public class DemoProductA2aServerApplication {
             defaults.getTenants(),
             defaults.getA2a(),
             defaults.getCompactorConfig(),
-            defaults.getTools()
+            defaults.getTools(),
+            "default"  // permissionPolicy (🆕 Story #029 — Slot 4; default = AllowAll)
         );
     }
 

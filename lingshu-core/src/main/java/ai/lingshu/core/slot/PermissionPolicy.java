@@ -12,12 +12,23 @@ import ai.lingshu.core.spi.ContractVersionRef;
  * <ul>
  *   <li>{@link Decision.Allow} — proceed</li>
  *   <li>{@link Decision.Deny} — throw {@code PermissionDeniedException}</li>
- *   <li>{@link Decision.AskUser} — pause and route to {@link ToolExecutionContext.ApprovalGate}</li>
+ *   <li>{@link Decision.AskUser} — pause and route to
+ *       {@link ToolExecutionContext.ApprovalGate}; engine blocks until the human
+ *       answers, {@code approvalTimeoutSeconds} elapses, or
+ *       {@code CancellationToken} fires.</li>
  * </ul>
  *
  * <p>Implementations may consult filesystem state (read-only tools allowed everywhere),
  * config (domain whitelist), history (previous grants), or any combination. Policy MUST be
  * deterministic for a given (call, ctx) tuple if audit reproducibility matters.
+ *
+ * <p><b>🆕 Story #041 — AskUser path now has a real SPI.</b> When a policy
+ * returns {@link Decision.AskUser}, the engine delegates the blocking call to
+ * {@code ToolExecutionContext.ApprovalGate.ask}. The production implementation is
+ * {@code DefaultToolExecutionContext.DefaultApprovalGate} (private static inner class
+ * in {@code DefaultToolExecutionContext}); see the JavaDoc on
+ * {@link ToolExecutionContext.ApprovalGate} for the SPI contract and fail-safe
+ * semantics.
  */
 public interface PermissionPolicy {
 

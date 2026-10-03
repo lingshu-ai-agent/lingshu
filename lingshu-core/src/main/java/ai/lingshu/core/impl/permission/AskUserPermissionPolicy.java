@@ -30,13 +30,25 @@ import java.util.Map;
  *   <li><b>ask-list hit</b> → {@link Decision.AskUser}
  *       with prompt {@code "Permission required to call '<name>' (matches pattern '<pattern>')"}.
  *       The engine (LinearTurnEngine) will emit {@code AgentEvent.ApprovalRequired}
- *       and block on {@code ctx.approval().ask(ask)} until the human answers or
- *       {@code AgentConfig.approvalTimeoutSeconds} elapses.</li>
+ *       and block on {@code ctx.approval().ask(ask)} until the human answers,
+ *       {@code approvalTimeoutSeconds} elapses, or the {@code CancellationToken}
+ *       fires (🆕 Story #041 — cancel path now completes the future with a
+ *       {@code Deny} instead of leaking it).</li>
  *   <li><b>allow-list empty OR allow-list hit</b> → {@link Decision.Allow}
  *       with reason reflecting default-allow vs explicit-allow-match</li>
  *   <li><b>allow-list non-empty AND no pattern matches</b> → {@link Decision.Deny}
  *       with reason {@code "[LINGS-P01] Tool '<name>' not in allow-list (category=<cat>)"}</li>
  * </ol>
+ *
+ * <p><b>🆕 Story #041 — ApprovalGate SPI extraction.</b> The {@code ctx.approval().ask(...)}
+ * call delegates to {@code DefaultToolExecutionContext.DefaultApprovalGate}
+ * (a {@code private static final} inner class on {@code DefaultToolExecutionContext}),
+ * which emits {@code AgentEvent.ApprovalRequired} carrying a UUID
+ * {@code approvalId} and registers a continuation with the singleton
+ * {@link ai.lingshu.core.impl.runtime.ApprovalRegistry} Spring {@code @Component}.
+ * The transport (demo-product
+ * {@code POST /api/approvals/&#123;sessionId&#125;/&#123;approvalId&#125;}) invokes
+ * the continuation with the human's {@link Decision} to unblock the engine.
  *
  * <p><b>Pattern matching reuse (Story #031):</b> identical 3-form grammar
  * ({@code "*"} / {@code "<category>:*"} / {@code "<exact-name>"}) via

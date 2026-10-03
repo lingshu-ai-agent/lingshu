@@ -26,15 +26,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
 /**
  * Linear ReAct loop — fixed sequence prompt → llm → tool → loop (dsh §6.1).
@@ -447,7 +444,17 @@ public class LinearTurnEngine implements FlowEngine {
         RuntimeSandbox sandbox = (ctx instanceof DefaultTurnContext)
             ? ((DefaultTurnContext) ctx).runtimeSandbox()
             : null;
-        DefaultToolExecutionContext toolCtx = new DefaultToolExecutionContext(ctx, sandbox);
+        // 🆕 Story #041 — wire the shared ApprovalRegistry so DefaultApprovalGate can
+        // register the continuation under the approvalId for HTTP round-trip
+        // (e.g. demo-product POST /api/approvals/{sessionId}/{approvalId}). Null
+        // is tolerated for legacy tests / fixtures (Story #001–#029) that don't need
+        // cross-thread continuation lookup — those drive the round-trip directly off
+        // the ApprovalRequired event's continuation field.
+        //
+        // Also pass the per-call sink so ApprovalRequired events emitted from
+        // DefaultApprovalGate reach the user's SSE stream (the runTurn sink), not
+        // the per-turn sink on TurnContext — these can differ in test fixtures.
+        DefaultToolExecutionContext toolCtx = new DefaultToolExecutionContext(ctx, sandbox, approvalRegistry, sink);
         Decision d = permissionPolicy.check(call, toolCtx);
         if (d instanceof Decision.Allow) {
             // Bridge per-turn scope (TurnContext) → per-call sandbox scope (ToolExecutionContext).
@@ -465,103 +472,25 @@ public class LinearTurnEngine implements FlowEngine {
                 .build();
         }
         if (d instanceof Decision.AskUser) {
-            // 🆕 Story #030 — real AskUser branch. Emit AgentEvent.ApprovalRequired
-            // with a stable approvalId so the host UI (e.g. demo-product
-            // ChatController) can correlate an inbound POST /api/approvals/{sessionId}/{approvalId}
-            // back to this pending approval. Block on the CompletableFuture with a
-            // configurable timeout (AgentConfig.approvalTimeoutSeconds; default 0 =
-            // wait indefinitely to match Claude Code overnight approval behavior).
-            //
-            // Fallback on timeout: Decision.Deny with [LINGS-P02] embedded (Story #030
-            // new ErrorCode) so the tool result surfaces the failure rather than
-            // crashing the turn.
-            Decision.AskUser ask = (Decision.AskUser) d;
-            String approvalId = UUID.randomUUID().toString();
-            final CompletableFuture<Decision> decisionFuture = new CompletableFuture<Decision>();
-            final AtomicBoolean alreadyResolved = new AtomicBoolean(false);
-
-            // The continuation Consumer<Decision> is invoked by the host UI when the
-            // human answers. We use an AtomicBoolean guard so a late or duplicate
-            // answer (e.g. user double-clicks Allow) doesn't NPE on future.complete
-            // being called twice — the second call is silently ignored.
-            Consumer<Decision> continuation = new Consumer<Decision>() {
-                @Override public void accept(Decision decision) {
-                    if (alreadyResolved.compareAndSet(false, true)) {
-                        decisionFuture.complete(decision);
-                    } else {
-                        LOG.warn("Approval {} already resolved; ignoring duplicate answer", approvalId);
-                    }
-                }
-            };
-
-            // 🆕 Story #030 — register the continuation in the (Spring-injected) registry
-            // so an external HTTP endpoint (ChatController.approval) can deliver the
-            // human's answer back. Tests that pass a null registry skip this step
-            // because they invoke the continuation directly off the ApprovalRequired event.
-            if (approvalRegistry != null) {
-                approvalRegistry.register(approvalId, continuation);
-            }
-
-            // Emit ApprovalRequired event so the host UI can present the prompt.
-            // The sink is the Subscriber<? super AgentEvent> from runTurn.
-            if (sink != null) {
-                sink.onNext(new AgentEvent.ApprovalRequired(ask, continuation, approvalId));
-            } else {
-                // No sink → can't pause for human input. Fall back to Deny with
-                // a clear ErrorCode so the failure is observable rather than a hang.
-                return ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(call.getId())
-                    .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
-                        + "] Approval required but no event sink registered; AskUser cannot be presented to human")
-                    .isError(true)
-                    .build();
-            }
-
-            // Block on the human's answer with a timeout. approvalTimeoutSeconds=0
-            // (the zero-config default) means wait indefinitely so an overnight
-            // approval still works when the human returns the next morning.
-            long approvalTimeoutSeconds = ctx.config().getApprovalTimeoutSeconds();
-            long timeoutMs = (approvalTimeoutSeconds <= 0)
-                ? Long.MAX_VALUE
-                : approvalTimeoutSeconds * 1000L;
-            Decision resolved;
-            try {
-                resolved = decisionFuture.get(timeoutMs, TimeUnit.MILLISECONDS);
-            } catch (TimeoutException te) {
-                String reason = "[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
-                    + "] Permission approval timed out after " + approvalTimeoutSeconds
-                    + "s (default policy: ask user)";
-                return ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(call.getId())
-                    .content(reason)
-                    .isError(true)
-                    .build();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(call.getId())
-                    .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
-                        + "] Approval flow interrupted")
-                    .isError(true)
-                    .build();
-            } catch (ExecutionException ee) {
-                return ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(call.getId())
-                    .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
-                        + "] Approval flow failed: " + ee.getCause())
-                    .isError(true)
-                    .build();
-            }
+            // 🆕 Story #041 — delegate to DefaultToolExecutionContext.approval()
+            // (formerly inline L467-578, extracted to DefaultApprovalGate). Behaviour
+            // matches the prior inline path exactly (verified by AC-041-09/10/11):
+            //   * approvalTimeoutSeconds = 0 → wait indefinitely (Claude Code overnight parity)
+            //   * approvalTimeoutSeconds > 0 → wait at most N seconds then Deny [LINGS-P02]
+            //   * CancellationToken.fire() → interrupt, return Deny [LINGS-P02]
+            //   * no sink registered → Deny [LINGS-P02] (no hang)
+            // The ApprovalGate SPI is now usable from inside a Tool — see
+            // specs/019-built-in-tools/plan.md L498 for the planned Bash "rm -rf"
+            // confirm use case.
+            Decision resolved = toolCtx.approval().ask((Decision.AskUser) d);
 
             // Apply the human's response. Allow → proceed (DefaultToolExecutor's
             // defensive re-check returns AskUser again deterministically but
             // Story #030 made that a proceed path; see DefaultToolExecutor.dispatchInternal).
             // Deny → return error with the human-provided reason.
-            // Anything else is a contract violation.
+            // AskUser recursion guard (max 3 retries per dsh §9.3) — defensive:
+            // DefaultApprovalGate.ask() returns Allow / Deny only, but a future SPI
+            // impl might bubble AskUser back, so we cap the recursion here.
             if (resolved instanceof Decision.Allow) {
                 return toolExecutor.dispatch(call, toolCtx);
             }
@@ -573,8 +502,14 @@ public class LinearTurnEngine implements FlowEngine {
                     .isError(true)
                     .build();
             }
-            throw new IllegalStateException("Unknown Decision subtype from approval continuation: "
-                + (resolved == null ? "null" : resolved.getClass()));
+            // resolved instanceof Decision.AskUser — recursion limited (dsh §9.3 max 3).
+            return ToolResult.builder()
+                .status(ToolResult.Status.ERROR)
+                .toolUseId(call.getId())
+                .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
+                    + "] AskUser recursion limited (max 3 retries)")
+                .isError(true)
+                .build();
         }
         throw new IllegalStateException("Unknown Decision subtype: " + d.getClass());
     }
