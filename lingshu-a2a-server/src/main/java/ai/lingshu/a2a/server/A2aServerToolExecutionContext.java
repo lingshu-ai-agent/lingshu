@@ -100,6 +100,11 @@ final class A2aServerToolExecutionContext implements ToolExecutionContext {
     public ApprovalGate approval() {
         // Always deny AskUser — off-engine dispatch has no human in the loop.
         // If a tool here ever needs approval, replace this stub with one wired to a real channel.
+        //
+        // 🆕 Story #041 — AC-041-06 verifies this fail-safe contract:
+        // {@code ask(...)} must return Deny immediately (well under 1s, no blocking),
+        // and the Deny reason must contain "A2aServerToolExecutionContext.approval()"
+        // + "AskUser denied". See {@code A2aServerToolExecutionContextApprovalTest}.
         return new ApprovalGate() {
             @Override public Decision ask(Decision.AskUser ask) {
                 return new Decision.Deny(

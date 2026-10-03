@@ -656,6 +656,11 @@ public class DemoA2aServer implements DisposableBean {
         @Override public ApprovalGate approval() {
             // Always deny AskUser — translate doesn't need approval. If a tool
             // here ever needs approval, replace this stub with a real one.
+            //
+            // 🆕 Story #041 — AC-041-07 verifies this fail-safe contract:
+            // {@code ask(...)} must return Deny immediately (well under 1s, no blocking),
+            // and the Deny reason must contain "DemoA2aServer has no ApprovalGate"
+            // + "AskUser denied". See {@code DemoA2aServerStubApprovalTest}.
             return ask -> new ai.lingshu.core.decision.Decision.Deny(
                 "DemoA2aServer has no ApprovalGate — AskUser denied");
         }

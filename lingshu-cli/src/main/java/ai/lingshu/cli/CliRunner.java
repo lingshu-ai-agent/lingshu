@@ -350,9 +350,9 @@ public class CliRunner implements ApplicationRunner {
             cfg.getA2a().getCallTimeout(),
             cfg.getA2a().getRemoteAgents(),
             cfg.getA2a().getDescriptionSkillLimit());
-        // AgentConfig has 25 fields (Story #006 added tenants, #009 added a2a,
-        // #018 added compactorConfig, #019 added toolsConfig);
-        // preserve all 24, swap only a2a (22nd).
+        // AgentConfig has 26 fields (Story #006 added tenants, #009 added a2a,
+        // #018 added compactorConfig, #019 added toolsConfig, #029 added permissionPolicy);
+        // preserve all 25, swap only a2a (22nd).
         return new AgentConfig(
             cfg.getFlowEngine(),
             cfg.getLlm(),
@@ -377,6 +377,7 @@ public class CliRunner implements ApplicationRunner {
             cfg.getTenants(),
             newA2a,
             cfg.getCompactorConfig(),
-            cfg.getTools());
+            cfg.getTools(),
+            cfg.getPermissionPolicy());
     }
 }

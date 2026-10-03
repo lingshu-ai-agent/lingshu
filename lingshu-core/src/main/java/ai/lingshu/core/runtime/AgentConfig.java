@@ -44,7 +44,18 @@ public class AgentConfig {
     int toolParallelism;
     /** Per-tool-call timeout (seconds); {@code 0} = no timeout. */
     int toolTimeoutSeconds;
-    /** Human-approval timeout (seconds); {@code 0} = wait forever. */
+    /**
+     * Human-approval timeout (seconds); {@code 0} = wait forever
+     * (Claude Code overnight approval parity — Story #030).
+     *
+     * <p>🆕 Story #041 — production path: {@code DefaultApprovalGate.ask(...)}
+     * uses this value to bound the blocking {@code CompletableFuture.get()} on the
+     * registered continuation. When the timeout elapses, the future completes with
+     * {@code Decision.Deny("[LINGS-P02] Permission approval timed out after Ns")}.
+     * Cancelled {@code CancellationToken} also completes the future (now wired via
+     * {@code token.onCancel(...)} callback — was a silent leak in the original
+     * Story #030 inline code; see {@code DefaultApprovalGateTest} AC-041-04).
+     */
     int approvalTimeoutSeconds;
     /** Wall-clock turn timeout (seconds); {@code 0} = no timeout. */
     int turnTimeoutSeconds;
