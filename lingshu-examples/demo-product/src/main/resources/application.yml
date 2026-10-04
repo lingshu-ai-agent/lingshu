@@ -280,10 +280,23 @@ agent:
   # it at 0 so testers can verify the indefinite-wait behavior end-to-end.
   approval-timeout: 0
 
-  # 🆕 Story #029 — PermissionPolicy provider name. Switches Slot 4 router target.
-  # `default` = AllowAllPermissionPolicy (zero-config back-compat, Story #001).
-  # `strict`  = StrictPermissionPolicy (enforces tools.allow-list + tools.deny-list,
-  #             emits [LINGS-P01] deny reason; see dsh §4.7 + §5.5 L2168-2189).
-  # `ask`     = AskUserPermissionPolicy (Story #030) — adds tools.ask-list which
-  #             pauses the turn and routes to the human via /api/approvals/{sessionId}/{approvalId}.
-  permission-policy: strict
+  # 🆕 Story #029 / #030 / #031 — PermissionPolicy provider name. Switches
+  # Slot 4 router target. `ask` mode is the strict-mode SUPERSET (see
+  # AskUserPermissionPolicy.check() 5-段决策, short-circuit on first match):
+  #   `default` = AllowAllPermissionPolicy  (zero-config back-compat, Story #001).
+  #   `strict`  = StrictPermissionPolicy     (deny-list + allow-list only).
+  #   `ask`     = AskUserPermissionPolicy    (deny-list → ask-list → allow-list).
+  #
+  # Demo config below activates `ask` so write_file + bash_safe (in
+  # tools.ask-list above) pause the turn and emit AgentEvent.ApprovalRequired;
+  # the host UI delivers the human's answer via
+  # POST /api/approvals/{sessionId}/{approvalId}. `approval-timeout: 0` above
+  # means wait indefinitely (overnight parity with Claude Code).
+  #
+  # Expected per-tool behaviour in `ask` mode:
+  #   - write_file, bash_safe   → AskUser  (path 2 of AskUserPermissionPolicy)
+  #   - read_file, list_dir,    → Allow    (path 4 — `*` wildcard allow-list)
+  #     any MCP/skill/a2a/delegate tool
+  #   - anything in deny-list   → Deny     (path 1 — currently empty)
+  # See dsh §4.7 + §5.5 + §15.4 P 段 + lingshu-core PermissionPatterns.matches.
+  permission-policy: ask
