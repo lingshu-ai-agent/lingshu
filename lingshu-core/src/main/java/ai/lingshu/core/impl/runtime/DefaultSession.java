@@ -30,19 +30,35 @@ public class DefaultSession implements Session {
 
     private final String id;
     private final List<Message> history;
+    /**
+     * Sub-agent role this session was forked for (e.g. {@code "explore"} / {@code "engineer"} /
+     * {@code "reviewer"} from {@link ai.lingshu.core.agent.SubAgentType#configKey()}).
+     * {@code null} for top-level / main-agent sessions. Immutable after construction —
+     * stamped once in {@link #fork(String)} and never mutated thereafter.
+     */
+    private final String subagentType;
 
     public DefaultSession() {
-        this(UUID.randomUUID().toString());
+        this(UUID.randomUUID().toString(), new ArrayList<>(), null);
     }
 
     public DefaultSession(String id) {
-        this.id = id;
-        this.history = new ArrayList<>();
+        this(id, new ArrayList<>(), null);
     }
 
     public DefaultSession(String id, List<Message> history) {
+        this(id, history, null);
+    }
+
+    /**
+     * Full-control constructor used by {@link #fork(String)} to stamp a sub-agent role on
+     * the child session. {@code subagentType} is the {@code SubAgentType.configKey()}
+     * value (e.g. {@code "explore"}); pass {@code null} for a top-level session.
+     */
+    public DefaultSession(String id, List<Message> history, String subagentType) {
         this.id = id;
         this.history = new ArrayList<>(history);
+        this.subagentType = subagentType;
     }
 
     @Override public String id() { return id; }
@@ -64,15 +80,21 @@ public class DefaultSession implements Session {
     @Override
     public Session fork(String subagentType) {
         synchronized (history) {
-            DefaultSession copy = new DefaultSession(id + ":" + subagentType, history);
-            return copy;
+            return new DefaultSession(id + ":" + subagentType, history, subagentType);
         }
     }
 
     @Override
     public Checkpoint checkpoint() {
         Map<String, String> meta = new HashMap<>();
-        meta.put("subagent", "");
+        // Stamp the sub-agent role on forked sessions only. Top-level sessions (and any
+        // session whose subagentType is unset) produce a clean metadata map with no
+        // dead/empty "subagent" key — replaces the previous `meta.put("subagent", "")`
+        // placeholder which wrote the same empty value on every checkpoint regardless
+        // of whether the session was actually a sub-agent.
+        if (subagentType != null) {
+            meta.put("subagent", subagentType);
+        }
         return new Checkpoint(id, history(), meta, Instant.now());
     }
 
