@@ -51,7 +51,9 @@ class McpTransportAutoConfigurationTest {
             base.getA2a(),
             base.getCompactorConfig(),
             base.getTools(),
-            base.getPermissionPolicy());
+                        base.getPermissionPolicy(),
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     @Test

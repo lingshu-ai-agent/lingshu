@@ -195,6 +195,8 @@ class AgentFactoryPatternMatchingIT {
         return new AgentConfig(
             null, null, null, null, null, null, null, null, null, null,  // 1-10
             0, 0, 0, 0, 0, 0,                                            // 11-16
-            null, null, null, null, null, null, null, null, "default");   // 17-25
+                        null, null, null, null, null, null, null, null, "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

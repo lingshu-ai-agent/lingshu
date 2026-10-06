@@ -189,6 +189,8 @@ class DefaultRuntimeSandboxTest {
             null,                                              // tenants
             AgentConfig.A2a.defaults(),                        // a2a
             AgentConfig.CompactorConfig.defaults(),            // compactorConfig
-            AgentConfig.ToolsConfig.defaults(), "default");               // tools
+                        AgentConfig.ToolsConfig.defaults(), "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

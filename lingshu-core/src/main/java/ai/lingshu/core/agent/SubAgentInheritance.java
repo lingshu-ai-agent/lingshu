@@ -158,8 +158,10 @@ public final class SubAgentInheritance {
             /* a2a             */ optRef(child.getA2a(), parent.getA2a()),
             /* compactorConfig */ optRef(child.getCompactorConfig(), parent.getCompactorConfig()),
             /* tools           */ optRef(child.getTools(), parent.getTools()),
-            /* permissionPolicy */ optString(child.getPermissionPolicy(), parent.getPermissionPolicy())
-        );
+            /* permissionPolicy */ optString(child.getPermissionPolicy(), parent.getPermissionPolicy()),  // Story #029
+            /* maxConcurrentTurns */ optInt(child.getMaxConcurrentTurns(), parent.getMaxConcurrentTurns()),    // 🆕 Story #044
+            /* maxConcurrentQueueDepth */ optInt(child.getMaxConcurrentQueueDepth(), parent.getMaxConcurrentQueueDepth()) // 🆕 Story #044
+    );
     }
 
     // ─────────────────────────────────────────────────────────────────────

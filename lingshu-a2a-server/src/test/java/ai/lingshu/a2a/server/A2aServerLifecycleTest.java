@@ -52,7 +52,9 @@ class A2aServerLifecycleTest {
             null,
             a2a,
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults(), "default");
+                        AgentConfig.ToolsConfig.defaults(), "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     @Test

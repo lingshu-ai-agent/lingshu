@@ -378,6 +378,8 @@ public class CliRunner implements ApplicationRunner {
             newA2a,
             cfg.getCompactorConfig(),
             cfg.getTools(),
-            cfg.getPermissionPolicy());
+                        cfg.getPermissionPolicy(),
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

@@ -111,7 +111,9 @@ class GrpcA2aTransportProviderTest {
             AgentConfig.CompactorConfig.defaults(),
             AgentConfig.ToolsConfig.defaults(),
             "default"
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static AgentConfig withGrpcTarget(AgentConfig c, String target) {
@@ -135,6 +137,8 @@ class GrpcA2aTransportProviderTest {
                 c.getA2a().getDescriptionSkillLimit()),
             c.getCompactorConfig(),
             c.getTools(),
-            c.getPermissionPolicy());
+                        c.getPermissionPolicy(),
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

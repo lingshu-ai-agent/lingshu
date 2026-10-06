@@ -113,7 +113,9 @@ class LinearTurnEngineAskUserTest {
             AgentConfig.CompactorConfig.defaults(),
             AgentConfig.ToolsConfig.defaults(),
             "default"
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static ToolCall call(String id, String toolName) {

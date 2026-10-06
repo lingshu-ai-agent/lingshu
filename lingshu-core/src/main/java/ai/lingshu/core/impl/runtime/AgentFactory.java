@@ -567,6 +567,11 @@ public class AgentFactory implements InitializingBean {
         int turnTimeoutSeconds = intOr(agent, "turnTimeoutSeconds", 120);
         int llmTimeoutSeconds = intOr(agent, "llmTimeoutSeconds", 30);
         int reactMaxSteps = intOr(agent, "reactMaxSteps", 50);
+        // 🆕 Story #044 — top-level turn concurrency cap (dsh §10 NFR row 4).
+        // Mirrors agent.reactMaxSteps top-level camelCase precedent (NOT agent.factory.max-turns
+        // nested as the dsh footnote phrased it). Default 16 + queue 32.
+        int maxConcurrentTurns = intOr(agent, "maxConcurrentTurns", 16);
+        int maxConcurrentQueueDepth = intOr(agent, "maxConcurrentQueueDepth", 32);
 
         AgentConfig.Llm llm = new AgentConfig.Llm(llmProvider, llmModel, 8192, 0.7);
         AgentConfig.Prompt prompt = new AgentConfig.Prompt(promptBuilder, Collections.emptyList(), topK);
@@ -592,8 +597,9 @@ public class AgentFactory implements InitializingBean {
             intOr(toolsMap, "max-file-bytes", 200_000),
             intOr(toolsMap, "max-write-bytes", 1_000_000));
 
-        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={} permissionPolicy={} allowList={} denyList={} askList={})",
-            ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList, toolAskList);
+        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={} permissionPolicy={} allowList={} denyList={} askList={} maxConcurrentTurns={} maxConcurrentQueueDepth={})",
+            ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList, toolAskList,
+            maxConcurrentTurns, maxConcurrentQueueDepth);
 
         return new AgentConfig(
             flowEngine,
@@ -620,7 +626,9 @@ public class AgentFactory implements InitializingBean {
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
             toolsCfg,                                // tools (Story #019 + #029 allow/deny lists)
-            permissionPolicy);                       // permissionPolicy (Story #029)
+            permissionPolicy,                        // permissionPolicy (Story #029)
+            maxConcurrentTurns,                      // 🆕 Story #044 — top-level turn cap (dsh §10 NFR row 4)
+            maxConcurrentQueueDepth);                // 🆕 Story #044 — bounded queue depth (dsh §10 NFR row 4)
     }
 
     @SuppressWarnings("unchecked")

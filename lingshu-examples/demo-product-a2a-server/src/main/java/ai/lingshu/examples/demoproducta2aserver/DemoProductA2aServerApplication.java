@@ -90,8 +90,9 @@ public class DemoProductA2aServerApplication {
             defaults.getA2a(),
             defaults.getCompactorConfig(),
             defaults.getTools(),
-            "default"  // permissionPolicy (🆕 Story #029 — Slot 4; default = AllowAll)
-        );
+            "default",  // permissionPolicy (🆕 Story #029 — Slot 4; default = AllowAll)
+            16,         // 🆕 Story #044 — maxConcurrentTurns (dsh §10 NFR row 4 default 16)
+            32);        // 🆕 Story #044 — maxConcurrentQueueDepth (dsh §10 NFR row 4 queue ≤ 32)
     }
 
     public static void main(String[] args) {
