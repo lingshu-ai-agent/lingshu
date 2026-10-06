@@ -1,0 +1,65 @@
+LingShu (灵枢) Agent Engine
+Copyright 2026 The LingShu Authors
+
+This product includes software developed by third parties:
+
+==============================================================================
+Spring Boot (org.springframework.boot:spring-boot-starter-parent:3.2.5)
+Copyright 2012-2024 VMware, Inc. and Broadcom, Inc.
+Licensed under the Apache License, Version 2.0.
+https://spring.io/projects/spring-boot
+
+==============================================================================
+Spring AI (org.springframework.ai:spring-ai-bom:1.0.0-M6,
+org.springframework.ai:spring-ai-core, spring-ai-anthropic)
+Copyright 2023-2024 Broadcom, Inc.
+Licensed under the Apache License, Version 2.0.
+https://spring.io/projects/spring-ai
+
+==============================================================================
+Project Lombok (org.projectlombok:lombok:1.18.38)
+Copyright 2009-2024 The Project Lombok Authors
+Licensed under the MIT License.
+https://projectlombok.org/
+
+==============================================================================
+OpenTelemetry (io.opentelemetry:opentelemetry-api:1.32.0)
+Copyright The OpenTelemetry Authors
+Licensed under the Apache License, Version 2.0.
+https://opentelemetry.io/
+
+==============================================================================
+Reactive Streams (org.reactivestreams:reactive-streams:1.0.4)
+Copyright reactivestreams.org
+Licensed under the MIT-0 License.
+https://www.reactive-streams.org/
+
+==============================================================================
+Jackson (com.fasterxml.jackson.core:jackson-databind — transitive via Spring Boot)
+Copyright 2008-2024 FasterXML. All rights reserved.
+Licensed under the Apache License, Version 2.0.
+https://github.com/FasterXML/jackson
+
+==============================================================================
+JUnit 5 (org.junit.jupiter:junit-jupiter:5.10.1)
+Copyright 2014-2024 The JUnit Team
+Licensed under the Eclipse Public License v2.0.
+https://junit.org/junit5/
+
+==============================================================================
+AssertJ (org.assertj:assertj-core:3.24.2)
+Copyright 2012-2024 AssertJ Team
+Licensed under the Apache License, Version 2.0.
+https://assertj.org/
+
+==============================================================================
+Mockito (org.mockito:mockito-core:5.8.0)
+Copyright 2007-2024 Mockito contributors
+Licensed under the MIT License.
+https://site.mockito.org/
+
+==============================================================================
+Awaitility (org.awaitility:awaitility-core:4.2.0)
+Copyright 2010-2024 Awaitility Authors
+Licensed under the Apache License, Version 2.0.
+https://github.com/awaitility/awaitility

@@ -12,6 +12,25 @@
     <name>LingShu (灵枢) Agent Engine — Parent</name>
     <description>JDK 8+ Java Agent engine, Spring Boot SPI, ReAct Loop, 9 pluggable Slots</description>
 
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <organization>
+        <name>The LingShu Authors</name>
+        <url>https://github.com/lingshu-ai-agent/lingshu</url>
+    </organization>
+
+    <scm>
+        <connection>scm:git:git://github.com/lingshu-ai-agent/lingshu.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/lingshu-ai-agent/lingshu.git</developerConnection>
+        <url>https://github.com/lingshu-ai-agent/lingshu</url>
+        <tag>HEAD</tag>
+    </scm>
+
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -95,6 +114,35 @@
 
     <build>
         <plugins>
+            <!-- license-maven-plugin: enforce SPDX license header on all Java sources (L1 release gate) -->
+            <plugin>
+                <groupId>com.mycila</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>4.2</version>
+                <configuration>
+                    <header>src/main/resources/license-header.txt</header>
+                    <includes>
+                        <include>src/**/*.java</include>
+                        <include>test/**/*.java</include>
+                    </includes>
+                    <excludes>
+                        <exclude>**/target/**</exclude>
+                        <exclude>**/.flattened-pom.xml</exclude>
+                    </excludes>
+                    <strictCheck>true</strictCheck>
+                    <failIfUnknown>true</failIfUnknown>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>check-license-headers</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Activate flatten-maven-plugin in the reactor so ${revision} is resolved in installed poms. -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
