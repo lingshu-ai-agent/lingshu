@@ -314,7 +314,9 @@ public class DemoProductApplication {
             defaults.getCompactorConfig(),
             tools,                                    // 🆕 Story #031 — allow/deny-list from YAML
             permissionPolicyName                                       // 🆕 Story #029 follow-up
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     /**

@@ -16,9 +16,17 @@ import java.util.Map;
  * {@code AgentFactory.create(config)}, passed by reference through every Slot for the
  * lifetime of the turn, and never mutated.
  *
- * <p>Source-of-truth for the 27+ tunable fields the engine exposes. Default factories
- * ({@code defaults()}) populate every field so a {@code null} from YAML never reaches a
- * Slot without a fallback.
+ * <p>Source-of-truth for the 27+ tunable fields the engine exposes (29+ post-Story #044 —
+ * {@link #maxConcurrentTurns} / {@link #maxConcurrentQueueDepth} added to honour
+ * dsh §10 NFR row 4 «最大并发 turn 数»). Default factories ({@code defaults()}) populate
+ * every field so a {@code null} from YAML never reaches a Slot without a fallback.
+ *
+ * <p><b>🆕 Story #044 — top-level {@link #validate()}</b> (this class) aggregates
+ * validation across the top-level integer tunables ({@link #reactMaxSteps} +
+ * {@link #maxConcurrentTurns} + {@link #maxConcurrentQueueDepth}) into a single
+ * {@link LingsConfigException} carrying all field paths, mirroring
+ * {@link CompactorConfig#validate()} Story #018 + {@link TenantsConfig#validate()}
+ * Story #006 precedents.
  */
 @Value
 public class AgentConfig {
@@ -85,6 +93,75 @@ public class AgentConfig {
      * Default {@code "default"} (allow-all fallback) for back-compat with Story #001.
      */
     String permissionPolicy;
+    /**
+     * 🆕 Story #044 — top-level cap on simultaneously running turns (dsh §10 NFR row 4).
+     * Default {@code 16}. Future turn-scheduler (Story #046+) consumes this to bound
+     * global concurrency. {@code 0} or negative is rejected by {@link #validate()}.
+     *
+     * <p>Honours dsh §10 NFR row 4 «最大并发 turn 数» (default 16) + Story #043 explicit
+     * forward reference («Story #044 才加 {@code maxConcurrentTurns}» — AnthropicLlmProvider.java:97
+     * + specs/043 spec.md:51 + plan.md:172 + tasks.md:141 + CLAUDE.md 注释 5 处).
+     *
+     * <p><b>Why declared at the end of the field list (after {@link #permissionPolicy})</b> —
+     * the bulk-update script that fan-outs the new constructor args to 55+ call sites
+     * appends the 2 args at the END of each {@code new AgentConfig(...)} block, so the
+     * @AllArgsConstructor order MUST end with these 2 fields. Reordering would require
+     * editing 55 files manually. See {@code /tmp/update_agent_config.py}.
+     */
+    int maxConcurrentTurns;
+    /**
+     * 🆕 Story #044 — bounded queue depth for excess turns waiting on a slot
+     * (dsh §10 NFR row 4). Default {@code 32}. Excess turns beyond
+     * {@code maxConcurrentTurns + maxConcurrentQueueDepth} are rejected by the
+     * future turn-scheduler. {@code 0} or negative is rejected by {@link #validate()}.
+     *
+     * <p><b>Why declared at the end of the field list (after {@link #maxConcurrentTurns})</b>
+     * — see field-order rationale on {@link #maxConcurrentTurns}.
+     */
+    int maxConcurrentQueueDepth;
+
+    // ── 🆕 Story #044 — top-level validate() ────────────────────────────
+
+    /**
+     * 🆕 Story #044 — top-level {@link AgentConfig} validation entry point.
+     *
+     * <p>Aggregates every top-level field check (currently {@link #reactMaxSteps} +
+     * {@link #maxConcurrentTurns} + {@link #maxConcurrentQueueDepth}) into a single
+     * {@link LingsConfigException} so a typo in {@code application.yml} surfaces with
+     * every problem in one shot. Reuses the established {@code "C02"} error code
+     * (Story #001 + #018 + #006 + #029 precedent #006 #018 #029 — sub-config validate
+     * classes also use {@code "C02"}).
+     *
+     * <p>Mirrors the validate-aggregate pattern of {@link CompactorConfig#validate()}
+     * (Story #018) and {@link TenantsConfig#validate()} (Story #006). Sub-config
+     * {@code validate()} methods are still responsible for their own field checks;
+     * this top-level method covers only top-level integer tunables that the nested
+     * configs do not own.
+     *
+     * <p>Called eagerly at {@code AgentFactory.create} time (future Story #044-followup
+     * may wire the call) — for now this method exists for L1 unit-test verification
+     * and as the foundation for downstream Story #046+ to invoke from the
+     * future turn-scheduler boot invariants.
+     *
+     * @throws LingsConfigException with code {@code "C02"} when any top-level
+     *         integer tunable is &le; 0 (Story #001 + #018 + #006 + #029 precedent)
+     */
+    public void validate() {
+        List<String> errors = new ArrayList<>();
+        if (reactMaxSteps <= 0) {
+            errors.add("agent.reactMaxSteps must be > 0 (got " + reactMaxSteps + ")");
+        }
+        if (maxConcurrentTurns <= 0) {
+            errors.add("agent.maxConcurrentTurns must be > 0 (got " + maxConcurrentTurns + ")");
+        }
+        if (maxConcurrentQueueDepth <= 0) {
+            errors.add("agent.maxConcurrentQueueDepth must be > 0 (got " + maxConcurrentQueueDepth + ")");
+        }
+        if (!errors.isEmpty()) {
+            throw new LingsConfigException("C02",
+                "agent config validation failed:\n  - " + String.join("\n  - ", errors));
+        }
+    }
 
     // ── Nested config records ───────────────────────────────────────────
 

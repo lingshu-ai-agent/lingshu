@@ -261,8 +261,9 @@ public final class DelegateTool implements Tool {
             /* a2a             */ null,
             /* compactorConfig */ null,
             /* tools           */ null,
-            /* permissionPolicy */ null
-        );
+            /* permissionPolicy */ null,            // Story #029 — Slot 4 null (Delegate forces strict null)
+            /* maxConcurrentTurns */ 16,           // 🆕 Story #044 — top-level turn cap (dsh §10 NFR row 4)
+            /* maxConcurrentQueueDepth */ 32);     // 🆕 Story #044 — bounded queue depth (dsh §10 NFR row 4)
     }
 
     // ─────────────────────────────────────────────────────────────────────

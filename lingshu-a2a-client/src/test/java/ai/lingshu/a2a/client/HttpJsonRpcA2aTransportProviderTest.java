@@ -82,7 +82,9 @@ class HttpJsonRpcA2aTransportProviderTest {
             AgentConfig.CompactorConfig.defaults(),
             AgentConfig.ToolsConfig.defaults(),
             "default"
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static AgentConfig withA2a(AgentConfig c, AgentConfig.A2a a2a) {
@@ -99,6 +101,8 @@ class HttpJsonRpcA2aTransportProviderTest {
             c.getCompactorConfig(),
             c.getTools(),
             c.getPermissionPolicy()
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

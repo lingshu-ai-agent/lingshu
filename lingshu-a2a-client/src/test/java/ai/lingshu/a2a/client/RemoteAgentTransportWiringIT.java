@@ -194,7 +194,9 @@ class RemoteAgentTransportWiringIT {
                 ai.lingshu.core.runtime.AgentConfig.A2a.defaults(),
                 ai.lingshu.core.runtime.AgentConfig.CompactorConfig.defaults(),
                 ai.lingshu.core.runtime.AgentConfig.ToolsConfig.defaults(),
-                "default"));
+                "default",
+                16,      // 🆕 Story #044 — maxConcurrentTurns
+                32));    // 🆕 Story #044 — maxConcurrentQueueDepth
         c.register(RemoteAgentToolAutoConfiguration.class);
         c.refresh();
         return c;

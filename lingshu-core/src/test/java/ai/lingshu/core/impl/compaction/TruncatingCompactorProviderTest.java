@@ -74,7 +74,9 @@ class TruncatingCompactorProviderTest {
             cc,
             base.getTools()  // tools (Story #019) — pass-through
             , base.getPermissionPolicy()
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static ai.lingshu.core.message.Prompt promptOf(int totalChars) {

@@ -69,7 +69,9 @@ class SubAgentInheritanceTest {
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
             AgentConfig.ToolsConfig.defaults(), "default"
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     /** Minimal parent AgentConfig with null Identity (forces defaults() fallback). */
@@ -89,7 +91,9 @@ class SubAgentInheritanceTest {
             baseline.getA2aTransport(), baseline.getTenants(), baseline.getA2a(),
             baseline.getCompactorConfig(), baseline.getTools(),
             baseline.getPermissionPolicy()
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     /** Empty-child skeleton (everything null/0). Used to isolate "inherit from parent" branches. */
@@ -101,7 +105,9 @@ class SubAgentInheritanceTest {
             null, null, null,
             null, null, null,
             null, null, null
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static AgentConfig makeChildWith(Identity id, Instructions inst, Memory mem) {
@@ -112,7 +118,9 @@ class SubAgentInheritanceTest {
             id, inst, mem,
             null, null, null,
             null, null, null
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     // ── Identity merge ───────────────────────────────────────────────────
@@ -237,7 +245,9 @@ class SubAgentInheritanceTest {
             null, null, parent.getA2a(),
             parent.getCompactorConfig(), parent.getTools(),
             parent.getPermissionPolicy()
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
         AgentConfig childAllNull = makeEmptyChild();
 
         AgentConfig merged = SubAgentInheritance.inheritFromParent(

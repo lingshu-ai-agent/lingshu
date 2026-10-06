@@ -72,7 +72,9 @@ class DelegateToolTest {
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
             AgentConfig.ToolsConfig.defaults(), "default"
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
 
         // Build a complete delegate.types map with one TypeConfig per SubAgentType
         Map<String, AgentConfig.TypeConfig> types = new LinkedHashMap<>();

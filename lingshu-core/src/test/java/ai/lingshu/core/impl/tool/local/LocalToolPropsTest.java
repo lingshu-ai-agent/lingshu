@@ -93,6 +93,8 @@ class LocalToolPropsTest {
             base.getA2aTransport(), base.getTenants(), base.getA2a(),
             base.getCompactorConfig(),
             tools,
-            base.getPermissionPolicy());
+                        base.getPermissionPolicy(),
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

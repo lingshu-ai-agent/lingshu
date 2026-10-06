@@ -73,7 +73,9 @@ class A2aTransportRouterTest {
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
             AgentConfig.ToolsConfig.defaults(), "default"    // tools (Story #019)
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static AgentConfig withA2aTransport(AgentConfig cfg, String name) {
@@ -89,7 +91,9 @@ class A2aTransportRouterTest {
             cfg.getTenants(), cfg.getA2a(), cfg.getCompactorConfig(),
             cfg.getTools()                   // tools (Story #019)
             , cfg.getPermissionPolicy()      // permissionPolicy (Story #029)
-        );
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     @Test

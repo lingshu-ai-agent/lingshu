@@ -28,7 +28,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Anthropic-protocol LLM provider (Story #001 default).
@@ -71,11 +75,60 @@ public class AnthropicLlmProvider implements LlmProvider {
     private final String model;
     private final Integer maxTokens;
     private final Double temperature;
-    private final ExecutorService ioExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "anthropic-llm-io");
-        t.setDaemon(true);
-        return t;
-    });
+    /**
+     * 🆕 Story #043 — bounded I/O thread pool for Anthropic HTTP calls.
+     *
+     * <p>Mirrors {@code ToolExecutorConfig.agentToolPool} shape (D-01):
+     * <ul>
+     *   <li>{@code corePoolSize = availableProcessors() * 2} — I/O-bound HTTP calls
+     *       (dsh §14.7 rule of thumb: 2 * cores for I/O-bound work)</li>
+     *   <li>{@code maxPoolSize = corePoolSize * 2} — burst tolerance</li>
+     *   <li>{@code keepAliveTime = 60s} — excess threads reaped after 1 minute idle</li>
+     *   <li>{@code workQueue = LinkedBlockingQueue(256)} — bounded memory footprint</li>
+     *   <li>{@code rejectedExecutionHandler = CallerRunsPolicy} — back-pressure:
+     *       if queue is full, the caller (LinearTurnEngine main thread) runs the
+     *       task inline, slowing the turn rather than rejecting and dropping work</li>
+     * </ul>
+     *
+     * <p>Replaces the previous {@code Executors.newCachedThreadPool} whose
+     * {@code maximumPoolSize = Integer.MAX_VALUE} was the only unbounded
+     * production thread pool in {@code lingshu-core/src/main/java/}, leaving a
+     * latent OOM vector if concurrent-turn scheduling is added before Story #044's
+     * top-level {@code maxConcurrentTurns} gate. See specs/043-anthropic-llm-io-bounded-pool/.
+     *
+     * <p>Thread naming (NFR-003, mirrors {@code lingshu-tool-N} convention):
+     * <ul>
+     *   <li>Prefix {@code anthropic-llm-io-N} — visible in jstack / thread dumps,
+     *       independent counter per provider instance (since providers are per-Agent
+     *       via {@code AgentFactory.create()}, each Agent gets its own counter)</li>
+     *   <li>{@code daemon = true} — JVM exit is not blocked by pool threads</li>
+     * </ul>
+     */
+    private final ExecutorService ioExecutor = buildBoundedIoExecutor();
+
+    private static ExecutorService buildBoundedIoExecutor() {
+        final int corePoolSize = Runtime.getRuntime().availableProcessors() * 2;
+        final int maxPoolSize = corePoolSize * 2;
+        final long keepAliveSeconds = 60L;
+        final int queueCapacity = 256;
+        final AtomicInteger threadSeq = new AtomicInteger(0);
+        ThreadFactory ioThreadFactory = new ThreadFactory() {
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "anthropic-llm-io-" + threadSeq.incrementAndGet());
+                t.setDaemon(true);
+                return t;
+            }
+        };
+        return new ThreadPoolExecutor(
+            corePoolSize,
+            maxPoolSize,
+            keepAliveSeconds,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(queueCapacity),
+            ioThreadFactory,
+            new ThreadPoolExecutor.CallerRunsPolicy());
+    }
 
     public AnthropicLlmProvider(String baseUrl, String apiKey, String anthropicVersion,
                                 String model, Integer maxTokens, Double temperature) {

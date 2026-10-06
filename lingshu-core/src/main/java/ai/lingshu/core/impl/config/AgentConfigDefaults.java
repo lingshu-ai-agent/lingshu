@@ -11,8 +11,10 @@ import java.util.Map;
  *
  * <p>Every field is populated. Slots that have no provider registered yet get a sentinel
  * {@code "default"} name (the Router will fail-fast at startup with a clear "Unknown X"
- * message if no provider is registered, see dsh §5.2). The 27-field default is documented
- * field-by-field in {@link AgentConfig}.
+ * message if no provider is registered, see dsh §5.2). The 29-field default is documented
+ * field-by-field in {@link AgentConfig} (🆕 Story #044 added 2 fields:
+ * {@code maxConcurrentTurns=16} + {@code maxConcurrentQueueDepth=32} to honour
+ * dsh §10 NFR row 4 «最大并发 turn 数»).
  */
 public final class AgentConfigDefaults {
 
@@ -69,7 +71,9 @@ public final class AgentConfigDefaults {
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
             AgentConfig.ToolsConfig.defaults(),      // tools (Story #019)
-            DEFAULT_NAME);                          // permissionPolicy (Story #029)
+            DEFAULT_NAME,                            // permissionPolicy (Story #029)
+            16,      // 🆕 Story #044 — maxConcurrentTurns (dsh §10 NFR row 4 default 16)
+            32);     // 🆕 Story #044 — maxConcurrentQueueDepth (dsh §10 NFR row 4 queue ≤ 32)
     }
 
     /** Static fallback map (used by tests / debug endpoints). */

@@ -53,7 +53,9 @@ class PermissionPolicyRouterStrictIT {
             null, null, null,
             "default", null, null, null,
             toolsWith(allow),
-            "default");
+                        "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
         return base;
     }
 
