@@ -3,7 +3,6 @@ package ai.lingshu.core.impl.config;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import javax.annotation.PreDestroy;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
@@ -40,9 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Configuration
 public class ToolExecutorConfig {
 
-    private ExecutorService agentToolPool;
-
-    @Bean(name = "agentToolPool")
+    @Bean(name = "agentToolPool", destroyMethod = "shutdown")
     public ExecutorService agentToolPool() {
         final int corePoolSize = Runtime.getRuntime().availableProcessors() * 2;
         final int maxPoolSize = corePoolSize * 2;
@@ -59,7 +56,7 @@ public class ToolExecutorConfig {
             }
         };
 
-        this.agentToolPool = new ThreadPoolExecutor(
+        return new ThreadPoolExecutor(
             corePoolSize,
             maxPoolSize,
             keepAliveSeconds,
@@ -67,14 +64,5 @@ public class ToolExecutorConfig {
             new LinkedBlockingQueue<Runnable>(queueCapacity),
             toolThreadFactory,
             new ThreadPoolExecutor.CallerRunsPolicy());
-
-        return this.agentToolPool;
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        if (agentToolPool != null) {
-            agentToolPool.shutdown();
-        }
     }
 }
