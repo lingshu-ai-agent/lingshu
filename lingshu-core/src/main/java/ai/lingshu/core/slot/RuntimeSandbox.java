@@ -16,6 +16,7 @@
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 import java.io.IOException;
 import java.nio.file.FileSystem;
@@ -31,7 +32,10 @@ import java.util.List;
  * <p>Default v1 implementation is {@code ChrootRuntimeSandbox} (Story #001+ stub; full impl in
  * follow-up) which uses {@code java.nio.file.FileSystems.newFileSystem} with a custom
  * {@code Path} filter to confine reads/writes to the configured working directory.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface RuntimeSandbox {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

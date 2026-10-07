@@ -17,6 +17,7 @@ package ai.lingshu.core.runtime;
 
 import ai.lingshu.core.event.AgentEvent;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 import org.reactivestreams.Subscriber;
 
 /**
@@ -37,7 +38,10 @@ import org.reactivestreams.Subscriber;
  *       can persist the final state</li>
  *   <li>Emit {@link AgentEvent.TurnCompleted} as the terminal event</li>
  * </ul>
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface FlowEngine {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

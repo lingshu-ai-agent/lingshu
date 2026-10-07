@@ -18,6 +18,7 @@ package ai.lingshu.core.slot;
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 /**
  * Slot 2 outer half — the single entry point that FlowEngine MUST use for every
@@ -41,7 +42,10 @@ import ai.lingshu.core.spi.ContractVersionRef;
  * {@link ToolCall} payload + {@link ToolExecutionContext}, never the {@code Tool} impl class.
  * That keeps the {@code Tool} side simply has three paths (hand-written / MCP / Spring AI annotation)
  * without imposing a common interface.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface ToolExecutor {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */
