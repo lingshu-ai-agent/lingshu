@@ -96,8 +96,12 @@ class LocalToolsWiringEnabledTest {
                 plainTools.put(e.getKey(), e.getValue());
             }
         }
-        assertThat(plainTools).containsKeys("readTool", "writeTool", "editTool", "bashTool");
-        assertThat(plainTools).hasSize(4);
+        // 🆕 Story #032 — WebFetchTool is a @Component implements Tool added in Story
+        // #032 (WebFetch local HTTP/HTTPS fetcher with WhitelistedHttpClient guard).
+        // It joins the Map<String, Tool> autowire set alongside the 4 Read/Write/Edit/Bash
+        // Local Tools. Spring's Map<String, Tool> resolves to ALL @Component Tool beans.
+        assertThat(plainTools).containsKeys("readTool", "writeTool", "editTool", "bashTool", "webFetchTool");
+        assertThat(plainTools).hasSize(5);
     }
 
     @Test
@@ -108,10 +112,11 @@ class LocalToolsWiringEnabledTest {
         // Story #019 is verified by subtracting Skill names from the total.
         Collection<String> toolOnly = new java.util.HashSet<>(toolRegistry.names());
         toolOnly.removeAll(toolRegistry.skillNames());
+        // 🆕 Story #032 — WebFetchTool (name "web_fetch") added; total is now 5 Tools.
         assertThat(toolOnly)
             .as("LocalToolsAutoConfiguration.afterPropertiesSet() should "
-                + "have registered exactly 4 tools by .name() (Skills counted separately)")
-            .containsExactlyInAnyOrder("Read", "Write", "Edit", "Bash");
+                + "have registered exactly 5 tools by .name() (Skills counted separately)")
+            .containsExactlyInAnyOrder("Read", "Write", "Edit", "Bash", "web_fetch");
 
         // Identity wiring: the same instances exposed by the @Component beans
         // are visible through the shared registry. This proves the SPI refactor
