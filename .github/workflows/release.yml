@@ -83,7 +83,18 @@ jobs:
       - name: Build + verify + deploy
         # -DskipTests=false (default): CI re-runs full 766-test suite as a final gate
         # before deploy. Uses GITHUB_TOKEN env (substituted via ${env.GITHUB_TOKEN} in settings.xml).
-        run: mvn -B -DskipTests=false clean verify deploy
+        #
+        # CRITICAL: do NOT use `mvn ... verify deploy` — `verify` and `deploy` are TWO
+        # separate tasks in mvn's task model. Each task runs the default lifecycle from
+        # validate up to its target phase, so source:jar-no-fork / javadoc:jar (bound to
+        # package phase) fire TWICE → maven-deploy-plugin reports "We have duplicated
+        # artifacts attached" at the second invocation. Verified 2026-10-07 with mvn -X:
+        #   - Task "verify" → runs lifecycle through package (source:jar-no-fork fires)
+        #   - Task "deploy" → runs lifecycle through package again (source:jar-no-fork
+        #     fires AGAIN, finds sources.jar already attached → duplicate error)
+        # `mvn clean deploy` alone runs the default lifecycle from validate through
+        # verify → install → deploy in ONE pass — package phase fires once.
+        run: mvn -B -DskipTests=false clean deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

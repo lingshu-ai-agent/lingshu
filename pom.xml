@@ -243,14 +243,18 @@
                     </executions>
                 </plugin>
 
-                <!-- 🆕 v0.1.0 (A2) — maven-source-plugin: ship sources jar to GH Packages (consumer IDE step-into) -->
+                <!-- 🆕 v0.1.0 (A2) — maven-source-plugin: ship sources jar to GH Packages (consumer IDE step-into).
+                     Explicit execution with id=default + phase=package fires jar-no-fork ONCE at package phase.
+                     The @Mojo(defaultPhase=PACKAGE) on jar-no-fork does NOT auto-bind (verified via mvn -X
+                     goal-list on bare plugin reference), so this explicit execution is the single trigger. -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-source-plugin</artifactId>
                     <version>3.3.1</version>
                     <executions>
                         <execution>
-                            <id>attach-sources</id>
+                            <id>default</id>
+                            <phase>package</phase>
                             <goals>
                                 <goal>jar-no-fork</goal>
                             </goals>
@@ -258,11 +262,23 @@
                     </executions>
                 </plugin>
 
-                <!-- 🆕 v0.1.0 (A2) — maven-javadoc-plugin: ship javadoc jar to GH Packages (skip lint errors, no GPG) -->
+                <!-- 🆕 v0.1.0 (A2) — maven-javadoc-plugin: ship javadoc jar to GH Packages (skip lint errors, no GPG).
+                     Explicit execution with id=default + phase=package fires jar ONCE at package phase.
+                     The @Mojo(defaultPhase=PACKAGE) on jar does NOT auto-bind (verified). <configuration>
+                     (failOnError, doclint, sourceFileExcludes) inherited via pluginManagement. -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>3.6.3</version>
+                    <executions>
+                        <execution>
+                            <id>default</id>
+                            <phase>package</phase>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                     <configuration>
                         <!-- JDK 8 source may have undocumented internal APIs; skip javadoc lint to keep CI green -->
                         <doclint>none</doclint>
@@ -285,29 +301,21 @@
                         -->
                         <failOnError>false</failOnError>
                     </configuration>
-                    <executions>
-                        <execution>
-                            <id>attach-javadocs</id>
-                            <goals>
-                                <goal>jar</goal>
-                            </goals>
-                        </execution>
-                    </executions>
                 </plugin>
 
                 <!--
-                     🆕 v0.1.0 (A2) — maven-deploy-plugin: explicit binding for 5-module reactor deploy to GH Packages.
-                     Spring Boot 3.2.5 parent already manages 3.1.1; we override to enable deploy skipping tests
-                     on `mvn deploy` (CI runs tests in mvn verify first; `mvn deploy` then only ships artifacts).
-                     Use `mvn verify deploy` in GH Actions (skipTests honored here).
+                     🆕 v0.1.0 (A2) — maven-deploy-plugin: ship main + sources + javadoc jars to GH Packages.
+                     NO <executions> — deploy:deploy is bound to deploy phase by maven-core's
+                     default-bindings.xml (for jar packaging). Spring Boot 3.2.5 parent manages 3.1.1;
+                     we override the version to 3.1.1 explicitly to pin the deploy behavior.
+                     CI invokes `mvn clean deploy` (NOT `mvn clean verify deploy`) — see .github/workflows/release.yml
+                     step "Build + verify + deploy" for the full rationale (verify+deploy = 2 lifecycle
+                     passes → source:jar-no-fork fires twice → "duplicated artifacts" error).
                 -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-deploy-plugin</artifactId>
                     <version>3.1.1</version>
-                    <configuration>
-                        <skipTests>${maven.test.skip}</skipTests>
-                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>
