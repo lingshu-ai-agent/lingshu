@@ -18,6 +18,7 @@ package ai.lingshu.core.slot;
 import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 /**
  * Slot 7 — Assembles the {@link Prompt} (messages + tools + hints) the LLM will see (dsh §4.5).
@@ -38,7 +39,10 @@ import ai.lingshu.core.spi.ContractVersionRef;
  * <p>Alternative implementations: RAG-augmented builders (fetch top-K docs first), JSON-mode
  * builders (force structured output), etc. All implement {@code build(ctx)} with no other
  * required methods.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface PromptBuilder {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

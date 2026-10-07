@@ -16,6 +16,7 @@
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 import java.io.IOException;
 import java.util.List;
@@ -49,7 +50,10 @@ import java.util.List;
  * <p><b>Hot-reload hook:</b> {@link #watchable()} returns {@code true} if the
  * source supports mtime watching (§14.8 future Story). v1 returns {@code false}
  * for classpath (jar-immutable) and {@code true} for directory (local mutable).
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface SkillSource {
 
     /** Contract version (semver MAJOR.MINOR.PATCH). */

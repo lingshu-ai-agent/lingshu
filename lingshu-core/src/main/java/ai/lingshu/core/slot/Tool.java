@@ -18,6 +18,7 @@ package ai.lingshu.core.slot;
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
@@ -62,7 +63,10 @@ import com.fasterxml.jackson.databind.JsonNode;
  * <p><b>Back-compat:</b> default returns {@code "local"} so existing {@link Tool}
  * implementations (4 built-in + Spring AI adapters + custom user Tools) continue to work
  * without modification. New code may override to assign a more specific category.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface Tool {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

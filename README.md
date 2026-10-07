@@ -120,6 +120,74 @@ mvn -pl lingshu-examples/demo-empty spring-boot:run # 应当 30 秒内启动,无
 
 ---
 
+## 🛡️ Stable SPI (since 0.1.0)
+
+> **D4 拍板**(2026-10-06):v0.1.0 起,**9 Slot SPI(11 annotated interfaces)+ PermissionPolicy + MemorySource + AuditLogger = 14 个 `@PublicApi(stable)` 标注接口** 锁定为向后兼容契约,跨 minor release 只加不破。
+
+**Stability 标记** —— 接口或方法带 `@PublicApi(PublicApi.Level.STABLE)` 注解 + Javadoc `@since 0.1.0` 标签。三个等级:
+
+| Level | 含义 | 适用范围 |
+|---|---|---|
+| `STABLE` | 跨 minor release 向后兼容;破坏性变更需 major bump + 2 版本 deprecation 周期 | 下列 14 个 SPI |
+| `INCUBATING` | 试验性;后续 minor release 可能变更 | `@PublicApi(INCUBATING)` 标注的类型 |
+| `INTERNAL` | 私有边界;任何 release 都可能改名 / 改签名 | 默认所有未标注类型 |
+
+### 9 Slot SPI(`@PublicApi(stable)` —— 11 annotated interfaces)
+
+| Slot | Interface | Package | Contract version | 责任 |
+|---|---|---|---|---|
+| 1 LLM | `LlmProvider` | `ai.lingshu.core.slot` | `1.0.0` | 流式调模型 + 增量事件 + 终态响应 |
+| 2 Tool | `Tool` | `ai.lingshu.core.slot` | `1.0.0` | 单 Tool 契约(name/desc/schema/execute + `sourceCategory()` 默认方法) |
+| 2 Tool | `ToolExecutor` | `ai.lingshu.core.slot` | `1.0.0` | Tool dispatch 5 步流水线入口(§4.10.1 硬规则 2) |
+| 3 Sandbox | `RuntimeSandbox` | `ai.lingshu.core.slot` | `1.0.0` | 有界 fs / http / process 能力 |
+| 4 Skill | `Skill` | `ai.lingshu.core.slot` | `1.0.0` | Tool 标记接口(`/xxx` 命令 / CLI 拦截) |
+| 4 Skill | `SkillSource` | `ai.lingshu.core.slot` | `1.0.0` | Skill 多源自动发现(classpath / directory / git / s3) |
+| 5 SessionStore | `SessionStore` | `ai.lingshu.core.slot` | `1.0.0` | Checkpoint 持久化(memory / file / redis / jdbc) |
+| 6 Compactor | `Compactor` | `ai.lingshu.core.slot` | `1.0.0` | 历史压缩两步契约(`shouldCompact` + `compact`) |
+| 7 PromptBuilder | `PromptBuilder` | `ai.lingshu.core.slot` | `1.0.0` | 5 段 Prompt 装配 + tools 单独字段 |
+| 8 FlowEngine | `FlowEngine` | `ai.lingshu.core.runtime` | `1.0.0` | Turn 执行拓扑(LinearTurnEngine / DAG / 外部适配器) |
+| 9 A2aTransport | `A2aTransport` | `ai.lingshu.core.slot` | `1.0.0` | 远端 Agent 桥接(5 方法契约) |
+
+### 3 Helper SPI(`@PublicApi(stable)` —— 3 interfaces)
+
+| Helper | Interface | Package | Contract version | 责任 |
+|---|---|---|---|---|
+| 权限策略 | `PermissionPolicy` | `ai.lingshu.core.slot` | `1.0.0` | Tool 调用 3 决策(Allow / Deny / AskUser)+ `approvalTimeoutSeconds=0` 默认无超时(Claude Code overnight parity) |
+| 记忆源 | `MemorySource` | `ai.lingshu.core.slot` | `1.0.0` | `[PROJECT MEMORY]` 单 block 贡献(priority 排序) |
+| 审计日志 | `AuditLogger` | `ai.lingshu.core.spi` | `1.0.0` | 结构化事件 emit(console / file / OTel / Kafka / cloud vendor) |
+
+### Compatibility Promise(dsh §16.1 + D4)
+
+- **Major version 内** —— `STABLE` API **只加不破**;`@Deprecated` 至少 2 个 minor release 后才允许移除
+- **跨 minor release** —— 可新增方法(默认实现)但**禁止**删除 / 改签名 / 改语义
+- **跨 major version** —— 允许破坏性变更,但需发布 migration guide + 1 版本 overlap 窗口
+- **每个接口的 `CONTRACT_VERSION` 字段** —— 启动期 `SlotRouter` 反射校验,版本不兼容时启动失败并打印 ErrorCode
+
+### 编写自己的 Plugin / Provider
+
+```java
+// 1. 实现 Provider(必须 implements SlotProvider)
+public class MyLlmProvider implements LlmProvider {
+    @Override public String name() { return "my-provider"; }
+    @Override public int priority() { return 10; }   // 胜过默认 priority=0
+    @Override public String version() { return "1.0.0"; }  // 必须兼容 1.0.0
+    @Override public LlmProvider create(AgentConfig cfg) {
+        return new MyLlmProviderImpl(cfg);
+    }
+}
+
+// 2. yml 配置
+// agent:
+//   llm:
+//     name: my-provider
+//
+// 3. @Component 自动注册到 Spring 容器(v1.5.28 多 Provider 模式)
+```
+
+完整 SPI 契约 Javadoc 见源码(`ai.lingshu.core.slot.*` + `ai.lingshu.core.runtime.FlowEngine` + `ai.lingshu.core.spi.AuditLogger`)。
+
+---
+
 ## ⚡ 30 秒上手
 
 ### Maven

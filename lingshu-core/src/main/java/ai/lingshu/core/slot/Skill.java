@@ -16,6 +16,7 @@
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 /**
  * Slot 4 marker — Skill is a Tool variant with extra discovery semantics, not a separate type.
@@ -35,7 +36,10 @@ import ai.lingshu.core.spi.ContractVersionRef;
  * Future extensions (user-level aliases {@code /c → commit}, permission-tier
  * "user-only-triggerable", danger-level hints feeding the approval gate) can hang off this
  * interface without breaking implementers that only need {@link Tool} semantics.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface Skill extends Tool {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

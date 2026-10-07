@@ -17,6 +17,7 @@ package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.Checkpoint;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 import java.util.Optional;
 
@@ -33,7 +34,10 @@ import java.util.Optional;
  * <p>Implementations are responsible for serialization (Jackson) and any locking needed for
  * concurrent writes from the same session. The interface stays minimal because the choice
  * of backend is configuration, not code.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface SessionStore {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

@@ -18,6 +18,7 @@ package ai.lingshu.core.slot;
 import ai.lingshu.core.decision.Decision;
 import ai.lingshu.core.message.ToolCall;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 /**
  * Slot 3 model layer — decides whether a tool call may proceed. Called once per
@@ -44,7 +45,10 @@ import ai.lingshu.core.spi.ContractVersionRef;
  * in {@code DefaultToolExecutionContext}); see the JavaDoc on
  * {@link ToolExecutionContext.ApprovalGate} for the SPI contract and fail-safe
  * semantics.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface PermissionPolicy {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

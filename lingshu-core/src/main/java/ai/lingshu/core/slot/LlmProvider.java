@@ -20,6 +20,7 @@ import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 import org.reactivestreams.Subscriber;
 
 import java.util.concurrent.CompletableFuture;
@@ -27,6 +28,8 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Slot 1 — Stream a prompt to an LLM and surface both incremental events and the final
  * structured response.
+ *
+ * @since 0.1.0
  *
  * <p>Two-channel output pattern (see dsh §4.10):
  * <ul>
@@ -41,6 +44,7 @@ import java.util.concurrent.CompletableFuture;
  * <p>Implementations may use Spring AI {@code ChatModel} as the protocol converter (dsh §4.10.1
  * 硬规则 2), or talk to a provider SDK directly. The interface is provider-agnostic.
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface LlmProvider {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). Provider.version() must be
