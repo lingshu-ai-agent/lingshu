@@ -93,6 +93,33 @@
 
 ---
 
+## 🛠️ 环境要求 / Requirements
+
+> **D5 拍板**(2026-10-06):**JDK 8 编译目标** / **JDK 17+ 运行时**(Spring Boot 3.2.5 硬约束)。
+
+| 维度 | 要求 | 说明 |
+|---|---|---|
+| **编译目标** | JDK 8(`<source>1.8</source>`) | Spring Boot 3.2.5 父继承 + `<maven.compiler.source>1.8</maven.compiler.source>`;源码兼容 JDK 8 工具链编译,锁了 `record` / `sealed` / `var` / `List.of` / text blocks(JDK 9—15+ 特性)禁用清单 |
+| **运行 JRE** | **JDK 17+ 必填** | Spring Boot 3.2.5 硬约束(JDK 17+ class file format + Spring 6 baseline);推荐 Temurin / Zulu / Alibaba Dragonwell / IBM Semeru |
+| **构建工具** | Maven 3.6.3+ | 多模块父 POM + 5 子模块;无需 Gradle;`mvn -pl lingshu-core test` 跑核心模块测试 |
+| **JDK 矩阵 CI** | JDK 8(compile only)+ JDK 17 / 21(test + verify) | GitHub Actions matrix 自动跑;JDK 17 是缺省 profile |
+| **OS** | Linux / macOS / Windows | 跨平台;JDK + Maven 即可,无 native dep |
+
+**锁定的 13 项依赖**(dsh §10.1 / R-13 mitigation (d))—— Spring Boot 3.2.5 / Spring AI 1.0.0-M6 / Lombok 1.18.38 / OpenTelemetry 1.32.0 / reactive-streams 1.0.4 / Jackson 2.x / JUnit 5.10.1 / AssertJ 3.24.2 / Mockito 5.8.0 / Awaitility 4.2.0;**新增任何依赖需 RFC + `dependency:tree` CI 卡点 + `banned-dependencies` enforcer build 阶段 fail**(Story 实施 PR body 末尾必须有 `### R-13 dependency:tree 自查` 节)。
+
+**零配置原则**(dsh §7)—— 空 `application.yml` 必须能启动,`AgentConfig` 26 字段全部有默认值(空 yml → 全字段 fallback 默认值 → 启动 → 调 LLM)。
+
+**快速验证**:
+
+```bash
+mvn -v                                              # Maven 3.6.3+ / JDK 1.8.0_xxx+ / Java 17+ vendor
+git clone https://github.com/lingshu-ai-agent/lingshu.git
+cd lingshu
+mvn -pl lingshu-examples/demo-empty spring-boot:run # 应当 30 秒内启动,无 application.yml 也能跑
+```
+
+---
+
 ## ⚡ 30 秒上手
 
 ### Maven
