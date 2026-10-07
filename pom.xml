@@ -31,6 +31,20 @@
         <tag>HEAD</tag>
     </scm>
 
+    <!-- 🆕 v0.1.0 (A1) — GitHub Packages distribution (D2 decision, no Maven Central / Sonatype JIRA) -->
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages (releases)</name>
+            <url>https://maven.pkg.github.com/lingshu-ai-agent/lingshu</url>
+        </repository>
+        <snapshotRepository>
+            <id>github</id>
+            <name>GitHub Packages (snapshots)</name>
+            <url>https://maven.pkg.github.com/lingshu-ai-agent/lingshu</url>
+        </snapshotRepository>
+    </distributionManagement>
+
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -227,6 +241,73 @@
                             </goals>
                         </execution>
                     </executions>
+                </plugin>
+
+                <!-- 🆕 v0.1.0 (A2) — maven-source-plugin: ship sources jar to GH Packages (consumer IDE step-into) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>3.3.1</version>
+                    <executions>
+                        <execution>
+                            <id>attach-sources</id>
+                            <goals>
+                                <goal>jar-no-fork</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!-- 🆕 v0.1.0 (A2) — maven-javadoc-plugin: ship javadoc jar to GH Packages (skip lint errors, no GPG) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>3.6.3</version>
+                    <configuration>
+                        <!-- JDK 8 source may have undocumented internal APIs; skip javadoc lint to keep CI green -->
+                        <doclint>none</doclint>
+                        <source>${maven.compiler.source}</source>
+                        <!--
+                            YamlWatcher.java imports javax.annotation.PostConstruct / PreDestroy (SOURCE
+                            retention, so javac tolerates them via transitive classpath). javadoc tool
+                            on JDK 9+ has no javax.annotation in the standard module set, so it
+                            hard-fails on the import and produces an empty jar. Exclude the file from
+                            javadoc generation (its annotations are wired via Spring destroy-method /
+                            PostConstruct equivalents elsewhere) — see Story #008 follow-up: migrate
+                            YamlWatcher to jakarta.annotation.PostConstruct or Spring destroy-method.
+                        -->
+                        <sourceFileExcludes>
+                            <sourceFileExclude>**/YamlWatcher.java</sourceFileExclude>
+                        </sourceFileExcludes>
+                        <!--
+                            Belt-and-suspenders: any other pre-existing javax.annotation.* reference
+                            shouldn't break the v0.1.0 release pipeline. (D2 decision: minimize friction.)
+                        -->
+                        <failOnError>false</failOnError>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>attach-javadocs</id>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+
+                <!--
+                     🆕 v0.1.0 (A2) — maven-deploy-plugin: explicit binding for 5-module reactor deploy to GH Packages.
+                     Spring Boot 3.2.5 parent already manages 3.1.1; we override to enable deploy skipping tests
+                     on `mvn deploy` (CI runs tests in mvn verify first; `mvn deploy` then only ships artifacts).
+                     Use `mvn verify deploy` in GH Actions (skipTests honored here).
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-deploy-plugin</artifactId>
+                    <version>3.1.1</version>
+                    <configuration>
+                        <skipTests>${maven.test.skip}</skipTests>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

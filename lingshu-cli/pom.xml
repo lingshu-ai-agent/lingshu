@@ -78,6 +78,19 @@
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
+            <!-- 🆕 v0.1.0 (A2) — activate source/javadoc/deploy plugins inherited from parent pluginManagement -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+            </plugin>
         </plugins>
     </build>
 </project>

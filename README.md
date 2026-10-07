@@ -131,6 +131,85 @@ mvn -pl lingshu-examples/demo-empty spring-boot:run # 应当 30 秒内启动,无
 
 ---
 
+## 📦 Installation
+
+> **D2 拍板**(2026-10-06):发布渠道 = **GitHub Packages**(规避 Sonatype/JIRA 首次发布 1—3 工作日审核阻塞)。**代价**:consumers 必须在 `~/.m2/settings.xml` 配一个 `<server>`(username=`x-access-token`,password=GH PAT)才能拉工件 —— 没有匿名下载路径。
+
+### Step 1 — 在你的 `pom.xml` 加依赖
+
+```xml
+<dependency>
+    <groupId>ai.lingshu</groupId>
+    <artifactId>lingshu-core</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+### Step 2 — 声明 GitHub Packages 仓库(repositories)
+
+```xml
+<repositories>
+    <repository>
+        <id>github</id>
+        <name>GitHub Packages (LingShu)</name>
+        <url>https://maven.pkg.github.com/lingshu-ai-agent/lingshu</url>
+        <releases><enabled>true</enabled></releases>
+        <snapshots><enabled>true</enabled></snapshots>
+    </repository>
+</repositories>
+```
+
+> 把这段放进**消费方项目**的 pom.xml(`<project>` 直接子节点,不是某个 profile 里)。否则 Maven 找不到 GH Packages 仓库,会报 `Could not find artifact ai.lingshu:lingshu-core:0.1.0`。
+
+### Step 3 — 配 `~/.m2/settings.xml` 的 `<server>` 块
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github</id>                              <!-- 必须与 pom.xml <distributionManagement> 的 <id> 一致 -->
+      <username>x-access-token</username>          <!-- 固定值,不是你的 GitHub 用户名 -->
+      <password>ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</password>  <!-- 替换为你的 GitHub PAT -->
+    </server>
+  </servers>
+</settings>
+```
+
+> **`<id>github</id>` 必须与 pom.xml `<distributionManagement>` 里的 `<id>` 一致**(都是 `github`)—— Maven 按 id 匹配 `<server>` 和 deploy repo。<username>**不是**你的 GitHub 用户名,固定填 `x-access-token`(GH Packages 的硬约束)。
+
+### Step 4 — 生成 GitHub PAT(4 步)
+
+1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. **Generate new token** → 名字用
+4. **Repository access** → 选择 **Public repositories (read-only)**(只拉包不需要 write,最小权限原则)
+4. **Permissions** → **Only select repositories → Package → Read packages**(精确到只读 packages)
+5. 生成 → 复制 `ghp_...` 开头 40 个字符 → 填入 Step 3 的 `<password>` 字段
+
+> **Fine-grained token** vs **classic token** —— 都行;fine-grained 权限粒度更细,推荐。如果用 classic token,scopes 勾 `read:packages` 一个即可。
+
+### Step 5 — 验证能拉到工件
+
+```bash
+mvn dependency:get -Dartifact=ai.lingshu:lingshu-core:0.1.0
+# 应输出:BUILD SUCCESS(jar 下载到 ~/.m2/repository/ai/lingshu/lingshu-core/0.1.0/)
+```
+
+> 这一步如果失败,99% 是 Step 2 / Step 3 配置问题(仓库没声明或 `<server>` 没配 / id 不一致)。
+
+### 跳过制品验证(只用 snapshot)
+
+```xml
+<dependency>
+    <groupId>ai.lingshu</groupId>
+    <artifactId>lingshu-core</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+snapshot 版本号(例如 `0.1.0-SNAPSHOT`)走同一个 GH Packages URL,Maven 默认每小时检查一次新 snapshot。
+
+---
+
 ## 🛡️ Stable SPI (since 0.1.0)
 
 > **D4 拍板**(2026-10-06):v0.1.0 起,**9 Slot SPI(11 annotated interfaces)+ PermissionPolicy + MemorySource + AuditLogger = 14 个 `@PublicApi(stable)` 标注接口** 锁定为向后兼容契约,跨 minor release 只加不破。
