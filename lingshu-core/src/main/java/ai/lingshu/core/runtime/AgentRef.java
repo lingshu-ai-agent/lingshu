@@ -1,6 +1,24 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.runtime;
 
 import lombok.Value;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Story #009d — pointer to a remote A2A agent, declared in
@@ -19,10 +37,13 @@ import lombok.Value;
  *   a2a:
  *     remoteAgents:
  *       - name: alice
- *         url: http://alice:8080
+ *         url: https://alice.example.com
  *         priority: 10
+ *         domain-whitelist:
+ *           - alice.example.com
+ *           - alice-internal.example.com
  *       - name: bob
- *         url: http://bob:8080
+ *         url: https://bob.example.com
  *         priority: 5
  * }</pre>
  *
@@ -33,6 +54,13 @@ import lombok.Value;
  *
  * <p>Immutable Lombok {@code @Value} — same convention as the rest of
  * {@code AgentConfig} (dsh §4.12.2).</p>
+ *
+ * <p><b>🆕 Story #034 — per-remote-agent sandbox domain whitelist</b>. When
+ * the field is {@code null} (yml omits {@code domain-whitelist}), callers
+ * MUST treat it as {@link Collections#emptyList()} which is the strict-mode
+ * default — denying ALL outgoing HTTP from this agent's transport. This
+ * mirrors {@code McpServerConfig.domainWhitelist} (Story #033) and
+ * {@code WhitelistedHttpClient} (Story #028) semantics.</p>
  */
 @Value
 public class AgentRef {
@@ -58,4 +86,36 @@ public class AgentRef {
      * YAML (Jackson treats missing fields as 0 for primitive ints).
      */
     int priority;
+
+    /**
+     * 🆕 Story #034 — per-remote-agent sandbox domain whitelist (strict mode,
+     * mirrors {@code McpServerConfig.domainWhitelist} from Story #033).
+     *
+     * <p>Empty list (or {@code null} — wire-time fallback) denies ALL outgoing
+     * HTTP from this agent's {@link ai.lingshu.a2a.client.HttpJsonRpcA2aTransport}.
+     * Operators must explicitly populate the field for the agent to function.
+     * Case-sensitive exact host match — mirrors
+     * {@link ai.lingshu.core.slot.AccessDeniedException}[LINGS-S01] semantics
+     * from Story #028.</p>
+     *
+     * <p>yml key: {@code domain-whitelist} (Jackson kebab-case via the same
+     * binding convention used by {@code AgentConfig}). Example:
+     * <pre>{@code
+     * - name: alice
+     *   url: https://alice.example.com
+     *   domain-whitelist: [alice.example.com, alice-internal.example.com]
+     * }</pre>
+     */
+    List<String> domainWhitelist;
+
+    /**
+     * 🆕 Story #034 — safe accessor that treats {@code null} as
+     * {@link Collections#emptyList()} so callers don't have to null-check.
+     * Production wiring ({@code HttpJsonRpcA2aTransportFactory.buildByAgentName})
+     * uses this to aggregate whitelists across multiple {@link AgentRef}s
+     * that share a base URL.
+     */
+    public List<String> getDomainWhitelistOrEmpty() {
+        return domainWhitelist == null ? Collections.<String>emptyList() : domainWhitelist;
+    }
 }

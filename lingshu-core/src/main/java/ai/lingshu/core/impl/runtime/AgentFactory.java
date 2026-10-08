@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.runtime;
 
 import ai.lingshu.core.impl.router.Routers;
@@ -10,6 +25,7 @@ import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import ai.lingshu.core.spi.SlotRouter;
@@ -46,6 +62,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   <li>{@code PermissionPolicy} resolves</li>
  *   <li>{@code PromptBuilder} resolves</li>
  *   <li>{@code FlowEngine} resolves</li>
+ *   <li>🆕 Story #028 — {@code RuntimeSandbox} resolves</li>
  * </ol>
  *
  * <p>dsh §7.1.1: this factory is a stateless singleton; each call to {@code create(config)}
@@ -90,6 +107,8 @@ public class AgentFactory implements InitializingBean {
     private final Routers.PromptBuilderRouter promptBuilderRouter;
     private final Routers.FlowEngineRouter flowRouter;
     private final Routers.MemorySourceRouter memorySourceRouter;
+    /** 🆕 Story #028 — 7th implicit Router for Slot 3 Sandbox (dsh §5.3.1.0). */
+    private final Routers.RuntimeSandboxRouter runtimeSandboxRouter;
 
     @Autowired
     public AgentFactory(Routers.LlmProviderRouter llmRouter,
@@ -97,13 +116,35 @@ public class AgentFactory implements InitializingBean {
                         Routers.PermissionPolicyRouter policyRouter,
                         Routers.PromptBuilderRouter promptBuilderRouter,
                         Routers.FlowEngineRouter flowRouter,
-                        Routers.MemorySourceRouter memorySourceRouter) {
+                        Routers.MemorySourceRouter memorySourceRouter,
+                        Routers.RuntimeSandboxRouter runtimeSandboxRouter) {
         this.llmRouter = llmRouter;
         this.toolRouter = toolRouter;
         this.policyRouter = policyRouter;
         this.promptBuilderRouter = promptBuilderRouter;
         this.flowRouter = flowRouter;
         this.memorySourceRouter = memorySourceRouter;
+        this.runtimeSandboxRouter = runtimeSandboxRouter;
+    }
+
+    /**
+     * 🆕 Story #028 — legacy 6-Router constructor. Sets {@code runtimeSandboxRouter = null}
+     * so test subclasses (e.g. {@code StubAgentFactory} in {@code DelegateToolTest}) can
+     * bypass the Spring wiring without dragging in a 7th stub Router. Production code paths
+     * always use the 7-Router ctor above so the Slot 3 Sandbox is actually resolved.
+     *
+     * <p>The {@link #create(AgentConfig, AgentConfigRegistry)} method's null-guard treats a
+     * null {@code runtimeSandboxRouter} as "no Sandbox configured" — pre-#028 tests that
+     * override {@code create(...)} entirely (rather than calling it) keep working.
+     */
+    public AgentFactory(Routers.LlmProviderRouter llmRouter,
+                        Routers.ToolExecutorRouter toolRouter,
+                        Routers.PermissionPolicyRouter policyRouter,
+                        Routers.PromptBuilderRouter promptBuilderRouter,
+                        Routers.FlowEngineRouter flowRouter,
+                        Routers.MemorySourceRouter memorySourceRouter) {
+        this(llmRouter, toolRouter, policyRouter, promptBuilderRouter, flowRouter,
+            memorySourceRouter, null);
     }
 
     /**
@@ -207,13 +248,20 @@ public class AgentFactory implements InitializingBean {
         PermissionPolicy permissionPolicy = policyRouter.resolve(config.getSandbox().getPolicy(), config);
         PromptBuilder promptBuilder = promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config);
         FlowEngine engine = flowRouter.resolve(config.getFlowEngine(), config);
+        // 🆕 Story #028 — resolve Sandbox runtime (Slot 3 sub-slot via the 7th implicit Router).
+        // Null-guard for the legacy 6-Router ctor path (pre-#028 tests); production paths
+        // always inject the runtimeSandboxRouter via the 7-Router @Autowired ctor above.
+        RuntimeSandbox runtimeSandbox = (runtimeSandboxRouter != null)
+            ? runtimeSandboxRouter.resolve(config.getSandbox().getRuntime(), config)
+            : null;
 
         Session session = new DefaultSession();
-        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{} registry={}",
+        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{} sandbox={} registry={}",
             session.id(),
             config.getFlowEngine(),
             config.getLlm().getProvider(),
             config.getLlm().getModel(),
+            config.getSandbox().getRuntime(),
             registry != null ? "hot-reload (frozen per turn)" : "static");
 
         // Story #001: ToolExecutor / PermissionPolicy / PromptBuilder are resolved but
@@ -223,7 +271,10 @@ public class AgentFactory implements InitializingBean {
         // to auto-register cancellation tokens (FR-011).
         // 🆕 Story #007: registry (if non-null) is held by the Agent and read once per turn
         // at run() entry — provides AC-06 "freeze old config, see new config next turn" semantics.
-        return new DefaultAgent(session, config, engine, registry);
+        // 🆕 Story #028: DefaultAgent.buildContext now passes the resolved RuntimeSandbox to
+        // DefaultToolExecutionContext so the sandbox boundary (fs/http/process) actually fires
+        // per-tool-call (§6.3 + §4.10.1 hard rule 2 pipeline step 4).
+        return new DefaultAgent(session, config, engine, registry, runtimeSandbox);
     }
 
     private static void validate(AgentConfig config) {
@@ -251,6 +302,10 @@ public class AgentFactory implements InitializingBean {
         }
         if (config.getSandbox() == null || config.getSandbox().getPolicy() == null) {
             throw new IllegalArgumentException("config.sandbox.policy is required");
+        }
+        // 🆕 Story #028 — runtime is also required so the Slot 3 Sandbox Router can resolve.
+        if (config.getSandbox().getRuntime() == null || config.getSandbox().getRuntime().isEmpty()) {
+            throw new IllegalArgumentException("config.sandbox.runtime is required");
         }
         if (config.getPrompt() == null || config.getPrompt().getBuilder() == null) {
             throw new IllegalArgumentException("config.prompt.builder is required");
@@ -305,6 +360,13 @@ public class AgentFactory implements InitializingBean {
             .map(s -> "FlowEngine: " + s.trim()).collect(java.util.stream.Collectors.toList()));
         lines.addAll(memorySourceRouter.describe().stream()
             .map(s -> "MemorySource: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        // 🆕 Story #028 — surface the RuntimeSandbox slot in the self-describe output so
+        // users can see which chroot-style provider is active. Null-guard for the legacy
+        // 6-Router ctor path; in production the runtimeSandboxRouter is always non-null.
+        if (runtimeSandboxRouter != null) {
+            lines.addAll(runtimeSandboxRouter.describe().stream()
+                .map(s -> "RuntimeSandbox: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        }
         // Append a placeholder session line so the contract output is complete
         // even when description() is called outside an Agent turn.
         lines.add("Turn=0 Session=" + new DefaultSession().id());
@@ -516,10 +578,15 @@ public class AgentFactory implements InitializingBean {
 
         int toolParallelism = intOr(agent, "toolParallelism", 8);
         int toolTimeoutSeconds = intOr(agent, "toolTimeoutSeconds", 30);
-        int approvalTimeoutSeconds = intOr(agent, "approvalTimeoutSeconds", 60);
+        int approvalTimeoutSeconds = intOr(agent, "approvalTimeoutSeconds", 0);
         int turnTimeoutSeconds = intOr(agent, "turnTimeoutSeconds", 120);
         int llmTimeoutSeconds = intOr(agent, "llmTimeoutSeconds", 30);
         int reactMaxSteps = intOr(agent, "reactMaxSteps", 50);
+        // 🆕 Story #044 — top-level turn concurrency cap (dsh §10 NFR row 4).
+        // Mirrors agent.reactMaxSteps top-level camelCase precedent (NOT agent.factory.max-turns
+        // nested as the dsh footnote phrased it). Default 16 + queue 32.
+        int maxConcurrentTurns = intOr(agent, "maxConcurrentTurns", 16);
+        int maxConcurrentQueueDepth = intOr(agent, "maxConcurrentQueueDepth", 32);
 
         AgentConfig.Llm llm = new AgentConfig.Llm(llmProvider, llmModel, 8192, 0.7);
         AgentConfig.Prompt prompt = new AgentConfig.Prompt(promptBuilder, Collections.emptyList(), topK);
@@ -527,8 +594,27 @@ public class AgentFactory implements InitializingBean {
             sandboxPolicy, sandboxRuntime, java.nio.file.Paths.get(sandboxWd),
             whitelist, Collections.emptyList());
 
-        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={})",
-            ymlPath.getFileName(), llmProvider, llmModel, whitelist);
+        // ── Story #029 + 🆕 Story #030 ── PermissionPolicy (top-level) + ToolsConfig allow/deny/ask lists.
+        // Default permissionPolicy="default" preserves Story #001 zero-config back-compat;
+        // demo yml may opt into `permission-policy: strict` or `permission-policy: ask` (Story #030)
+        // to switch Slot 4 router target. askList triggers AskUser → host UI approval flow.
+        String permissionPolicy = stringOr(agent, "permission-policy", "default");
+        Map<String, Object> toolsMap = agent.get("tools") instanceof Map
+            ? (Map<String, Object>) agent.get("tools") : Collections.<String, Object>emptyMap();
+        List<String> toolAllowList = stringListOr(toolsMap, "allow-list", Collections.<String>emptyList());
+        List<String> toolDenyList = stringListOr(toolsMap, "deny-list", Collections.<String>emptyList());
+        // 🆕 Story #030 — ask-list (kebab-case `ask-list` mirrors allow-list/deny-list);
+        // empty default means AskUserPermissionPolicy falls through to default-allow path.
+        List<String> toolAskList = stringListOr(toolsMap, "ask-list", Collections.<String>emptyList());
+        boolean toolsEnabled = booleanOr(toolsMap, "enabled", true);
+        AgentConfig.ToolsConfig toolsCfg = new AgentConfig.ToolsConfig(
+            toolsEnabled, toolAllowList, toolDenyList, toolAskList,
+            intOr(toolsMap, "max-file-bytes", 200_000),
+            intOr(toolsMap, "max-write-bytes", 1_000_000));
+
+        LOG.info("loadYamlAndValidate: parsed {} (provider={} model={} whitelist={} permissionPolicy={} allowList={} denyList={} askList={} maxConcurrentTurns={} maxConcurrentQueueDepth={})",
+            ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList, toolAskList,
+            maxConcurrentTurns, maxConcurrentQueueDepth);
 
         return new AgentConfig(
             flowEngine,
@@ -554,7 +640,10 @@ public class AgentFactory implements InitializingBean {
             null,                       // tenants (Story #006 — null = single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
+            toolsCfg,                                // tools (Story #019 + #029 allow/deny lists)
+            permissionPolicy,                        // permissionPolicy (Story #029)
+            maxConcurrentTurns,                      // 🆕 Story #044 — top-level turn cap (dsh §10 NFR row 4)
+            maxConcurrentQueueDepth);                // 🆕 Story #044 — bounded queue depth (dsh §10 NFR row 4)
     }
 
     @SuppressWarnings("unchecked")
@@ -576,6 +665,23 @@ public class AgentFactory implements InitializingBean {
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    /**
+     * Story #029 — boolean scalar reader for YAML map. Treats {@code "true"} (case-insensitive),
+     * {@code true}, {@code 1} as {@code true}; everything else {@code false}.
+     * Tolerates missing keys (returns fallback).
+     */
+    @SuppressWarnings("unchecked")
+    private static boolean booleanOr(Object parentObj, String key, boolean fallback) {
+        if (!(parentObj instanceof Map)) return fallback;
+        Map<String, Object> parent = (Map<String, Object>) parentObj;
+        Object v = parent.get(key);
+        if (v == null) return fallback;
+        String s = v.toString().trim().toLowerCase();
+        if ("true".equals(s) || "1".equals(s) || "yes".equals(s)) return true;
+        if ("false".equals(s) || "0".equals(s) || "no".equals(s)) return false;
+        return fallback;
     }
 
     @SuppressWarnings("unchecked")

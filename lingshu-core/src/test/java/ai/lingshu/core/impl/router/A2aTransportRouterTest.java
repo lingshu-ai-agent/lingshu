@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.router;
 
 import ai.lingshu.core.message.ToolResult;
@@ -72,8 +87,10 @@ class A2aTransportRouterTest {
             null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()  // tools (Story #019)
-        );
+            AgentConfig.ToolsConfig.defaults(), "default"    // tools (Story #019)
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static AgentConfig withA2aTransport(AgentConfig cfg, String name) {
@@ -88,7 +105,10 @@ class A2aTransportRouterTest {
             name,                          // new a2aTransport
             cfg.getTenants(), cfg.getA2a(), cfg.getCompactorConfig(),
             cfg.getTools()                   // tools (Story #019)
-        );
+            , cfg.getPermissionPolicy()      // permissionPolicy (Story #029)
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     @Test

@@ -23,7 +23,15 @@
     .ev.turn-completed, .ev.max-steps { border-left-color: #3fb950; }
     .ev.compacted { border-left-color: #a371f7; font-weight: bold; }
     .ev.error { border-left-color: #f85149; }
-    .ev.approval { border-left-color: #db61a2; }
+    .ev.approval { border-left-color: #db61a2; padding: 6px 8px; }
+    .ev.approval .reason { width: 200px; padding: 2px 6px; margin-right: 6px; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 3px; font-size: 11px; }
+    .ev.approval .btn-allow { background: #238636; color: #fff; border: 1px solid #2ea043; margin-right: 4px; }
+    .ev.approval .btn-allow:hover { background: #2ea043; }
+    .ev.approval .btn-allow:disabled { background: #1a4d2a; cursor: not-allowed; }
+    .ev.approval .btn-deny  { background: #da3633; color: #fff; border: 1px solid #f85149; }
+    .ev.approval .btn-deny:hover  { background: #f85149; }
+    .ev.approval .btn-deny:disabled  { background: #4d1a1a; cursor: not-allowed; }
+    .ev.approval .approval-err { color: #f85149; font-size: 10px; margin-left: 6px; }
     footer { display: flex; gap: 8px; margin-top: 8px; }
     input[type=text] { flex: 1; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; padding: 6px 10px; }
     input[type=text]:focus { outline: none; border-color: #1f6feb; }

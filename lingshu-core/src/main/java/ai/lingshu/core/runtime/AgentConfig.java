@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.runtime;
 
 import ai.lingshu.core.exception.LingsConfigException;
@@ -16,9 +31,17 @@ import java.util.Map;
  * {@code AgentFactory.create(config)}, passed by reference through every Slot for the
  * lifetime of the turn, and never mutated.
  *
- * <p>Source-of-truth for the 27+ tunable fields the engine exposes. Default factories
- * ({@code defaults()}) populate every field so a {@code null} from YAML never reaches a
- * Slot without a fallback.
+ * <p>Source-of-truth for the 27+ tunable fields the engine exposes (29+ post-Story #044 —
+ * {@link #maxConcurrentTurns} / {@link #maxConcurrentQueueDepth} added to honour
+ * dsh §10 NFR row 4 «最大并发 turn 数»). Default factories ({@code defaults()}) populate
+ * every field so a {@code null} from YAML never reaches a Slot without a fallback.
+ *
+ * <p><b>🆕 Story #044 — top-level {@link #validate()}</b> (this class) aggregates
+ * validation across the top-level integer tunables ({@link #reactMaxSteps} +
+ * {@link #maxConcurrentTurns} + {@link #maxConcurrentQueueDepth}) into a single
+ * {@link LingsConfigException} carrying all field paths, mirroring
+ * {@link CompactorConfig#validate()} Story #018 + {@link TenantsConfig#validate()}
+ * Story #006 precedents.
  */
 @Value
 public class AgentConfig {
@@ -44,7 +67,18 @@ public class AgentConfig {
     int toolParallelism;
     /** Per-tool-call timeout (seconds); {@code 0} = no timeout. */
     int toolTimeoutSeconds;
-    /** Human-approval timeout (seconds); {@code 0} = wait forever. */
+    /**
+     * Human-approval timeout (seconds); {@code 0} = wait forever
+     * (Claude Code overnight approval parity — Story #030).
+     *
+     * <p>🆕 Story #041 — production path: {@code DefaultApprovalGate.ask(...)}
+     * uses this value to bound the blocking {@code CompletableFuture.get()} on the
+     * registered continuation. When the timeout elapses, the future completes with
+     * {@code Decision.Deny("[LINGS-P02] Permission approval timed out after Ns")}.
+     * Cancelled {@code CancellationToken} also completes the future (now wired via
+     * {@code token.onCancel(...)} callback — was a silent leak in the original
+     * Story #030 inline code; see {@code DefaultApprovalGateTest} AC-041-04).
+     */
     int approvalTimeoutSeconds;
     /** Wall-clock turn timeout (seconds); {@code 0} = no timeout. */
     int turnTimeoutSeconds;
@@ -68,6 +102,81 @@ public class AgentConfig {
     CompactorConfig compactorConfig;
     /** 🆕 Story #019 — Built-in local tools (Read/Write/Edit/Bash) toggle + byte caps. Null uses {@link ToolsConfig#defaults()}. */
     ToolsConfig tools;
+    /**
+     * 🆕 Story #029 — PermissionPolicy name (e.g. {@code "default"}, {@code "strict"}).
+     * Resolved via {@code PermissionPolicyRouter} at {@link AgentFactory#create} time.
+     * Default {@code "default"} (allow-all fallback) for back-compat with Story #001.
+     */
+    String permissionPolicy;
+    /**
+     * 🆕 Story #044 — top-level cap on simultaneously running turns (dsh §10 NFR row 4).
+     * Default {@code 16}. Future turn-scheduler (Story #046+) consumes this to bound
+     * global concurrency. {@code 0} or negative is rejected by {@link #validate()}.
+     *
+     * <p>Honours dsh §10 NFR row 4 «最大并发 turn 数» (default 16) + Story #043 explicit
+     * forward reference («Story #044 才加 {@code maxConcurrentTurns}» — AnthropicLlmProvider.java:97
+     * + specs/043 spec.md:51 + plan.md:172 + tasks.md:141 + CLAUDE.md 注释 5 处).
+     *
+     * <p><b>Why declared at the end of the field list (after {@link #permissionPolicy})</b> —
+     * the bulk-update script that fan-outs the new constructor args to 55+ call sites
+     * appends the 2 args at the END of each {@code new AgentConfig(...)} block, so the
+     * @AllArgsConstructor order MUST end with these 2 fields. Reordering would require
+     * editing 55 files manually. See {@code /tmp/update_agent_config.py}.
+     */
+    int maxConcurrentTurns;
+    /**
+     * 🆕 Story #044 — bounded queue depth for excess turns waiting on a slot
+     * (dsh §10 NFR row 4). Default {@code 32}. Excess turns beyond
+     * {@code maxConcurrentTurns + maxConcurrentQueueDepth} are rejected by the
+     * future turn-scheduler. {@code 0} or negative is rejected by {@link #validate()}.
+     *
+     * <p><b>Why declared at the end of the field list (after {@link #maxConcurrentTurns})</b>
+     * — see field-order rationale on {@link #maxConcurrentTurns}.
+     */
+    int maxConcurrentQueueDepth;
+
+    // ── 🆕 Story #044 — top-level validate() ────────────────────────────
+
+    /**
+     * 🆕 Story #044 — top-level {@link AgentConfig} validation entry point.
+     *
+     * <p>Aggregates every top-level field check (currently {@link #reactMaxSteps} +
+     * {@link #maxConcurrentTurns} + {@link #maxConcurrentQueueDepth}) into a single
+     * {@link LingsConfigException} so a typo in {@code application.yml} surfaces with
+     * every problem in one shot. Reuses the established {@code "C02"} error code
+     * (Story #001 + #018 + #006 + #029 precedent #006 #018 #029 — sub-config validate
+     * classes also use {@code "C02"}).
+     *
+     * <p>Mirrors the validate-aggregate pattern of {@link CompactorConfig#validate()}
+     * (Story #018) and {@link TenantsConfig#validate()} (Story #006). Sub-config
+     * {@code validate()} methods are still responsible for their own field checks;
+     * this top-level method covers only top-level integer tunables that the nested
+     * configs do not own.
+     *
+     * <p>Called eagerly at {@code AgentFactory.create} time (future Story #044-followup
+     * may wire the call) — for now this method exists for L1 unit-test verification
+     * and as the foundation for downstream Story #046+ to invoke from the
+     * future turn-scheduler boot invariants.
+     *
+     * @throws LingsConfigException with code {@code "C02"} when any top-level
+     *         integer tunable is &le; 0 (Story #001 + #018 + #006 + #029 precedent)
+     */
+    public void validate() {
+        List<String> errors = new ArrayList<>();
+        if (reactMaxSteps <= 0) {
+            errors.add("agent.reactMaxSteps must be > 0 (got " + reactMaxSteps + ")");
+        }
+        if (maxConcurrentTurns <= 0) {
+            errors.add("agent.maxConcurrentTurns must be > 0 (got " + maxConcurrentTurns + ")");
+        }
+        if (maxConcurrentQueueDepth <= 0) {
+            errors.add("agent.maxConcurrentQueueDepth must be > 0 (got " + maxConcurrentQueueDepth + ")");
+        }
+        if (!errors.isEmpty()) {
+            throw new LingsConfigException("C02",
+                "agent config validation failed:\n  - " + String.join("\n  - ", errors));
+        }
+    }
 
     // ── Nested config records ───────────────────────────────────────────
 
@@ -170,6 +279,37 @@ public class AgentConfig {
         /** Toggle local tool registration; default {@code true} for zero-config Story #001 AC-01-2. */
         boolean enabled;
 
+        /**
+         * 🆕 Story #029 — Tool allow-list (highest priority). When non-empty,
+         * {@code StrictPermissionPolicy.check()} only allows tools whose name appears in
+         * this list. Empty (the zero-config default) means "no allow-list constraint",
+         * falling back to {@link #denyList} and default-allow.
+         */
+        List<String> allowList;
+
+        /**
+         * 🆕 Story #029 — Tool deny-list. When non-empty, {@code StrictPermissionPolicy.check()}
+         * rejects tools whose name appears in this list. Empty (the zero-config default) means
+         * "no deny-list constraint".
+         */
+        List<String> denyList;
+
+        /**
+         * 🆕 Story #030 — Tool ask-list. When non-empty, {@code AskUserPermissionPolicy.check()}
+         * returns {@link ai.lingshu.core.decision.Decision.AskUser} for tools whose name matches
+         * one of these patterns, pausing the turn and routing to
+         * {@link ai.lingshu.core.slot.ToolExecutionContext.ApprovalGate#ask}. The engine then
+         * emits {@code AgentEvent.ApprovalRequired} with a stable {@code approvalId} so the
+         * host UI can correlate the human's eventual answer (Allow / Deny) back to the pending
+         * continuation. Empty (the zero-config default) means "no ask-list constraint".
+         *
+         * <p>Pattern grammar (reuses Story #031 {@code PermissionPatterns.matches}): {@code "*"}
+         * matches all tools, {@code "<category>:*"} matches all tools of a category
+         * ({@code local / mcp / skill / a2a / delegate}), {@code "<exact-name>"} matches a
+         * single tool.
+         */
+        List<String> askList;
+
         /** Read file size cap; default {@code 200_000} bytes (200KB). */
         int maxReadBytes;
 
@@ -177,11 +317,20 @@ public class AgentConfig {
         int maxWriteBytes;
 
         /**
-         * Zero-config default — all 4 tools enabled, conservative byte caps.
+         * Zero-config default — all 4 tools enabled, conservative byte caps, both
+         * allow-list and deny-list empty (equivalent to AllowAll for the strict policy).
          * Matches {@code application.yml} absent — empty yml must boot (Story #001 AC-01-2).
+         *
+         * <p><b>🆕 Story #030 — askList default is empty</b>, meaning the
+         * {@code AskUserPermissionPolicy} falls through to the allow-list / deny-list
+         * default-allow path (no human-in-the-loop prompts in the zero-config case).
          */
         public static ToolsConfig defaults() {
-            return new ToolsConfig(true, 200_000, 1_000_000);
+            return new ToolsConfig(true,
+                Collections.<String>emptyList(),
+                Collections.<String>emptyList(),
+                Collections.<String>emptyList(),
+                200_000, 1_000_000);
         }
 
         /**

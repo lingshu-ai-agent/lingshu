@@ -64,6 +64,22 @@ agent:
   # in ai.lingshu.examples.demoproduct.ProductTools and are auto-scanned via
   # Spring's @ComponentScan. We disable the engine's built-in bash tool so
   # the demo's whitelist (BashSafeTool) is the only shell path.
+  #
+  # 🆕 Story #029 — `allow-list` is the strict PermissionPolicy's allow-list
+  # (dsh §5.5 L2168-2189). When `permission-policy: strict`, only tools named
+  # here can be invoked; everything else is denied with `[LINGS-P01]`.
+  #
+  # 🆕 Story #031 — pattern matching replaces the Story #029 static 12-line
+  # enumeration. The yml entry below uses `*` (the wildcard pattern) so the
+  # strict policy allows ALL registered Tools regardless of source category
+  # (local / mcp / skill / a2a / delegate). New MCP servers / Skill files /
+  # RemoteAgents / Delegate sub-agents are auto-included without yml edits.
+  # Other supported patterns (PermissionPatterns.matches):
+  #   - "<exact-name>"           → strict-equals tool.name()
+  #   - "<category>:*"           → every tool whose Tool.sourceCategory() matches
+  #   - "*"                      → every tool (used here)
+  # See `lingshu-core/src/main/java/ai/lingshu/core/impl/permission/PermissionPatterns.java`
+  # + dsh §4.7 + §15.4 P 段.
   tools:
     enabled: true
     read: true
@@ -71,6 +87,23 @@ agent:
     edit: false
     bash: false
     max-file-bytes: 65536
+    # 🆕 Story #031 — wildcard pattern (replaces Story #029 12-line static list).
+    # When permission-policy: strict (below), every registered Tool is allowed
+    # by name regardless of category. New MCP servers / Skills / RemoteAgents
+    # added after this yml edit are auto-included.
+    allow-list:
+      - "*"
+    deny-list: []
+    # 🆕 Story #030 — ask-list: when permission-policy: ask (set below), tools
+    # matching any pattern here pause the turn and emit AgentEvent.ApprovalRequired;
+    # the host UI delivers the human's answer via POST /api/approvals/{sessionId}/{approvalId}.
+    # Demo entry points write_file + bash_safe — both are "scary" enough to merit
+    # approval but not "deny-by-default" (i.e. read_file is auto-allowed via the
+    # wildcard allow-list above). For a tighter demo set `permission-policy: ask`
+    # below and switch to ask-list-only.
+    ask-list:
+      - "write_file"
+      - "bash_safe"
 
   # ── Sandbox (Slot 3) — boundary for the 4 fs-touching Tools ──────────
   # demo-product enables 4 local @Component Tools (read_file/write_file/
@@ -84,7 +117,9 @@ agent:
   #   working-directory   → fs ops must resolve under this Path
   #   command-whitelist   → only enforced when built-in bash=true (here: false,
   #                           BashSafeTool enforces its own whitelist instead)
-  #   domain-whitelist    → only enforced by WebFetch (not in this demo)
+  #   domain-whitelist    → 🆕 Story #032 — enforced by WebFetchTool via
+  #                           ctx.http().get(url) → WhitelistedHttpClient.check().
+  #                           Built-in web_fetch Tool is GET-only; HTTPS transparent.
   #
   # Consumed by the `agentConfig(Environment)` @Bean (Story #025 follow-up).
   # ChatController builds per-session configs from defaults directly —
@@ -105,9 +140,24 @@ agent:
       - whoami
       - pwd
       - which
+    # 🆕 Story #032 — domain-whitelist now enforced for local web_fetch Tool
+    # (Claude Code parity, Read/Bash/WebFetch triplet complete); HTTPS supported
+    # transparently. The local Tool path goes through WhitelistedHttpClient,
+    # which checks the host against this list before opening any connection;
+    # domain miss → [LINGS-S01] AccessDeniedException → ToolResult.error.
+    #
+    # MCP HTTP transports stay untouched per Story #033 Path B (check-only hook).
+    #
+    # `localhost` is included so the Story #032 L3 blackbox IT can hit a mock
+    # HTTP server started in-test (DemoProductWebFetchIT). Remove for prod.
     domain-whitelist:
       - github.com
       - maven.aliyun.com
+      - api.openai.com
+      - api.anthropic.com
+      - raw.githubusercontent.com
+      - huggingface.co
+      - localhost
 
   # ── MCP (Story #021a/b/c) — all 3 transports wired ────────────────────
   # Each server gets its own `name` + `transport` + matching fields. The
@@ -223,3 +273,30 @@ agent:
   turn-timeout-seconds: 120
   llm-timeout-seconds: 30
   tool-timeout-seconds: 30
+  # 🆕 Story #030 — Approval timeout. `0` (zero-config default) means wait
+  # indefinitely so an overnight approval still works when the human returns
+  # next morning (matches Claude Code's behavior). Set >0 to bound the wait;
+  # timeout triggers Decision.Deny with [LINGS-P02] embedded. The demo leaves
+  # it at 0 so testers can verify the indefinite-wait behavior end-to-end.
+  approval-timeout: 0
+
+  # 🆕 Story #029 / #030 / #031 — PermissionPolicy provider name. Switches
+  # Slot 4 router target. `ask` mode is the strict-mode SUPERSET (see
+  # AskUserPermissionPolicy.check() 5-段决策, short-circuit on first match):
+  #   `default` = AllowAllPermissionPolicy  (zero-config back-compat, Story #001).
+  #   `strict`  = StrictPermissionPolicy     (deny-list + allow-list only).
+  #   `ask`     = AskUserPermissionPolicy    (deny-list → ask-list → allow-list).
+  #
+  # Demo config below activates `ask` so write_file + bash_safe (in
+  # tools.ask-list above) pause the turn and emit AgentEvent.ApprovalRequired;
+  # the host UI delivers the human's answer via
+  # POST /api/approvals/{sessionId}/{approvalId}. `approval-timeout: 0` above
+  # means wait indefinitely (overnight parity with Claude Code).
+  #
+  # Expected per-tool behaviour in `ask` mode:
+  #   - write_file, bash_safe   → AskUser  (path 2 of AskUserPermissionPolicy)
+  #   - read_file, list_dir,    → Allow    (path 4 — `*` wildcard allow-list)
+  #     any MCP/skill/a2a/delegate tool
+  #   - anything in deny-list   → Deny     (path 1 — currently empty)
+  # See dsh §4.7 + §5.5 + §15.4 P 段 + lingshu-core PermissionPatterns.matches.
+  permission-policy: ask

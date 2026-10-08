@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.a2a.client;
 
 import ai.lingshu.core.impl.router.A2aTransportRouter;
@@ -41,11 +56,23 @@ public class RemoteAgentToolAutoConfiguration {
     public RemoteAgentTool remoteAgentTool(A2aTransportRouter router,
                                            AgentConfig cfg,
                                            ObjectMapper json,
-                                           RemoteAgentSchemaBuilder schemaBuilder) {
+                                           RemoteAgentSchemaBuilder schemaBuilder,
+                                           // 🆕 Story #034 — factory is required so we can wire
+                                           // sandbox domain-whitelist for the http-jsonrpc
+                                           // transport (which makes real HTTP calls); for grpc
+                                           // and in-process transports we still use
+                                           // router.resolve(...) since they don't touch the network.
+                                           HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory httpJsonRpcFactory) {
         String transportName = cfg != null && cfg.getA2aTransport() != null
             ? cfg.getA2aTransport()
             : "http-jsonrpc-1.0.0";
-        A2aTransport transport = router.resolve(transportName, cfg);
+        A2aTransport transport;
+        if ("http-jsonrpc-1.0.0".equals(transportName)) {
+            // 🆕 Story #034 — use factory to honor per-remote-agent domainWhitelist
+            transport = httpJsonRpcFactory.build();
+        } else {
+            transport = router.resolve(transportName, cfg);
+        }
 
         List<AgentRef> remoteAgents = (cfg != null && cfg.getA2a() != null
             && cfg.getA2a().getRemoteAgents() != null)

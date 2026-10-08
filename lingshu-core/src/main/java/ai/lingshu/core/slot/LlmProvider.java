@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.event.AgentEvent;
@@ -5,6 +20,7 @@ import ai.lingshu.core.message.LlmResponse;
 import ai.lingshu.core.message.Prompt;
 import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 import org.reactivestreams.Subscriber;
 
 import java.util.concurrent.CompletableFuture;
@@ -12,6 +28,8 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Slot 1 — Stream a prompt to an LLM and surface both incremental events and the final
  * structured response.
+ *
+ * @since 0.1.0
  *
  * <p>Two-channel output pattern (see dsh §4.10):
  * <ul>
@@ -26,6 +44,7 @@ import java.util.concurrent.CompletableFuture;
  * <p>Implementations may use Spring AI {@code ChatModel} as the protocol converter (dsh §4.10.1
  * 硬规则 2), or talk to a provider SDK directly. The interface is provider-agnostic.
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface LlmProvider {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). Provider.version() must be

@@ -4,6 +4,27 @@
   <h1>lingshu · 灵枢</h1>
   <p><strong>The Pivot of Agent Orchestration</strong></p>
 
+  > **🎉 v0.1.0 — First Stable Release (2026-10-07)** — **45 Stories merged** / **766 tests pass** / **435 source files** / **14 stable SPIs** (`@PublicApi(STABLE)`, 9 Slot + 3 Helper + 2 supporting) / **29 R-13 0-binary-delta PASSes** / **0 new Maven dependencies** during the 0.1.0 cycle / Apache-2.0 / JDK 8 source + JDK 17+ runtime. → See **[CHANGELOG.md](./CHANGELOG.md)** + **[RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md)** for full release notes.
+
+  > **更新日期**:2026-10-06 — **🆕 Story #044 agent-turn-concurrency-cap 已合**(720 pass / 0 fail / 2 MCP heartbeat flake pre-existing / AnthropicToolReActIT standalone flake pre-existing / R-13 0 binary delta **第 27 次 PASS** / **0 新 ErrorCode**(复用 `LINGS-C02`)/ **累计 44 个 Story 合入**):**兑现 dsh §10 NFR row 4 docs/code + Story #043 forward reference** —— `AgentConfig.@Value` 24 → 26 字段 final,顶层扩 `maxConcurrentTurns`(默认 16)+ `maxConcurrentQueueDepth`(默认 32)2 int 字段,空 yml 自动 fallback 16 + 32;`AgentConfig` 类底部新增 `validate()` 顶层方法(对齐 Story #018 `CompactorConfig.validate()` 样板),聚合 `reactMaxSteps` + `maxConcurrentTurns` + `maxConcurrentQueueDepth` 3 字段检查到单 `LingsConfigException`,复用现有 `LINGS-C02` 路径;**3 配置文件同步 +2 实参**(`AgentConfigDefaults` 26 字段 final ctor 末尾 + `AgentFactory.toAgentConfig` `intOr(agent, "maxConcurrentTurns", 16)` + `intOr(agent, "maxConcurrentQueueDepth", 32)` + `new AgentConfig(...)` 末尾 +2 实参);**13 new case 跨 2 文件**(`AgentConfigConcurrencyCapValidationTest` 8 L1:`defaults_passValidation` / `positiveCustomValues_passValidation` / `zeroMaxConcurrentTurns_throwsLingsC02` / `negativeMaxConcurrentTurns_throwsLingsC02` / `zeroMaxConcurrentQueueDepth_throwsLingsC02` / `negativeMaxConcurrentQueueDepth_throwsLingsC02` / `allFieldsZero_aggregatesAllErrors` / `AgentConfigDefaults_passValidation`+ `AgentFactoryYamlConcurrencyCapIT` 5 L2:`yamlDefault_parses16And32` / `yamlCustomMaxTurns_parsesCustom` / `yamlCustomQueueDepth_parsesCustom` / `yamlBothCustom_parsesBoth` / `yamlZeroMaxTurns_throwsC02OnValidate`);720 全 lingshu-core 测试 0 regression(707 旧 0 改动 + 13 新);`mvn -pl lingshu-core dependency:tree` pre/post md5sum 相同(`bb6627104920b580322931b7b33a0806`)= **0 binary delta 第 27 次 PASS**(纯 Lombok `@Value` int 字段 + `List<String>` 聚合 + `LingsConfigException` 复用,no `var` / `List.of` / sealed / records, JDK 8 + 已锁 13 项依赖表内 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**边界 stretch ≤ 5** —— 实际 5 文件改动(3 production `AgentConfig.java` / `AgentConfigDefaults.java` / `AgentFactory.java` + 2 new test `AgentConfigConcurrencyCapValidationTest.java` / `AgentFactoryYamlConcurrencyCapIT.java`)+ Lombok `@AllArgsConstructor` 再生触发 53 fixture 文件机械同步(Lombok ctor 参数 N → N+2,fixture `new AgentConfig(...)` 调用站点同步追加 2 实参),所有 fixture 0 业务逻辑改动只参数补齐;**关键不变项** —— `AgentConfig` 不可变契约不变(`@Value` + `@Builder` 24 → 26 字段 final,只扩 2 int 顶层字段,业务三件套 `Identity / Instructions / Memory` 0 改动)+ `LlmProvider` SPI 不变 + `Message` 4 子类契约不变 + `Tool` SPI 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)+ `LinearTurnEngine` 公开方法签名不变 + `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)+ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 + 9 Slot 体系不变 + 24 → 26 字段 AgentConfig schema + JDK 8 兼容(`LingsConfigException` 已有 / `ArrayList<String>` 已有 / Lombok `@Value` 已有 / no `var` / `List.of` / sealed / records);Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住) + ReAct Loop 自实现不变(§4.10.1 硬规则 1 守住);**业务价值** —— **dsh §10 NFR row 4 「默认 16,排队 ≤ 32」数字基线落地**(原文仅 NFR 表一行,Story #044 落地后 NFR 表 + AgentConfig 字段 + yml 接线 3 处对齐)/ **兑现 Story #043 forward reference**(Story #043 §10 NFR row 4 footnote 写「Story #044 处理 docs/code 兑现」,本 Story 兑现)/ **0 行为变化**(单 turn 现状下 16 + 32 远大于实际并发,validate() 不抛)/ **Future-proof**(未来加并发 turn scheduling 时 N 并发 turn × 单池上限 = 仍有界,Story #043 单池已有界 + Story #044 顶层闸门 = 双重闸门);**修复者** Claude Code(根据用户 2026-10-06 会话反馈「Story #044 只创建了一个 spec 目录,这个也继续吧」+「实施吧」,触发本 Story spec/plan/tasks 落地 + 13 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 27 次 PASS 0 binary delta**);**下一步走** §14 N6 graceful-shutdown(LINGS-L03 reserved 启用)或 §14 N10 audit-log 或 §14 N4 CostBudget 滞后项。
+
+  > **更新日期**:2026-10-06 — **🆕 Story #043 anthropic-llm-io-bounded-pool 已合**(707 pass / 0 fail / 2 MCP heartbeat flake pre-existing / AnthropicToolReActIT standalone flake pre-existing / R-13 0 binary delta **第 26 次 PASS** / **0 新 ErrorCode** / **累计 43 个 Story 合入**):**根除 `lingshu-core/src/main/java/` 唯一一处无界生产线程池** —— `AnthropicLlmProvider.ioExecutor` 字段初始化从 `Executors.newCachedThreadPool`(`maximumPoolSize = Integer.MAX_VALUE`,极压下 OOM 风险)替换为有界 `ThreadPoolExecutor`,镜像 `ToolExecutorConfig.agentToolPool` 100% shape(`corePoolSize = cores * 2` / `maxPoolSize = cores * 4` / `keepAliveTime = 60s` / `LinkedBlockingQueue(256)` / `CallerRunsPolicy` 兜底 / daemon=true / 线程名前缀 `anthropic-llm-io-N` per-instance 计数,唯一差异 = 线程名前缀 `lingshu-tool-N` vs `anthropic-llm-io-N` + per-instance 计数);`buildBoundedIoExecutor()` 私有静态方法 + `AtomicInteger threadSeq` per-instance + 5 import(`LinkedBlockingQueue` / `ThreadFactory` / `ThreadPoolExecutor` / `TimeUnit` / `AtomicInteger`);`CallerRunsPolicy` 在队列满时让 `LinearTurnEngine` 主线程兜底执行,back-pressure 慢不丢(主线程阻塞自限流,而非无界堆积);`buildBoundedIoExecutor()` 类级 Javadoc 详细描述 Story #043 改动 + 镜像 `ToolExecutorConfig` 字段对齐表;**7 new case L1 unit test**(`AnthropicLlmProviderBoundedPoolTest.java` 反射 `Field.setAccessible(true)` 读 `ioExecutor` 字段验证 7 项契约 = `poolType_isThreadPoolExecutor` / `corePoolSize_isAvailableProcessorsTimes2` / `maxPoolSize_isCoreTimes2` / `keepAliveTime_is60Seconds` / `queue_isLinkedBlockingQueueOf256` / `rejectedHandler_isCallerRunsPolicy` / `threadName_prefix_isAnthropicLlmIo_N_daemon`);707 全 lingshu-core 测试 0 regression(700 旧 0 改动 + 7 新);`mvn -pl lingshu-core dependency:tree` pre/post diff md5sum 相同(`9b7a46af5f08013ea85a7e9ca7d89c2e`)= 0 binary delta(`ThreadPoolExecutor` + `LinkedBlockingQueue` + `AtomicInteger` + `ThreadFactory` + `CallerRunsPolicy` 全 JDK 8 内置 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**关键不变项** —— `LlmProvider` SPI 不变(公开方法签名 `stream(Prompt, TurnContext, Subscriber<AgentEvent>) → CompletableFuture<LlmResponse>` 0 改动,只换 `AnthropicLlmProvider` 实现层底层 ExecutorService)+ `AnthropicLlmProvider` 6-arg ctor 不变 + `ioExecutor` 字段类型不变(仍 `ExecutorService`)+ `Message` 4 子类 + 字段不变 + `Prompt` + `ToolSpec` + `ToolRegistry.modelVisibleSpecs()` 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)+ `Tool` SPI 不变 + `LinearTurnEngine` 公开方法签名不变 + `AgentConfig` 不可变契约不变(0 字段新增,Story #044 才加 `maxConcurrentTurns`)+ `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)+ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 + 9 Slot 体系不变 + 24 字段 AgentConfig schema 不变 + JDK 8 兼容(`ThreadPoolExecutor` + `LinkedBlockingQueue` + `AtomicInteger` + `ThreadFactory` + `CallerRunsPolicy` + `Field.setAccessible` 全部 JDK 8 标准 无 new binary 引入,no `var` / `List.of` / sealed / records);Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住) + ReAct Loop 自实现不变(§4.10.1 硬规则 1 守住);**AnthropicToolReActIT standalone flake pre-existing** —— full suite 内 PASS,standalone 跑 2 case fail("Expected size: 2 but was: 1"),git stash 测试确认 HEAD 也 fail,与本 Story 无关;**业务价值** —— 防御性 hygiene fix,无业务行为变化(单 turn 1 任务在飞现状下有界 vs 无界行为等价)/ 镜像 `ToolExecutorConfig.agentToolPool` 100% shape 让项目有界池模板统一 / 线程名前缀 jstack 友好(`anthropic-llm-io-N` 与 `lingshu-tool-N` 风格对齐)/ 根除 `Integer.MAX_VALUE` 上限无界池潜在 OOM 风险 / Story #044 docs/code 兑现 `maxConcurrentTurns` 顶层闸门(§10 NFR 表 "并发 turn 数" 行加 footnote);**修复者** Claude Code(根据用户 2026-10-06 会话反馈「看看 AnthropicLlmProvider 的 ioExecutor 是不是无界的」+「实施吧」,触发本 Story spec 落地 + 7 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 26 次 PASS 0 binary delta**);**下一步走** §14 N6 graceful-shutdown(LINGS-L03 reserved 启用)或 §14 N10 audit-log 或 §14 N4 CostBudget 滞后项。
+
+  > **更新日期**:2026-10-04 — **🆕 Story #042 demo-product-frontend-approval-ui 已合**(691 + 0 case 实测 = 691 pass 等价口径,实际测试 pass **691** 因为纯前端 demo 改动 0 新 case 加挂后台 Java 测试;2 MCP heartbeat flake pre-existing / R-13 0 binary delta **第 25 次 PASS** / **0 新 ErrorCode** / **累计 42 个 Story 合入**):**Story #030 + #041 后端 ApprovalGate 真接通 + demo-product ChatController SSE round-trip + ApprovalRegistry 终局收集器** —— 真实用户可见 demo-product 前端 `app.js` 缺失 UI(只显示原始 JSON),本 Story 补全:**2 文件改动 +50 行**(纯前端 demo,0 后端 Java 改动,0 新 Maven 依赖,0 新 ErrorCode,严格 ≤ 5 文件边界);`index.html` `<style>` 段加 `.ev.approval { padding: 6px 8px }` + `.reason`(input 框样式)+ `.btn-allow`(绿)/`.btn-deny`(红)+ hover/disabled 状态 5 段共 8 行 CSS;`app.js` `handleEvent()` 加 `else if (eventName === 'approval')` 分支(动态创建 1 个 reason input + 2 个 button 元素,`ev.innerHTML = ''` 清空默认 JSON dump,clear 默认行为)+ `postDecision(approvalId, decision, reason, rowEl)` 辅助函数(`fetch('/api/approvals/' + sessionId + '/' + approvalId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({decision, reason})})` 后端 SSE 流恢复 + 按钮立即 disable + 文字变更「✓ Allowed」/「✗ Denied」 + 后端返 404 时优雅处理「approval expired (HTTP 404)」);**SSE 事件契约锁定** —— 后端 `AgentEventMapper.toJson()` `{type:"approval", approvalId:"<uuid>", ask:{prompt, options, defaultOption:"allow"}}` + `ChatController.deliverApproval` 端点 `POST /api/approvals/{sessionId}/{approvalId}` body `{decision:"allow"|"deny", reason?:string}` 字段不变(Story #030 + #041 已落);**人工端到端验证 7 步清单**(Story #042 T-3):T-3.1 prompt「请创建一个 demo.txt」→ events 流出现 approval 事件行 / T-3.2 行内嵌 [Allow]/[Deny]/reason 框 / T-3.3 点 [Allow] → SSE 流恢复 / T-3.4 点 [Deny] + reason → SSE 流恢复 + ToolResult.error + turn.completed / T-3.5 按钮点击后立即 disable / T-3.6 多 approval 独立按钮组 / T-3.7 后端 timeout 场景 POST 返 404 「approval expired」;**反向 AC 验证** —— 现有 text / turn.completed / compacted 事件处理**完全不变**(RAC-7,R-13 mitigation (d) baseline 守住)**R-13 mitigation (d) baseline 镜像 PASS** —— `mvn -pl lingshu-examples/demo-product dependency:tree` pre/post diff 仅时间戳差异 = **0 binary delta 第 25 次 PASS**(纯前端 demo 改动 + vanilla JS + 0 import/require + 0 新 Maven 依赖,已锁 13 项依赖表内无新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**关键不变项** —— `ChatController.deliverApproval` 端点契约不变(Story #030 + #041 锁定)+ `AgentEventMapper` ApprovalRequired 映射不变 + `ApprovalRegistry` + `Decision` + `AgentEvent.ApprovalRequired` 不变 + 后端 `permission-policy: ask` + `tools.ask-list` yml 配置不变 + 9 Slot 顶层不变 + `AgentConfig` 不可变契约不变 + JDK 8 兼容(`fetch` / `JSON.parse` / `JSON.stringify` / `TextDecoder` / `getReader` / `appendChild` / `createElement` / `addEventListener` 全部浏览器内置 vanilla JS,no var / List.of / sealed / records) + Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住);**业务价值** —— demo-product 真实用户可见 ask-mode 端到端 UX(配 `permission-policy: ask` + `tools.ask-list: [write_file, bash_safe]` 后,Agent 调危险 Tool → SSE 流推 approval → 用户点 Allow/Deny 按钮 → SSE 流恢复,无须打开 DevTools 手动 fetch 兜底)/ **R-04 privilege escalation 缓解**(分值 8 —— 企业部署 PoC 可现场给非工程背景决策者演示「Tool 调需人工审批」安全机制,Story #030 + #041 已落 32 + 9 = 41 case 后端稳定,Story #042 完成 100% 端到端可演示)/ **Story #041 已落 1 L3 demo wiring IT**(`DemoProductAskUserSpiWiringIT`)测试代码直接 fetch 模拟前端,**真实用户可见 UI 补全**(Story #042 后人工端到端 7 步清单全过,测试 dry-run + 真实 UX 双轨);**修复者** Claude Code(根据用户 2026-10-04 会话反馈「查看 demo-product 后端是否支持审批 round-trip,前端无 UI」+「需要补充 UI」+「开新 Story 吧」,触发本 Story 实施 + 2 文件改动 +50 行 + 人工端到端 7 步清单 + R-13 mitigation (d) baseline 镜像 **第 25 次 PASS 0 binary delta**);**下一步走** §14 N6 graceful-shutdown(LINGS-L03 reserved 启用)或 §14 N10 audit-log 或 §14 N4 CostBudget 滞后项。
+
+> **更新日期**:2026-10-03 — **🆕 Story #041 approval-gate-wiring-cleanup 已合**(688 pass / 0 fail / 2 MCP heartbeat flake pre-existing / R-13 0 binary delta **第 24 次 PASS** / **0 新 ErrorCode**(复用 #030 `LINGS-P02`)/ **累计 41 个 Story 合入**):**ApprovalGate SPI 真接通 + 2 latent bug + 2 pre-existing bug 修复** —— `DefaultToolExecutionContext.DefaultApprovalGate` `private static final` inner class 落地(完整 5 路径实现:`AskUser ask` → 发 `ApprovalRequired(approvalId UUID, sessionId, ask)` event + `ApprovalRegistry.register(approvalId, continuation)` + `CompletableFuture<Decision>` + `token.onCancel(...)` 后台守护 + `approvalTimeoutSeconds > 0` ? `decisionFuture.get(N, SECONDS)` : `decisionFuture.get()` 阻塞 + 返 Decision via `alreadyResolved.compareAndSet(false, true)` 单闸保护);`DefaultToolExecutionContext` 加 4-arg ctor `(TurnContext, RuntimeSandbox, ApprovalRegistry, Subscriber<? super AgentEvent> explicitSink)` 携带 explicitSink(Story #030 inline path 用 dispatchWithPolicy 参数 sink,Story #041 SPI path 用 turnCtx.sink() —— **2 路径 emit target 不一致**,用 explicitSink 显式传入 sink 收口);`LinearTurnEngine.dispatchWithPolicy` 改 1 行 `new DefaultToolExecutionContext(ctx, sandbox, approvalRegistry, sink)` + 清理 3 unused imports(`java.util.UUID` / `AtomicBoolean` / `Consumer`)delegate 给 SPI;**2 latent bug 修复** —— (1) `DefaultApprovalGate.ask()` **缺 `token.onCancel(...)` callback**:Story #030 inline 代码 cancel path 是 silent no-op,`token.fire()` 只 set cancelled flag 不 unblock future.get(),实测 60s timeout;现 cancel callback 走 `alreadyResolved.compareAndSet` + `decisionFuture.complete(Deny[LINGS-P02 interrupted])` 抢闸(2) **`explicitSink` 路径不一致**:Story #030 inline 走 `dispatchWithPolicy` 的 sink 参数,Story #041 SPI 初版走 `turnCtx.sink()`,测试期望 `AskUserResolvingSink` 收 ApprovalRequired event,两边 mismatch;fix: `DefaultToolExecutionContext.explicitSink` 字段 + 4-arg ctor + `sink()` 方法优先返 explicitSink;**Pre-existing 24→25-arg ctor bug 修复** —— Story #029 加 `permissionPolicy` 字段后 `AgentConfig` 构造器从 24 变 25 字段,Story #037 阶段实测发现 2 处 24-arg call site 漏更新:`DemoProductA2aServerApplication.agentConfig()` `defaults.getTools(), "default"` 补齐 + `CliRunner.withPort(AgentConfig)` 26-arg ctor 加 `cfg.getPermissionPolicy()` 25th 字段(此前编译期就报缺字段,本次顺手修);**9 new case 跨 5 文件**(`DefaultApprovalGateTest` 5 L1:`Allow 正常` / `Deny 立即` / `timeout > 0` 触发 `[LINGS-P02]` / `cancel mid-ask` → `Deny[LINGS-P02 interrupted]` < 1s / `no-sink turnCtx.sink() == null` → 立即 `Deny[LINGS-P02 no-sink]` / `A2aServerToolExecutionContextApprovalTest` 1 L1 reflection 验 `approval().ask()` < 1s 返 `Deny` + reason 含 `"A2aServerToolExecutionContext.approval()"` + `"AskUser denied"` / `DemoA2aServerStubApprovalTest` 1 L1 reflection 验 `StubToolExecutionContext.approval().ask()` < 1s 返 `Deny` + reason 含 `"DemoA2aServer has no ApprovalGate"` + `"AskUser denied"` / `SkillCommandDispatcherStubApprovalTest` 1 L1 reflection 验 1-arg `Session` ctor `CliSkillToolExecutionContext.approval().ask()` < 1s 返 `Deny` + reason 含 `"CLI Skill dispatch"` + `"AskUser approval"` + `"Story #020c MVP"` / `DemoProductAskUserSpiWiringIT` 1 L3 focused `@SpringJUnitConfig` + `@Import(ApprovalRegistry.class)` Spring context 验 `ApprovalRegistry` 是真 `@Component` 单例 + `register/consume` round-trip 模拟 `DefaultApprovalGate` 端 → `ChatController.continueApproval` 端);`mvn -pl lingshu-core dependency:tree` pre/post diff 仅时间戳差异 = 0 binary delta(`CompletableFuture` + `ConcurrentHashMap` + `AtomicBoolean` + `Consumer<Decision>` + JDK 8 reflection `getDeclaredField` / `setAccessible` + `String.contains` + Spring `@Component` 已锁 0 新 binary 引入);**关键不变项** —— `ToolExecutionContext.ApprovalGate` SPI 公开方法签名 `Decision ask(Decision.AskUser ask)` 不变(只新增 1 真实现 + 3 fail-safe stub 验证契约)/ `Decision` 3 子类(Allow / Deny / AskUser)不变 / `ApprovalRegistry` `@Component` 公开 API `register/consume/size/evictBySessionPrefix` 不变 / `AgentEvent.ApprovalRequired` 3-arg ctor + 2-arg ctor 不变 / `AgentConfig` 不可变契约不变(0 字段新增)/ `AgentFactory` SPI 不变(@Autowired 7-Router ctor 不动)/ `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ §4.7 PermissionPolicy / AuditLogger / Cost 域完全兼容 / 9 Slot 体系不变 / JDK 8 兼容(`CompletableFuture` + `ConcurrentHashMap` + `AtomicBoolean` + `Consumer<Decision>` + JDK reflection 已锁,no `var` / `List.of` / sealed / records);**业务价值** —— **ApprovalGate SPI 真接通**(production path `DefaultApprovalGate` + 3 fail-safe path:CLI / A2A server / demo-product-a2a-server,后两者**永久**返 Deny 0 阻塞因为没 human channel)/ **2 latent bug 修复**(Story #030 阶段的 cancel silent no-op + explicitSink mismatch 本 Story 实测发现并修,不动 Story #030 已合契约)/ **Pre-existing bug 修复**(Story #029 阶段漏掉的 2 处 24→25-arg ctor call site 编译期失败,但不在 Story #029 AC 范围,所以本 Story 顺带修)/ **fail-safe 契约锁定**(3 个 reflection 测试 + 1 个 L3 focused context = 4 fail-safe 验证点,3 module 各 1,加 1 cross-module singleton 验证);**修复者** Claude Code(根据用户 2026-10-02 / 10-03 会话反馈,Story #030 实施时实测发现 inline path 的 2 latent bug + Story #029 24→25-arg ctor drift,触发本 Story tech-debt cleanup + SPI extraction + 9 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 24 次 PASS 0 binary delta**)。
+
+  > **更新日期**:2026-10-02 — **🧹 Story #037 permission-policy-multi-provider-alignment 已合**(688 pass / 0 fail / 2 MCP heartbeat flake pre-existing / R-13 0 binary delta **第 23 次 PASS** / **0 新 ErrorCode** / **累计 40 个 Story 合入**):**Slot 4 PermissionPolicy 3 Provider 注册路径 100% 对齐 v1.5.28 §5.5 多 Provider 模式** —— `AllowAllPermissionPolicyProvider` 删 `@Component` + 删 `import org.springframework.stereotype.Component`(Story #001 残留的 `@Component` 模式与 v1.5.28 §5.5 多 Provider 模式不符,实测发现 2026-10-02)+ `PermissionPolicyAutoConfiguration` 加 `@Bean(name="permissionPolicyProvider_default-1.0.0") public PermissionPolicyProvider defaultPermissionPolicyProvider()` 平行 strict / ask 两个 `@Bean`,3 Provider 命名风格 `permissionPolicyProvider_<name>-<version>` 100% 一致;9 new case 跨 2 文件(`AllowAllPermissionPolicyProviderTest` 4 L1 SPI metadata + create 返回 `AllowAllPermissionPolicy` + `check()` 永远 `Decision.Allow` / `PermissionPolicyRouterMultiProviderIT` 5 L2:**直接构造** 3 `@Bean` 方法 + reflection set `toolRegistry` 模仿 Spring 容器 field-injection + 3 resolve 各返对应 + reflection 拿 `SlotRouter.byName` Map size=3 + reflection 验证 `AllowAllPermissionPolicyProvider` 类无 `@Component` 注解);`mvn -pl lingshu-core dependency:tree` pre/post diff 仅时间戳差异 = 0 binary delta(纯 Spring `@Component` / `@Bean` / `@Configuration` / `@Autowired` 注解清理 + JDK 8 内置 + Lombok `@Value` 0 新 binary 引入);**关键不变项** —— `PermissionPolicy` SPI 不变 + `Decision` 3 子类(Allow / Deny / AskUser)不变 + `PermissionPolicyProvider` SPI 不变(`name()` / `priority()` / `version()` / `create(AgentConfig)` 公开方法签名 0 改动,只删 `AllowAllPermissionPolicyProvider` 类级别 `@Component` 注解 1 处)+ `PermissionPolicyRouter` 行为不变(按 `name()` 路由,3 yml 配置 back-compat `permission-policy: default` / `: strict` / `: ask` 都不抛 `BeanDefinitionOverrideException`)+ `PermissionPolicyAutoConfiguration` SPI 不变(`@Configuration` + 3 `@Bean` Bean name 互不冲突)+ `AgentConfig` 不可变契约不变(0 字段新增)+ `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)+ 9 Slot 体系不变 + JDK 8 兼容(`Spring @Configuration` + `@Bean` + `@Autowired` 已锁,no `var` / `List.of` / sealed / records);**业务价值** —— 3 Provider 注册路径 100% 对齐 v1.5.28 §5.5 多 Provider 模式 / 未来 plugin 贡献者参考样本 3 个 Provider 全同一个样板 / IDE 静态分析 noise 减少(3 Provider 类级别不再有 `@Component`,`@Autowired` constructor 警告不再触发)/ **0 行为变化**(Router 按 `name()` 路由逻辑不变,3 yml 配置 back-compat)/ **R-19 风险缓解** —— 防止 `@Component` + `@Bean` 双胜出触发 `BeanDefinitionOverrideException`;**修复者** Claude Code(根据用户 2026-10-02 会话反馈,实测发现 3 Provider 中 1 个残留 v1.5.27 之前史留 `@Component`,要求补齐 v1.5.28 多 Provider 模式对齐,触发本 Story 实施 + 9 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 23 次 PASS 0 binary delta**)。
+
+  > **更新日期**:2026-10-02 — **🤝 Story #030 permission-policy-ask-user 已合**(684 pass / 0 fail / 2 MCP heartbeat flake pre-existing / R-13 0 binary delta **第 16 次 PASS** / **+1 ErrorCode `LINGS-P02 PERMISSION_APPROVAL_TIMEOUT`**(P 域 2 号)/ **累计 39 个 Story 合入**):**`Decision.AskUser` 3rd outcome 真接通** —— 3 stub 删除(`DefaultToolExecutionContext.approval()` / `DefaultToolExecutor` AskUser 分支 / `LinearTurnEngine.dispatchWithPolicy` AskUser 分支) + `AskUserPermissionPolicy` 5 段决策(deny-list 命中 → Deny / ask-list 命中 → AskUser / allow-list 空 → default-Allow / allow-list 命中 → Allow / 不命中 → Deny with category 上下文)复用 #031 `PermissionPatterns.matches()` 3 形式 pattern 通配 + `AskUserPermissionPolicyProvider` SPI(`name="ask"` + `priority=10` + `version="1.0.0"` 由 `@Component` 自动注册) + `ApprovalRegistry` @Component `ConcurrentMap<sessionId+":"+approvalId, Consumer<Decision>>` 终局收集器(`register/consume/size/evictBySessionPrefix` 4 方法) + `AgentEvent.ApprovalRequired` 3-arg ctor 扩 `approvalId: UUID` 字段 + 2-arg ctor 保留 back-compat + `LinearTurnEngine.dispatchWithPolicy` AskUser branch —— `policy.check() == AskUser` 时生成 `approvalId: UUID.randomUUID()` + `CompletableFuture<Decision>` + `registry.register(approvalId, future)` + 发射 `ApprovalRequired(approvalId, toolName, prompt)` Reactive Streams event + 等 `future.get(approvalTimeoutSeconds, TimeUnit.SECONDS)`(超时 → `AccessDeniedException[LINGS-P02]`,`approvalTimeoutSeconds=0` = wait indefinitely Claude Code overnight parity) + `AgentConfig.ToolsConfig` 5-arg → 6-arg ctor 加 `askList: List<String>`(`@Builder.Default new ArrayList<>()` 兜底)+ 顶层 `permissionPolicy: "ask"` yml 接线 + demo-product `ask-list: [Bash, Write, Edit]` + `approval-timeout: 0` 顶层配置 + demo-product `ChatController` 加 `POST /api/approvals/{sessionId}/{approvalId}` 端点(HTTP body `{decision: "allow"|"deny", reason?: string}` → 通过 `approvalRegistry.consume(approvalId, decision)` 触发 `CompletableFuture.complete(decision)` → `LinearTurnEngine` 等的 future 拿到 decision 继续 dispatch);**23 new case 跨 7 文件**(`AskUserPermissionPolicyTest` 5 L1 + `AskUserPermissionPolicyProviderTest` 2 L1 + `ApprovalRegistryTest` 4 L1 + `AgentEventApprovalRequiredTest` 2 L1 + `AgentConfigAskListTest` 3 L1 + `LinearTurnEngineAskUserTest` 3 L2 + `PermissionPolicyRouterAskIT` 3 L2 + 1 L3 demo-product blackbox round-trip);684 pass / 0 fail / 2 MCP heartbeat flake pre-existing;`mvn -pl lingshu-core dependency:tree` pre/post diff 仅时间戳差异 = 0 binary delta(`@Component` + `ConcurrentHashMap` + `CompletableFuture` + `UUID.randomUUID()` + `Collections.emptyList()` JDK 8 standard + Lombok `@Value` + Spring `@Bean(name = "permissionPolicyProvider_ask-1.0.0")` 全已锁 0 新 binary 引入);**关键不变项** —— `PermissionPolicy` SPI 不变 + `Decision` 3 子类(Allow / Deny / AskUser)不变(自 #029 后 AskUser 真用上,死类型 → 活 SPI)+ `Tool` SPI 不变 + `ToolExecutor.dispatch()` 5 步流水线结构不变(§4.10.1 硬规则 2;`DefaultToolExecutor` AskUser 分支从 throw → log+proceed,executor 流水线整体结构不变)+ `AgentConfig` 不可变契约不变(`ToolsConfig` 5 → 6 字段 + 顶层 `permissionPolicy: String` 不变 + `approvalTimeoutSeconds: int` 0 默认)+ `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动;`PermissionPolicyRouter` v1.5.28 多 Provider 模式自动接管新 Provider)+ `Message` 4 子类契约不变(🆕 v1.5.46 refactor 已落)+ 9 Slot 体系不变 + JDK 8 兼容(`UUID.randomUUID()` + `ConcurrentHashMap` + `CompletableFuture` + `Collections.emptyList()` + `Arrays.asList()` + `Future.get(long, TimeUnit)` 全 JDK 8 standard,no `var` / `List.of` / sealed / records);Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住);**业务价值** —— `Decision.AskUser` 3rd outcome 真接通(3 stub 删除 + LinearTurnEngine 阻塞-解阻塞回合 + ChatController SSE round-trip + ApprovalRegistry 终局收集器 + AgentEvent.ApprovalRequired approvalId 协议场下)/ **Claude Code overnight parity**(`approvalTimeoutSeconds=0` 默认**永不超时**,企业审批隔夜(下一个工作日)决定也能 merge / `>0` 时明确走超时路径 → `LINGS-P02`)/ **R-04 privilege escalation 缓解**(分值 8 —— 用户可配 `permission-policy: ask` + `ask-list: [bash_safe, write_file, web_fetch]` + Agent 调危险 Tool 需 demo-product ChatController 后台 approve/deny + large-scale enable 企业部署)/ **demo-product SSE round-trip 闭环**(前端 SSE 同意变 permanent hang 风险 + 真实 blocking-then-resume 流转路径,面向用户作为可工作的示例);**修复者** Claude Code(根据用户 2026-10-02 会话反馈「我在用 Claude Code 的时候有些需要人审批的,过一个晚上还可以审批后继续流转,难道这个超时时间是有个开关的,或者配置成0默认不超时?」+「实施吧」,触发本 Story 实施 + 23 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 16 次 PASS 0 binary delta**)。
+  > **更新日期**:2026-10-01 — **🛡️ Story #034 a2a-http-domain-guard 已合**(673 pass / 0 fail / 2 MCP heartbeat flake pre-existing / R-13 0 binary delta 第 22 次 PASS / **0 新 ErrorCode**(复用 #028 `LINGS-S01`)/ **累计 38 个 Story 合入**):**A2A HTTP transport 沙箱守卫落地**(与 #033 MCP 故事平行):复用 `McpHttpSupport.checkOrThrow(url, whitelist)` 静态 helper(JDK `URI.create(url).getHost()` + `whitelist.contains(host)`),**2 hook point** 加在 `HttpJsonRpcA2aTransport`(fetchCard + jsonRpcCall 共享,submit/get/cancel 都走同一 hook),失败抛 `AccessDeniedException[LINGS-S01]` 真实请求**不**发出;`AgentRef.@Value` 加 `List<String> domainWhitelist` 字段(per-remote-agent 配置,yml `domain-whitelist: [host1, ...]` kebab-case 绑定)+ `getDomainWhitelistOrEmpty()` null-safe accessor(null → `Collections.emptyList()` strict-mode 默认 deny-all,镜像 #033 `McpServerConfig.domainWhitelist` 语义);`HttpJsonRpcA2aTransport` 5-arg ctor 接收 whitelist + defensive copy(`new ArrayList<>(domainWhitelist)`)+ 4-arg ctor 保留 back-compat wrapper;`HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory` 内嵌 static class + `@Bean(name="a2aTransportFactory_http-jsonrpc")` 暴露 `build()` 把 `cfg.a2a.remoteAgents[*].domainWhitelistOrEmpty()` union 去重后传给 A2A transport(strict mode 镜像 MCP #033);`RemoteAgentToolAutoConfiguration.remoteAgentTool()` 注入 factory,`if (transportName=="http-jsonrpc-1.0.0") transport = httpJsonRpcFactory.build();` 否则 `router.resolve(...)`(grpc / in-process 不走 HTTP 不变);**13 new case** 跨 4 文件(`HttpJsonRpcA2aTransportCheckOrThrowTest` 6 L1:emptyWhitelist/nonMatchingHost/matchingHost/ctorValidation 6 子 case/defensiveCopy/snapshotReturn/`HttpJsonRpcA2aTransportDomainGuardIT` 3 L2:JDK `com.sun.net.httpserver.HttpServer` 计数 hits 真发请求,whitelisted hits==2+SUCCESS / non-whitelited hits==0+AccessDenied / strict-mode empty hits==0/`HttpJsonRpcA2aTransportAutoConfigurationTest` +1 L1 factory union dedup + 1 modify fixture `HttpJsonRpcA2aTransportTest` 3 call site 4-arg → 5-arg);**关键不变项** —— `A2aTransport` 5 方法 SPI 不变 / `A2aTransportRouter` 不变 / `RemoteAgentTool` 不变(只看 `A2aTransport` 接口)/ `McpHttpSupport.checkOrThrow` 公开方法不变(只被新增 caller 调用)/ `AccessDeniedException[LINGS-S01]` ErrorCode 复用 / `Tool` SPI 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `AgentConfig` 不可变契约不变(只 AgentRef 内部加字段)/ `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 9 Slot 体系不变 / JDK 8 兼容(`URI.create` + `List.contains` + `HashSet` + `ArrayList` + `Collections.emptyList` + `Arrays.asList` + Jackson `@JsonProperty` kebab-case 已锁,no `var` / `List.of` / sealed / records) / **0 新 Maven 依赖** / **0 新 ErrorCode** / R-13 mitigation (d) baseline 镜像 **第 22 次 PASS 0 binary delta**(`URI.create` + `List.contains` + `HashSet` JDK 8 内置 0 新 binary 引入);**业务价值** —— A2A 路径 sandbox 边界守卫到位(与 MCP HTTP 对齐,Agent 调任何远端 A2A server 必须先过 `WhitelistedHttpClient` 沙箱) / `WhitelistedHttpClient` 基建从 idle → enforced(一路通过 #028 → #033 MCP + #034 A2A 真正在 HTTP 请求路径上 enforce) / per-remote-agent 粒度配置(不同 remote agent 不同 domain-whitelist,A2A 多 server 部署友好);**修复者** Claude Code(根据用户 2026-10-01 会话反馈,用户问「a2a的网络连接也和MCP的网络链接一样使用的了whitelist做校验吗」 + 「走 MCP 复用模式」 + 「实施吧」,触发本 Story 实施 + 13 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 22 次 PASS**)。
+
+  > **更新日期**:2026-10-01 — **🛡️ Story #033 mcp-http-domain-guard 已合**(~675 pass / 0 fail / 2 MCP heartbeat flake pre-existing / R-13 0 binary delta 第 18 次 PASS / **0 新 ErrorCode** / **累计 37 个 Story 合入**):**Path B + Mitigation 1 实装** —— MCP HTTP transports(SSE + Streamable HTTP)**保持 raw `HttpURLConnection` 不动**,仅在每次出站请求**前**调 `McpHttpSupport.checkOrThrow(url, domainWhitelist)` 守卫(host 提取走 `URI.create(url).getHost()`,非白名单 → `AccessDeniedException[LINGS-S01]`,同 Story #028 `WhitelistedHttpClient.check()` + Story #032 `WebFetchTool` 语义);`McpServerConfig.domainWhitelist`(`@Builder.Default List<String>`)+ ctor defensive copy + **12 hook point**(SSE 7:`callTool` + 3 `doConnect`(initialize / notifications/initialized / tools/list)+ `heartbeatTick` + `openSseStream`(`/sse` GET)+ `relistTools`(listChanged 触发重拉);Streamable HTTP 5:`callTool` + 3 `doConnect` + `heartbeatTick`);9 现有 SSE/Streamable HTTP 测试加 `.domainWhitelist(Arrays.asList("127.0.0.1"))` 让本地 127.0.0.1 fixture 通过守卫;**13 new case** 跨 3 文件(`McpHttpSupportCheckOrThrowTest` 8 L1:空 whitelist 全 deny / null whitelist / 匹配 / 不匹配 / null/empty URL / malformed URL / case-sensitive / IPv4 host 提取 / `McpHttpDomainGuardIT` 4 L2:真 JDK `com.sun.net.httpserver.HttpServer` 起服 + SSE whitelisted reaches CONNECTED + SSE non-whitelisted stays RECONNECTING + Streamable HTTP non-whitelisted stays RECONNECTING / `McpServerConnectionFactoryTest` 1 case:`domainWhitelist` 走 `SseMcpServerConnection` 装配 wire-through);**关键不变项** —— `McpServerConfig` 不可变契约不变(`@Value` + `@Builder` 9 → 10 字段 final,`@Builder.Default` 兜底空 list,与 #028 `WhitelistedHttpClient` 防御性拷贝模式对齐)/ `McpTransport` SPI 不变 / `McpServerConnection` SPI 8 方法契约不变(只 2 concrete 实现加私有 `domainWhitelist` 字段)/ `McpHttpSupport` 公开 API 不变(postJsonRpc/getJson/postNotification/parseToolList/parseCallResult 0 改动,只新增 1 个静态 helper `checkOrThrow`)/ `McpServerConnectionFactory` dispatch 不变 / `AccessDeniedException[LINGS-S01]` ErrorCode 复用 / 9 Slot 体系不变 / JDK 8 兼容(`URI.create` JDK 1.4 内置 + `AccessDeniedException` 已在 lingshu-core 既有 / no `var` / `List.of` / sealed / records)/ **0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-S01`,Sandbox 域 S 段 1 号)/ R-13 mitigation (d) baseline 镜像 **第 18 次 PASS 0 binary delta**(纯 JDK 8 standard + Spring `@Builder.Default` + Lombok `@Value` 0 新 binary 引入);**关键决策** —— Path B + Mitigation 1 vs Path A(`WhitelistedHttpClient` 全路径替换)避开 §4.10.1 硬规则 2(MCP 长连接 + JSON-RPC 协议 + SSE streaming 不能套 `WhitelistedHttpClient`),最小触碰 12 hook point 全 1 行 `checkOrThrow` 前置 / 影响面积 0 行公开 API 改动,**OQ-Future 风险**:MCP HTTP 配置 schema 暂未绑定 yml(`agent.mcp.servers[*]` 走 hand-rolled YAML parser,parser 暂未解析该字段),whitelist 暂**只能**通过 `McpServerConfig.builder().domainWhitelist(...)` 编程方式设置;**Story #033 后续** —— 配置绑定 (`McpTransportAutoConfiguration` 解析 `domain-whitelist` 字段)推到 Story #034+;**修复者** Claude Code(根据用户 2026-09-30 会话反馈「Story #033 实施吧」+ Path B + Mitigation 1 方案 spec/plan/tasks 已审批通过)。
+
+  > **更新日期**:2026-10-01 — **🎯 Story #031 permission-policy-pattern-matching 已合**(647 pass / 0 fail / 2 MCP heartbeat flake pre-existing / R-13 0 binary delta 第 16 次 PASS / **0 新 ErrorCode**(复用 LINGS-P01)/ **累计 35 个 Story 合入**):**OQ-9 follow-up 解决** —— Story #029 的 brittle `List.contains` 12 行静态枚举替换为 `PermissionPatterns` 三形式通配匹配:(1) `*` 通配(允许/拒绝所有 Tool)/(2) `<name>` 精确名匹配(back-compat with Story #029 字符串 yml 条目)/(3) `<category>:*` 分类前缀匹配(5 保留 category:`local / mcp / skill / a2a / delegate`)+ `Tool.sourceCategory()` 默认方法(所有 Tool 必实现,缺省回退 `"local"`)+ `StrictPermissionPolicyProvider.create(AgentConfig)` 启动期调 `ToolRegistry.findAll()` 构造 `nameToCategory: Map<String, String>` 注入 `StrictPermissionPolicy`(2-arg ctor,1-arg ctor 保留 back-compat)+ `StrictPermissionPolicy.check()` 4 段决策逻辑(deny-list 命中 → Deny / allow-list 空 → default-allow / allow-list 命中 → Allow / 不命中 → Deny with category 上下文)+ `StrictPermissionPolicy` 移除 `@Component` + `StrictPermissionPolicyProvider` 移除 `@Component`(均改为 plain class —— Policy 是 value-object,Provider 由 AutoConfiguration `@Bean(name="permissionPolicyProvider_strict-1.0.0")` 唯一注册,符合 v1.5.28 §5.5 多 Provider 模式)+ `demo-product/application.yml` 12 行 `allow-list` 静态枚举 → 单行 `allow-list: ["*"]` 通配 + `DemoProductApplication.readTools(Environment, ToolsConfig)` 私有静态 helper 真正吃 yml `agent.tools.allow-list[N]` + `agent.tools.deny-list[N]`(Story #029 follow-up #1 漏掉的 yml-binding 修补) + 2 L3 IT(通配 12 Tool 名全 Allow + 分类模式 6 case 含 4 个 stub Tool via `@TestConfiguration`);**26 new case**(8 `PermissionPatternsTest` L1 + 4 `ToolSourceCategoryTest` L1 + 6 `StrictPermissionPolicyPatternTest` L1 + 1 `StrictPermissionPolicyReasonTest` L1 + 2 `AgentFactoryPatternMatchingIT` L2 + 1 `DemoProductPermissionWildcardIT` L3 + 2 inline 6 case in `DemoProductPermissionCategoryPatternIT` L3 + 2 `StrictPermissionPolicyProviderTest` 共享)+ 5 Story #029 测试仍 PASS(StrictPermissionPolicy 1-arg ctor back-compat);**关键不变项** —— `PermissionPolicy` SPI 不变 / `Decision` 3 子类(Allow / Deny / AskUser)不变(AskUser 仍 §4.7 未来 RFC)/ `Tool.sourceCategory()` 默认方法新增(不破坏现有 Tool 实现)/ `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `AgentConfig` 不可变契约不变(0 字段改动)/ `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)/ 9 Slot 体系不变 / JDK 8 兼容(`Pattern.quote` + `String.startsWith` + `String.equals`,no `var` / `List.of` / sealed / records)/ **0 新 Maven 依赖** / **0 新 ErrorCode**(复用 LINGS-P01)/ R-13 mitigation (d) baseline 镜像 **第 16 次 PASS 0 binary delta**(`PermissionPatterns.java` 是纯 JDK `Pattern` + `String` helper,零新 binary);**修复者**:Claude Code(根据用户 2026-09-30 会话反馈,用户问"Story #029 的 allow-list 写起来像在维护死亡名单 —— 能不能支持 `mcp:*` 这种通配?")。
+
+  > **更新日期**:2026-09-30 — **🛡️ Story #029 permission-policy-impl 已合**(626 pass / 0 fail / 0 MCP flake / R-13 0 binary delta 第 15 次 PASS / +LINGS-P01 / **11 域字母** `C/S/L/T/X/R/A/M/D/P/Z`):**OQ-9 解决** —— `PermissionPolicy` SPI 真实现落地:`StrictPermissionPolicy` @Component @Value + 3 段决策逻辑(allow 空 → 全 Allow / deny 命中 → Deny / allow 非空 + 命中 → Allow + allow 非空 + 不命中 → Deny 嵌 `[LINGS-P01]`)+ `StrictPermissionPolicyProvider` SPI(name="strict" + priority=10)+ `PermissionErrorCodes.LINGS_P01`(`P` 域 1 号,**自 #023 后首次启用新 ErrorCode 域**)+ `AgentConfig.permissionPolicy` 扩 + `ToolsConfig.allowList` / `denyList` 扩 + `AgentFactory.loadYamlAndValidate` kebab-case 绑定(`permission-policy: strict` top-level + `tools.allow-list` / `tools.deny-list` sub-key)+ `PermissionPolicyRouter` 多 Provider 模式(v1.5.28) name-based resolve;**18 new case** 跨 4 文件(`StrictPermissionPolicyTest` 8 L1 + `StrictPermissionPolicyProviderTest` 2 L1 + `PermissionPolicyRouterStrictIT` 4 L2 + `AgentFactoryYamlPermissionPolicyIT` 3 L2);**yolo path back-compat** —— `permission-policy: default` 仍走 `AllowAllPermissionPolicy`(demo-product / demo-empty `application.yml` 0 改动);**OQ-9 follow-up** —— `StrictPermissionPolicy.check()` 暂不实现 **AskUser** 决策路径(decision.governance 仍 §4.7 未来 RFC);**关键不变项** —— `PermissionPolicy` SPI 不变 / `Decision` 3 子类(Allow / Deny / AskUser)不变 / `AgentConfig` 不可变契约不变(只 +1 top-level +2 ToolsConfig 字段)/ `Tool` SPI 不变 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `AgentFactory` SPI 不变(@Autowired 6-Router ctor **不动**,新 Provider 由 `@Component` 自动注册)/ 9 Slot 体系不变 / JDK 8 兼容(`Collections.emptyList()` / `Arrays.asList()` / Jackson `@JsonProperty` kebab-case 已锁,no `var` / `List.of` / sealed / records) / **0 新 Maven 依赖** / **1 新 ErrorCode LINGS-P01** / R-13 mitigation (d) baseline 镜像 **第 15 次 PASS 0 binary delta**;累计 34 个 Story 合入。
+
   > **更新日期**:2026-09-30 — **🧹 v1.5.46 refactor:删除死代码 `Message.ToolUse`**(583 pass / 2 MCP heartbeat flake pre-existing / R-13 N/A 无新依赖 / 0 ErrorCode):`Message.ToolUse`(`Message.java` L73-84)从未被生产代码 `new` 出来过 —— 历史是 #020a `Skill` / #020c `SkillCommandDispatcher` 早期设计的"独立 `Message.ToolUse` subtype 表示一次 tool_call" 路径,后 #024 / #027a 协议转换层落地后,实际生产链路改走"`Message.Assistant.toolCalls` 嵌入模式",`Message.ToolUse` 自此变成 0 引用死代码,只剩 `TruncatingCompactor.messageCharLen` 一个 `instanceof` 分支 + 5 处 JavaDoc `@link` 引用;本次直接删除 `ToolUse` nested class + `import com.fasterxml.jackson.databind.JsonNode`(已无人用) + `Message.role()` Javadoc 「5 类」→「4 类」+ `TruncatingCompactor.messageCharLen` 删 instanceof 分支(class-level JavaDoc "assistant+tool_use+tool_result triples" → "Assistant messages + their trailing ToolResult blocks")+ `AnthropicLlmProvider.L383` 注释「Message.ToolUse is not stored in session history」→「tool_use blocks live on Message.Assistant.toolCalls」+ `LingsLlmProviderException` / `LlmErrorCodes` JavaDoc 5 处 `@link ai.lingshu.core.message.Message.ToolUse` → `@link ai.lingshu.core.message.Message.Assistant#toolCalls`;5 文件改动(5 modify 0 new)/ 0 新 Maven 依赖 / 0 新 ErrorCode / **0 测试 case 改动**(全部 583 测试 0 回归,2 MCP flake pre-existing 已在 CLAUDE.md 文档化)/ **`mvn -pl lingshu-core dependency:tree` 0 binary delta**(纯 Java 文件内类型清理);**关键不变项** —— `Tool` SPI 不变 / `Message` 5 → **4 子类**(System / User / Assistant / ToolResult,Assistant 仍带 `toolCalls` 字段不变)/ `Message.Assistant.toolCalls` 嵌入契约不变(#024 已落)/ `LlmResponse.toolCalls` 不变(#027a 已落)/ `LinearTurnEngine` 公开方法签名不变(`#027a` 1 行 wire-through 修复已落)/ `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `AgentConfig` 不可变契约不变 / `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 9 Slot 体系不变 / 24 字段 AgentConfig schema 不变 / JDK 8 兼容(`Collections.emptyList()` / `Arrays.asList()` / Jackson 已锁,no `var` / `List.of` / sealed / records)/ dsh §13 v1.5.46 行新增 8 节记录。
 
   > **更新日期**:2026-09-26 — **Story #026 yaml-placeholder-resolution 已合**(567 pass / 0 fail / R-13 0 binary delta 第 11 次 / +LINGS-C03 / +LINGS-C04):`PlaceholderResolver` 静态工具类(brace-counting scanner 4-form grammar `${X}` / `${X:default}` / `${X:${Y}}` / `$${literal}` escape + 32 层递归深度 + `Set<String> visited` 环检测)+ `YamlPlaceholderErrorCodes`(`LINGS-C03 YAML_PLACEHOLDER_UNRESOLVED` / `LINGS-C04 YAML_PLACEHOLDER_CYCLE`,Config 域 C 段 3/4 号)+ `AgentFactory.loadYamlAndValidate` 真接 `PlaceholderResolver.resolvePlaceholders(agent, ymlPath)`(`parseMinimalYaml` 与 `toAgentConfig` 之间 hook),**修跨路径 placeholder parity bug** —— 之前 CLI + YamlWatcher hand-rolled 路径下 `${user.dir}` 静默变 13 字符串,Spring Env 路径(demo-product)一直支持;17 单元测试(`PlaceholderResolverTest`)+ 2 IT 测试(`YamlHotReloadIT` `${user.dir}` 跨 hot-reload 真接 Path + unresolved `${X}` 触发 LingsConfigException → YamlWatcher catch + rollback);5 文件改动(3 new + 2 modify)/ 0 新 Maven 依赖(R-13 第 11 次 PASS);累计 30 个 Story 合入。
@@ -24,6 +45,15 @@
     <img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=for-the-badge" alt="license"/>
   </p>
 </div>
+
+---
+
+## 📋 Release Artifacts — v0.1.0 (2026-10-07)
+
+> **First public release.** 45 Stories merged, 766 tests pass, 14 stable SPIs locked.
+
+- 📜 **[CHANGELOG.md](./CHANGELOG.md)** — Full structured changelog (Keep a Changelog 1.1.0 format) — Added / Changed / Fixed / Security / Compatibility / Migration
+- 📝 **[RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md)** — User-facing release notes — What's New, Architecture, Compatibility Promise, Quick Start, Migration, Known Issues, Roadmap
 
 ---
 
@@ -51,6 +81,8 @@
 - 🔌 **MCP 客户端内置** — 通过 `McpToolAdapter` 把任意 MCP server 当 Tool 源
 - 📜 **Skill = Tool 标记接口** — `SKILL.md` 解析 → 自动注册为 Tool,classpath + 目录双源
 - 🛡️ **双层沙箱** — `PermissionPolicy`(模型层)+ `RuntimeSandbox`(系统层,chroot/seccomp/sysbox)
+- 🎯 **PermissionPolicy 三形式通配** — `StrictPermissionPolicy` yml `allow-list` / `deny-list` 支持 `*` 通配 + `<name>` 精确名 + `<category>:*` 分类前缀(`mcp:*` / `skill:*` / `a2a:*` / `delegate:*` / `local:*` 五保留 category),`Tool.sourceCategory()` 默认方法 + 5 核心 Tool 类型覆盖,Story #029 字符串白名单模式升级为通配 + 分类(Story #031)
+- 🤝 **PermissionPolicy ask-mode** (3rd outcome) — `AskUserPermissionPolicy` 5 段决策(deny 命中 → Deny / ask 命中 → AskUser / allow 空 → default-Allow / allow 命中 → Allow / 不命中 → Deny with category 上下文)复用 #031 `PermissionPatterns.matches()` 3 形式 pattern 通配 + `AskUserPermissionPolicyProvider` SPI(`name()="ask"` + `priority()=10` + `version()="1.0.0"`)+ `ApprovalRegistry` @Component `ConcurrentMap<sessionId+":"+approvalId, Consumer<Decision>>` 终局收集器(register/consume/size/evictBySessionPrefix 4 方法)+ `AgentEvent.ApprovalRequired` 3-arg ctor(approvalId UUID + sessionId + Decision ask)+ `LinearTurnEngine.dispatchWithPolicy` AskUser branch `CompletableFuture<Decision>` 阻塞-解阻塞回合(CompletableFuture 阻塞 → registry.register(approvalId, future) → ApprovalRequired 事件发射 → future.complete(decision) 由 demo-product ChatController `POST /api/approvals/{sessionId}/{approvalId}` 端点解阻塞)+ `AgentConfig.ToolsConfig.askList` + 顶层 `approvalTimeoutSeconds: int` 默认 **0 = 无超时**(Claude Code overnight parity —— 企业审批隔夜(下一个工作日)决定也能 merge);`>0` 时 N 秒后走 `LINGS-P02 PERMISSION_APPROVAL_TIMEOUT` Deny(Story #030 + **Story #037 permission-policy-multi-provider-alignment** —— 3 Provider 注册路径 100% 对齐 v1.5.28 §5.5 多 Provider 模式,`AllowAllPermissionPolicyProvider` 删 `@Component` 改 plain POJO + `@Bean(name="permissionPolicyProvider_default-1.0.0")` 显式注册,与 sibling `StrictPermissionPolicyProvider` #029 + `AskUserPermissionPolicyProvider` #030 对齐)
 - 🔄 **FlowEngine 可替换** — `LinearTurnEngine` 默认,`GoogleAdkFlowEngine` / `AlibabaGraphFlowEngine` / 自研 DAG 可平替
 - 🪶 **Lombok 友好** — `@Value` 不可变风格,拒绝过度抽象
 - 🔁 **YAML 热更无中断** — `AgentConfigRegistry` `AtomicReference` 单写多读 + `Files.getLastModifiedTime` 5s poll + `DefaultAgent.run()` 入口一次性 freeze,旧 turn 冻结 cfg 引用语义自然隔离(Story #007)
@@ -58,7 +90,7 @@
 - 🌐 **A2A AgentCard 已上线** — `GET /.well-known/agent.json` 服务端暴露,A2A v1.0 §2.1 协议对齐,字段直接来源于 `cfg.getIdentity()`,无需额外 yml(Story #009 AC-10)。A2A 客户端 4 子 Story 拆分(详见 [Story 路线图](#-story-路线图-009a009d-a2a-client-系列)节):**#009a GrpcA2aTransport**(本轮 / grpc-java + protobuf)+ **#009b InProcessA2aTransport**(同 JVM 直接调用 / 0 额外依赖)+ **#009c HttpJsonRpcA2aTransport + RemoteAgentTool**(默认 Provider / JDK HttpClient / 0 额外依赖)+ **#009d RemoteAgentSchemaBuilder**(扫 `AgentCard.skills[]` 生成 `ToolSpec` list / 0 额外依赖)
 - 🖥️ **CLI 入口已上线** — `mvn -pl lingshu-cli spring-boot:run --args='run --config app.yml --prompt ...'`,5 个子命令 `run / resume / serve / doctor / config`,hand-rolled argv 解析器零新依赖,Story #017 dsh §10.3 全落地
 - 🧹 **TruncatingCompactor 已上线** — `Compactor` SPI Slot 2 v1 默认实现,两步压缩(ToolResult 内容截断 + 滑动窗口收口),`Session.compact(List)` 原子替换 + 与 `append(Message)` 同锁,`@Value AgentConfig.CompactorConfig(maxPromptTokens / maxToolResultBytes / keepRecentTurns)` zero-config 默认 `(100_000 / 50_000 / 20)`(Story #018 dsh §6.2)
-- 🛠️ **4 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1))
+- 🛠️ **5 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash` / `WebFetch`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1)+ **Story #032 WebFetch 本地 HTTP/HTTPS 抓取** —— `name()="web_fetch"` + `description()` 含 "domain whitelist" + "POST/PUT/DELETE traffic is NOT supported" + `inputSchema` `{url: string required, max_bytes?: integer}` + `execute()` 4 段委托 `ctx.http().get(url)` 走 `WhitelistedHttpClient.check()`(Story #028 沙箱基建复用)→ JDK `HttpURLConnection` / `HttpsURLConnection` 透明 HTTPS + User-Agent `ChaOS-LingShu-Sandbox/1.0` 透传 + 1 MB truncation marker `\\n...[truncated, original %d bytes]` + catch `AccessDeniedException` 嵌 `[LINGS-S01]` + catch `IOException` 嵌 `HTTP fetch failed: ...`;**Claude Code parity**:本地 `WebFetch` 与 MCP fetch server **共存**(built-in + MCP 并行,非互斥);GET-only,POST/PUT/DELETE 走 MCP)
 - 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
 - 📂 **SKILL.md 多源自动发现已上线** — Slot 4 sub-SPI:`SkillSource`(4 方法:type / location / discover / watchable)+ `SkillSourceProvider`(2 方法:type / create),`SkillSourceRouter` 启动期按 `type()` 索引 Provider,v1 两个实装(`classpath` 走 `PathMatchingResourcePatternResolver` 扫 `classpath*:prefix/**/SKILL.md` / `directory` 走 NIO `DirectoryStream` 一层扫 `<dir>/*/SKILL.md`),`CompositeSkillLoader.loadAll` 串起所有 source(单 source 失败不阻塞他人),`SkillAutoConfiguration` 扩展 Phase 1(SKILL.md 自动发现)+ Phase 2(`@Component` Skills)`mergePhases` 合并 → `ToolRegistry.register`,Phase 1 wins on name collision(用户可放下 SKILL.md 覆盖内置 `@Component` Skill);`SkillSourceProperties` 是 plain POJO + 静态 `bindFromEnvironment()` 工厂(R-13 dep-lock 兼容:只用 spring-core `Environment`,不用 spring-boot `Binder`),`agent.skills.sources[].type + .location` YAML 直接 bind → Map(Story #020b dsh §6.4 多源,0 新依赖)
 - 📡 **MCP server 3 transport 已上线**(stdio / SSE / streamable HTTP,Story #021a → #021b → #021c) — `McpServerConnection` interface 8 方法 + 6-态状态机(`IDLE / CONNECTING / CONNECTED / DISCONNECTED / RECONNECTING / FAILED`);3 concrete 实现(`StdioMcpServerConnection` + `SseMcpServerConnection` + `StreamableHttpMcpServerConnection`)由 `McpServerConnectionFactory.create(cfg.transport())` 静态分派;`McpHttpSupport` 共享 HTTP / JSON-RPC 样板(`HttpURLConnection` JDK 1.1 + Jackson `ObjectNode`,**0 新 Maven 依赖**);SSE long-lived 守护 `Thread` + 手写 `BufferedReader.readLine()` SSE parser(malformed 事件不杀流);streamable HTTP 无状态 POST tools/* + `GET /health` 心跳;3 transport 共享指数退避 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 无限重试 + per-listener try/catch 异常隔离;`McpErrorCodes` 新错误域 `M`(M01 stdio 失败 / M02 tool-call 失败 / M03 HTTP-SSE 失败);`callTool` 在非 CONNECTED 状态返 `McpCallResult.error(...)` 而**不**抛异常(对齐 §4.10.1 硬规则 2);dsh §6.5 (2.1)
@@ -67,6 +99,182 @@
 - 🌱 **YAML `${...}` 占位符跨路径统一** — `PlaceholderResolver` 静态工具类(brace-counting scanner 4-form grammar:`${X}` / `${X:default}` / `${X:${Y}}` 嵌套 / `$${literal}` 转义;env → sys-prop 查找;32 层环检测),`AgentFactory.loadYamlAndValidate` 在 `parseMinimalYaml` 与 `toAgentConfig` 之间 hook 调用,**修跨路径 parity bug** —— 之前 CLI / YamlWatcher hand-rolled 路径下 `${user.dir}` 静默变 13 字符串,Spring Env 路径(demo-product)一直支持;新增 2 ErrorCode `LINGS-C03 YAML_PLACEHOLDER_UNRESOLVED` / `LINGS-C04 YAML_PLACEHOLDER_CYCLE`;**0 新 Maven 依赖**(Story #026)
 - 🤖 **Anthropic 协议层 Tool 转换已上线** — `AnthropicLlmProvider` 4 段协议链全贯通:`buildRequestBody` 真翻 `Prompt.tools` → 顶层 `tools:[]`(`{name, description, input_schema}`)+ `messages[].content` 展开为 array of blocks(`text` / `tool_use` / `tool_result`)+ 连续 `Message.ToolResult` **合并为单 user message 多 tool_result block**(Anthropic 协议层硬约束)+ `parseResponse` 解析 `tool_use` block → `ToolCall(id, name, input)`;`TurnContext.appendAssistant` 签名扩 `toolCalls` 参数 + `DefaultTurnContext` 实现对齐 + `LinearTurnEngine.L166` 真传 `resp.getToolCalls()`;新增 2 ErrorCode `LINGS-L01 TOOL_USE_BLOCK_INVALID` / `LINGS-L02 TOOL_RESULT_BLOCK_INVALID`(LlmProvider 域 L 段 1/2 号);Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2);**OQ-7 解决**(Story #027a,**0 新 Maven 依赖**)
 - 📡 **Anthropic SSE 真流式已上线** — `AnthropicLlmProvider.doPostStream` 把非流式 POST + 一次性 readAll 替换为 SSE `text/event-stream` accept + `BufferedReader.readLine()` 逐行解析(沿用 #021c `SseMcpServerConnection` 手写 SSE parser 模式)+ `AnthropicStreamParser` 6-类事件状态机(`message_start` → `ReasoningStarted` + init usage / `content_block_start` × text + tool_use → 触发 `ToolStarted` / `content_block_delta` × text_delta + input_json_delta → 持续 `TextDelta` + per-block JSON 拼接 buffer / `content_block_stop` → per-block `MAPPER.readTree()` 构造 `ToolCall` / `message_delta.stop_reason` / `message_stop`) + `Map<Integer, StringBuilder>` text blocks + `Map<Integer, ToolCall.Builder>` tool blocks 交错状态机;LLM 流式首 token P50 ≤ 1.5s NFR(constitution §3)真达标;新增 `LINGS-L03` reserved 常量(§14 N6 graceful shutdown 后续启用,本期不抛);复用 #027a `LINGS-L01` 协议层 ErrorCode(SSE 解析 tool_use 缺 id/name);`parseResponse` 保留为 fallback(`anthropicStreamEnabled=false` 配置路径仍可用);**§6.5 protocol gap 全闭合**(Story #027b,**0 新 Maven 依赖** / **R-13 0 binary delta 第 13 次 PASS**)
+- 🧵 **Anthropic LLM I/O 池已有界** — `AnthropicLlmProvider.ioExecutor` 字段初始化从无界 `Executors.newCachedThreadPool`(`maximumPoolSize = Integer.MAX_VALUE`,极压下 OOM 风险)替换为有界 `ThreadPoolExecutor`,镜像 `ToolExecutorConfig.agentToolPool` 100% shape:`corePoolSize = cores * 2` / `maxPoolSize = cores * 4` / `keepAliveTime = 60s` / `LinkedBlockingQueue(256)` / `CallerRunsPolicy` 兜底 / daemon=true / 线程名前缀 `anthropic-llm-io-N`(per-instance 计数,`jstack` 友好与 `lingshu-tool-N` 风格对齐);`CallerRunsPolicy` 在队列满时让 `LinearTurnEngine` 主线程兜底执行,back-pressure 慢不丢(主线程阻塞自限流,而非无界堆积);`buildBoundedIoExecutor()` 私有静态方法 + 5 import(`LinkedBlockingQueue` / `ThreadFactory` / `ThreadPoolExecutor` / `TimeUnit` / `AtomicInteger`)+ 类级 Javadoc 详细描述 Story #043 改动 + 镜像 `ToolExecutorConfig` 字段对齐表;**根除 `lingshu-core/src/main/java/` 唯一一处无界生产线程池**(Story #043,**0 新 Maven 依赖** / **0 新 ErrorCode** / **R-13 0 binary delta 第 26 次 PASS**)
+- 🛡️ **AgentConfig 顶层 turn 并发闸门已上线** — `AgentConfig.@Value` 24 → 26 字段 final,顶层扩 `maxConcurrentTurns`(默认 16)+ `maxConcurrentQueueDepth`(默认 32)2 int 字段,空 yml 自动 fallback 16 + 32,顶上 `validate()` 聚合 `reactMaxSteps` + 2 新字段检查到单 `LingsConfigException`,复用 `LINGS-C02` ConfigError 路径;`AgentConfigDefaults` + `AgentFactory.toAgentConfig` + 53 fixture `new AgentConfig(...)` 全部同步 +2 实参(0 业务逻辑改动,纯 Lombok `@AllArgsConstructor` 再生参数补齐);**dsh §10 NFR row 4 「默认 16,排队 ≤ 32」数字基线落地**(原 NFR 表一行,本 Story NFR 表 + AgentConfig 字段 + yml 接线 3 处对齐)+ **兑现 Story #043 forward reference**(Story #043 §10 NFR row 4 footnote 写「Story #044 处理 docs/code 兑现」,本 Story 兑现)+ **Future-proof 双重闸门**(Story #043 单池已有界 + Story #044 顶层闸门 = N 并发 turn × 单池上限 仍有界);(Story #044,**0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-C02`)/ **R-13 0 binary delta 第 27 次 PASS**)
+
+---
+
+## 🛠️ 环境要求 / Requirements
+
+> **D5 拍板**(2026-10-06):**JDK 8 编译目标** / **JDK 17+ 运行时**(Spring Boot 3.2.5 硬约束)。
+
+| 维度 | 要求 | 说明 |
+|---|---|---|
+| **编译目标** | JDK 8(`<source>1.8</source>`) | Spring Boot 3.2.5 父继承 + `<maven.compiler.source>1.8</maven.compiler.source>`;源码兼容 JDK 8 工具链编译,锁了 `record` / `sealed` / `var` / `List.of` / text blocks(JDK 9—15+ 特性)禁用清单 |
+| **运行 JRE** | **JDK 17+ 必填** | Spring Boot 3.2.5 硬约束(JDK 17+ class file format + Spring 6 baseline);推荐 Temurin / Zulu / Alibaba Dragonwell / IBM Semeru |
+| **构建工具** | Maven 3.6.3+ | 多模块父 POM + 5 子模块;无需 Gradle;`mvn -pl lingshu-core test` 跑核心模块测试 |
+| **JDK 矩阵 CI** | JDK 8(compile only)+ JDK 17 / 21(test + verify) | GitHub Actions matrix 自动跑;JDK 17 是缺省 profile |
+| **OS** | Linux / macOS / Windows | 跨平台;JDK + Maven 即可,无 native dep |
+
+**锁定的 13 项依赖**(dsh §10.1 / R-13 mitigation (d))—— Spring Boot 3.2.5 / Spring AI 1.0.0-M6 / Lombok 1.18.38 / OpenTelemetry 1.32.0 / reactive-streams 1.0.4 / Jackson 2.x / JUnit 5.10.1 / AssertJ 3.24.2 / Mockito 5.8.0 / Awaitility 4.2.0;**新增任何依赖需 RFC + `dependency:tree` CI 卡点 + `banned-dependencies` enforcer build 阶段 fail**(Story 实施 PR body 末尾必须有 `### R-13 dependency:tree 自查` 节)。
+
+**零配置原则**(dsh §7)—— 空 `application.yml` 必须能启动,`AgentConfig` 26 字段全部有默认值(空 yml → 全字段 fallback 默认值 → 启动 → 调 LLM)。
+
+**快速验证**:
+
+```bash
+mvn -v                                              # Maven 3.6.3+ / JDK 1.8.0_xxx+ / Java 17+ vendor
+git clone https://github.com/lingshu-ai-agent/lingshu.git
+cd lingshu
+mvn -pl lingshu-examples/demo-empty spring-boot:run # 应当 30 秒内启动,无 application.yml 也能跑
+```
+
+---
+
+## 📦 Installation
+
+> **D2 拍板**(2026-10-06):发布渠道 = **GitHub Packages**(规避 Sonatype/JIRA 首次发布 1—3 工作日审核阻塞)。**代价**:consumers 必须在 `~/.m2/settings.xml` 配一个 `<server>`(username=`x-access-token`,password=GH PAT)才能拉工件 —— 没有匿名下载路径。
+
+### Step 1 — 在你的 `pom.xml` 加依赖
+
+```xml
+<dependency>
+    <groupId>ai.lingshu</groupId>
+    <artifactId>lingshu-core</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+### Step 2 — 声明 GitHub Packages 仓库(repositories)
+
+```xml
+<repositories>
+    <repository>
+        <id>github</id>
+        <name>GitHub Packages (LingShu)</name>
+        <url>https://maven.pkg.github.com/lingshu-ai-agent/lingshu</url>
+        <releases><enabled>true</enabled></releases>
+        <snapshots><enabled>true</enabled></snapshots>
+    </repository>
+</repositories>
+```
+
+> 把这段放进**消费方项目**的 pom.xml(`<project>` 直接子节点,不是某个 profile 里)。否则 Maven 找不到 GH Packages 仓库,会报 `Could not find artifact ai.lingshu:lingshu-core:0.1.0`。
+
+### Step 3 — 配 `~/.m2/settings.xml` 的 `<server>` 块
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github</id>                              <!-- 必须与 pom.xml <distributionManagement> 的 <id> 一致 -->
+      <username>x-access-token</username>          <!-- 固定值,不是你的 GitHub 用户名 -->
+      <password>ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</password>  <!-- 替换为你的 GitHub PAT -->
+    </server>
+  </servers>
+</settings>
+```
+
+> **`<id>github</id>` 必须与 pom.xml `<distributionManagement>` 里的 `<id>` 一致**(都是 `github`)—— Maven 按 id 匹配 `<server>` 和 deploy repo。<username>**不是**你的 GitHub 用户名,固定填 `x-access-token`(GH Packages 的硬约束)。
+
+### Step 4 — 生成 GitHub PAT(4 步)
+
+1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. **Generate new token** → 名字用
+4. **Repository access** → 选择 **Public repositories (read-only)**(只拉包不需要 write,最小权限原则)
+4. **Permissions** → **Only select repositories → Package → Read packages**(精确到只读 packages)
+5. 生成 → 复制 `ghp_...` 开头 40 个字符 → 填入 Step 3 的 `<password>` 字段
+
+> **Fine-grained token** vs **classic token** —— 都行;fine-grained 权限粒度更细,推荐。如果用 classic token,scopes 勾 `read:packages` 一个即可。
+
+### Step 5 — 验证能拉到工件
+
+```bash
+mvn dependency:get -Dartifact=ai.lingshu:lingshu-core:0.1.0
+# 应输出:BUILD SUCCESS(jar 下载到 ~/.m2/repository/ai/lingshu/lingshu-core/0.1.0/)
+```
+
+> 这一步如果失败,99% 是 Step 2 / Step 3 配置问题(仓库没声明或 `<server>` 没配 / id 不一致)。
+
+### 跳过制品验证(只用 snapshot)
+
+```xml
+<dependency>
+    <groupId>ai.lingshu</groupId>
+    <artifactId>lingshu-core</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+</dependency>
+```
+
+snapshot 版本号(例如 `0.1.0-SNAPSHOT`)走同一个 GH Packages URL,Maven 默认每小时检查一次新 snapshot。
+
+---
+
+## 🛡️ Stable SPI (since 0.1.0)
+
+> **D4 拍板**(2026-10-06):v0.1.0 起,**9 Slot SPI(11 annotated interfaces)+ PermissionPolicy + MemorySource + AuditLogger = 14 个 `@PublicApi(stable)` 标注接口** 锁定为向后兼容契约,跨 minor release 只加不破。
+
+**Stability 标记** —— 接口或方法带 `@PublicApi(PublicApi.Level.STABLE)` 注解 + Javadoc `@since 0.1.0` 标签。三个等级:
+
+| Level | 含义 | 适用范围 |
+|---|---|---|
+| `STABLE` | 跨 minor release 向后兼容;破坏性变更需 major bump + 2 版本 deprecation 周期 | 下列 14 个 SPI |
+| `INCUBATING` | 试验性;后续 minor release 可能变更 | `@PublicApi(INCUBATING)` 标注的类型 |
+| `INTERNAL` | 私有边界;任何 release 都可能改名 / 改签名 | 默认所有未标注类型 |
+
+### 9 Slot SPI(`@PublicApi(stable)` —— 11 annotated interfaces)
+
+| Slot | Interface | Package | Contract version | 责任 |
+|---|---|---|---|---|
+| 1 LLM | `LlmProvider` | `ai.lingshu.core.slot` | `1.0.0` | 流式调模型 + 增量事件 + 终态响应 |
+| 2 Tool | `Tool` | `ai.lingshu.core.slot` | `1.0.0` | 单 Tool 契约(name/desc/schema/execute + `sourceCategory()` 默认方法) |
+| 2 Tool | `ToolExecutor` | `ai.lingshu.core.slot` | `1.0.0` | Tool dispatch 5 步流水线入口(§4.10.1 硬规则 2) |
+| 3 Sandbox | `RuntimeSandbox` | `ai.lingshu.core.slot` | `1.0.0` | 有界 fs / http / process 能力 |
+| 4 Skill | `Skill` | `ai.lingshu.core.slot` | `1.0.0` | Tool 标记接口(`/xxx` 命令 / CLI 拦截) |
+| 4 Skill | `SkillSource` | `ai.lingshu.core.slot` | `1.0.0` | Skill 多源自动发现(classpath / directory / git / s3) |
+| 5 SessionStore | `SessionStore` | `ai.lingshu.core.slot` | `1.0.0` | Checkpoint 持久化(memory / file / redis / jdbc) |
+| 6 Compactor | `Compactor` | `ai.lingshu.core.slot` | `1.0.0` | 历史压缩两步契约(`shouldCompact` + `compact`) |
+| 7 PromptBuilder | `PromptBuilder` | `ai.lingshu.core.slot` | `1.0.0` | 5 段 Prompt 装配 + tools 单独字段 |
+| 8 FlowEngine | `FlowEngine` | `ai.lingshu.core.runtime` | `1.0.0` | Turn 执行拓扑(LinearTurnEngine / DAG / 外部适配器) |
+| 9 A2aTransport | `A2aTransport` | `ai.lingshu.core.slot` | `1.0.0` | 远端 Agent 桥接(5 方法契约) |
+
+### 3 Helper SPI(`@PublicApi(stable)` —— 3 interfaces)
+
+| Helper | Interface | Package | Contract version | 责任 |
+|---|---|---|---|---|
+| 权限策略 | `PermissionPolicy` | `ai.lingshu.core.slot` | `1.0.0` | Tool 调用 3 决策(Allow / Deny / AskUser)+ `approvalTimeoutSeconds=0` 默认无超时(Claude Code overnight parity) |
+| 记忆源 | `MemorySource` | `ai.lingshu.core.slot` | `1.0.0` | `[PROJECT MEMORY]` 单 block 贡献(priority 排序) |
+| 审计日志 | `AuditLogger` | `ai.lingshu.core.spi` | `1.0.0` | 结构化事件 emit(console / file / OTel / Kafka / cloud vendor) |
+
+### Compatibility Promise(dsh §16.1 + D4)
+
+- **Major version 内** —— `STABLE` API **只加不破**;`@Deprecated` 至少 2 个 minor release 后才允许移除
+- **跨 minor release** —— 可新增方法(默认实现)但**禁止**删除 / 改签名 / 改语义
+- **跨 major version** —— 允许破坏性变更,但需发布 migration guide + 1 版本 overlap 窗口
+- **每个接口的 `CONTRACT_VERSION` 字段** —— 启动期 `SlotRouter` 反射校验,版本不兼容时启动失败并打印 ErrorCode
+
+### 编写自己的 Plugin / Provider
+
+```java
+// 1. 实现 Provider(必须 implements SlotProvider)
+public class MyLlmProvider implements LlmProvider {
+    @Override public String name() { return "my-provider"; }
+    @Override public int priority() { return 10; }   // 胜过默认 priority=0
+    @Override public String version() { return "1.0.0"; }  // 必须兼容 1.0.0
+    @Override public LlmProvider create(AgentConfig cfg) {
+        return new MyLlmProviderImpl(cfg);
+    }
+}
+
+// 2. yml 配置
+// agent:
+//   llm:
+//     name: my-provider
+//
+// 3. @Component 自动注册到 Spring 容器(v1.5.28 多 Provider 模式)
+```
+
+完整 SPI 契约 Javadoc 见源码(`ai.lingshu.core.slot.*` + `ai.lingshu.core.runtime.FlowEngine` + `ai.lingshu.core.spi.AuditLogger`)。
 
 ---
 
@@ -1729,6 +1937,369 @@ Story #027a 合入后,`AnthropicLlmProvider.buildRequestBody` + `parseResponse` 
 - §14.2 RetryPolicy(指数退避 + 抖动)+ §14.3 CircuitBreaker SSE 流式重连
 - §14.10 N10 audit-log 接 `text_delta` / `tool_use` block / `tool_result` block 入账路径
 - `OpenAiLlmProvider` / `GeminiLlmProvider` 流式(用 #027a + #027b 协议层样板,OQ-Future)
+
+---
+
+### Story #028 sandbox-runtime-impl(`§6.3 ChrootRuntimeSandbox` 真实现 + `DefaultToolExecutionContext` 4 stub 真接通,§6 主链 100% 收口)
+
+dsh §6.3 L3901-3976 接口模板(`RuntimeSandbox` 4 方法 + `ChrootRuntimeSandbox` + `ChrootedFileSystem` + `WhitelistedHttpClient`)就位但 0 实施 — `DefaultToolExecutionContext.http()/fs()/approval()` 当前 4 stub 全抛(`PassThroughHttp` 17 行 inner class) / 全 deny / 默认 FS / UOE,**§6 关键实现主链 16/17 已合 + 1 主链漏项待 #028**。本次把漏项补齐。
+
+**关键不变项** —— `AgentConfig` 不可变契约不变(24 字段 schema 0 改动)+ `AgentFactory` SPI 不变(@Autowired 6-Router 加 1 = 7-Router 严格向后兼容 + 6-arg legacy ctor + null-guard 兜底 StubAgentFactory 子类 0 改动)+ `ToolExecutor.dispatch()` 5 步流水线结构不变(只 sandbox 步内容由 stub → 真 delegate)+ `LinearTurnEngine` 公开方法签名不变 + `Message` 4 子类契约不变(🆕 v1.5.46 refactor 已落)+ `PermissionPolicy` SPI 不变 + `AuditLogger` / Cost 域 完全兼容 + 9 Slot 体系不变 + JDK 8 兼容(`Collections.emptyList()` / `HashSet<>` / `BufferedReader` / `HttpURLConnection` 已锁,no `var` / `List.of` / sealed / records) + Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住 — sandbox 真串入 ToolExecutor 后,**禁止**再让 Spring AI 自动 tool 执行绕过 ToolExecutor)。
+
+**实现要点**(11 文件,7 new + 4 modify):
+
+1. **`AccessDeniedException.java`(新 file,`ai.lingshu.core.slot` 包,~55 行)** —— `public final class extends RuntimeException` + 域字母 S 段 1 号常量 `public static final String ERROR_CODE = "LINGS-S01";` + 两个 ctor(reason / reason+cause)+ `getMessage()` 自动前缀 `"[" + ERROR_CODE + "] "` 对齐 `LingsLlmProviderException` / `LingsConfigException` 同模式;**注**:`super()` 调用 Javadoc 声称 `[LINGS-S01]` 但实际 `super(ERROR_CODE + " " + ...)` 不带方括号,**实施期补修复**——为对齐全代码库 `[CODE]` 前缀约定(`LingsLlmProviderException.L93-102` 重写 `getMessage()` / `LingsConfigException` 也用 `[CODE]` 模式),本 Story 把 `super()` 调用改为 `super("[" + ERROR_CODE + "] " + ...)`,源代码 2 字符改动,0 binary delta。
+2. **`ChrootedFileSystem.java`(新 file,~150 行,`ai.lingshu.core.impl.sandbox` 包)** —— `public final class extends FileSystem` + 委托 `FileSystem` delegate(`FileSystems.getDefault()`)+ `Path rootDir` 配置 ctor(必须 absolute 且 normalised)+ `@Override Path getPath(String first, String... more)` 真接 prefix-boundary gate(resolved → `toAbsolutePath().normalize()` → `!startsWith(rootDir)` 抛 `AccessDeniedException("Path escapes working dir: " + absolute)`);其余 `FileSystem` SPI 方法(provider / supportedFileAttributeViews / getRootDirectories 等)全部 delegate 透传,**getRootDirectories 返单元素 `Collections.singletonList(rootDir)`**(防止 leak delegate true root set);**明确不**是 OS-level chroot(无 `chroot(2)` 系统调用,无 namespace 隔离,无 fs mount 重组)—— 纯 JVM-level path-prefix gate,真 OS chroot 留 v2 follow-up Docker / Landlock / gVisor provider。
+3. **`WhitelistedHttpClient.java`(新 file,~200 行,`ai.lingshu.core.impl.sandbox` 包)** —— `public final class implements NetworkClient` + `Set<String> domainWhitelist` + 3 verb 实现(`get/post/getStream`)+ `void check(String url)` 真 gate(URI.create(url).getHost() + `Set.contains(host)` O(1) 守卫,miss 抛 `AccessDeniedException("Domain not whitelisted: " + host)`)+ RFC JDK `HttpURLConnection` 0 新依赖(对齐 #027a / Story #021c `McpHttpSupport` 已有 pattern);5xx 透传 `IOException("HTTP " + code + ...)` 而**不**抛 AccessDeniedException(对齐 `ToolExecutor` 5 步流水线 §4.10.1 硬规则 2 — sandbox 只 gate 白名单,网络错误走 result.error);`getStream()` 包 `DisconnectingInputStream`(`HttpURLConnection.getInputStream()` 包装 + `close()` 时 disconnect 兜底);30s read timeout via `HttpURLConnection.setReadTimeout(READ_TIMEOUT_MS)`;`User-Agent: ChaOS-LingShu-Sandbox/1.0` 标识。
+4. **`ChrootRuntimeSandboxProvider.java`(新 file,~50 行,`ai.lingshu.core.impl.sandbox` 包)** —— `@Component public class implements Providers.RuntimeSandboxProvider`(Provider SPI 内嵌在 `ai.lingshu.core.spi.Providers`)+ `name()="chroot"` 对齐 `AgentConfig.Sandbox.runtime` 默认值 + `priority()=10` + `version()="1.0.0"`;`create(AgentConfig)` 直接返回 Spring wired `DefaultRuntimeSandbox` singleton;**对齐 v1.5.28 §5.5 多 Provider 模式** —— 同一 Slot 可注册多个 Provider,`agent.sandbox.runtime` 按名路由(若未来加 `docker` provider,优先级 ≥ 20 可替换)。
+5. **`DefaultToolExecutionContext.java`(modify,~22 行新增)** —— 加 `private final RuntimeSandbox runtimeSandbox;` 字段 + 1-arg legacy ctor 委派 2-arg `(turnCtx, null)` + 2-arg primary ctor;`fs()` 真接:`return (runtimeSandbox != null) ? runtimeSandbox.fs() : FileSystems.getDefault();`(legacy 1-arg ctor path 兜底 default FS,back-compat 旧测试)+ `http()` 真接:`return (runtimeSandbox != null) ? runtimeSandbox.http() : new PassThroughHttp();`(legacy path 保留 `PassThroughHttp` stub 抛 UOE 兜底);**保留** `PassThroughHttp` 17 行 inner class(只挪到非生产路径,legacy 1-arg ctor back-compat 用)。
+6. **`AgentFactory.java`(modify,~35 行新增)** —— 加 7-arg primary ctor(@Autowired 加 `Routers.RuntimeSandboxRouter runtimeSandboxRouter` 与 `PermissionPolicyRouter` / `ToolExecutorRouter` / `FlowEngineRouter` 并列)+ 加 6-arg legacy ctor 委派 `null` 兜底 + `description()` / `create()` 加 null-guard 容忍 `runtimeSandboxRouter == null`(让 `StubAgentFactory extends AgentFactory` 子类 0 改动,沿用 Story #007 / #023 / #027a precedent)。
+7. **`DefaultTurnContext.java`(modify,~40 行新增)** —— 加 6-arg primary ctor(`(Session, AgentConfig, Subscriber, String, CancellationToken, RuntimeSandbox)`)+ 4-arg / 5-arg legacy ctor 委派 `null` + 加 `createWithBroadcast(5 args)` overload 接受 sandbox;impl-only `public RuntimeSandbox runtimeSandbox()` accessor(**不**在 `TurnContext` interface 上,LinearTurnEngine 走 cast 拿)。
+8. **`LinearTurnEngine.java`(modify,~5 行新增)** —— `dispatchWithPolicy` 加 1 段 sandbox 提取:`RuntimeSandbox sandbox = (ctx instanceof DefaultTurnContext) ? ((DefaultTurnContext) ctx).runtimeSandbox() : null;`(接口未暴露但实现类有,cast 兜底);`new DefaultToolExecutionContext(ctx, sandbox)` 2-arg ctor 走 sandbox 委托路径。
+9. **`DefaultAgent.java`(modify,~3 行新增)** —— `buildContext(String userInput)` 改用 `DefaultTurnContext.createWithBroadcast(session, frozen, null, userInput, runtimeSandbox)` 5-arg overload 携带 sandbox。
+10. **`AnthropicLlmProvider.java`(modify,~1 行 sync)** —— L383 文案 sync(`Message.ToolUse is not stored in session history` → `tool_use blocks live on Message.Assistant.toolCalls`,对齐 v1.5.46 refactor 已删 `Message.ToolUse`)。
+11. **`Providers.java` / `Routers.java`(modify,~6 + 15 行)** —— `Providers.RuntimeSandboxProvider` SPI 内嵌 + `Routers.RuntimeSandboxRouter` Slot 3 隐式 Router concrete stub(对齐 §5.3.1.0 隐式 Router 模式)。
+
+**测试覆盖 39 新 cases**(6 文件):
+- `AccessDeniedExceptionTest.java`(3 L1)—— simple ctor 自动前缀 / reason+cause ctor 保留 cause / null reason 当空串
+- `ChrootedFileSystemTest.java`(7 L1)—— `/etc/passwd` 逃逸抛 `[LINGS-S01] Path escapes working dir` / 合法路径返 `Path` / `rootDir` 边界通过 / `../` traversal 拦截 / `getRootDir` 返回 normalised root / null first 抛 IAE / ctor null guard
+- `WhitelistedHttpClientTest.java`(10 L1,real HTTP via JDK `com.sun.net.httpserver.HttpServer`)—— evil domain 抛 `[LINGS-S01] Domain not whitelisted: evil.example.com` / 合法 GET 真发真读 / POST echoes payload / `getStream` 返 InputStream / null+empty URL / malformed URL / hostless `mailto:` URL / null whitelist / empty whitelist / 5xx 透传 IOException(`HTTP 500` msg)
+- `DefaultRuntimeSandboxTest.java`(7 L1)—— unwhitelisted cmd 抛 `PermissionDeniedException` / whitelisted `ls` 越过 gate 到 `ProcessBuilder.start()` / workingDirectory 设时 `fs()` 返 `ChrootedFileSystem` / 不设时返 default FS / `http()` 返 `WhitelistedHttpClient` wired / null whitelist 拒一切 / 空 cmd 抛 IAE
+- `ChrootRuntimeSandboxProviderTest.java`(5 L1)—— `name()="chroot"` / `priority()=10` / `version()="1.0.0"` / `create()` 返 wired singleton / 多次 `create` 忽略 cfg 返同 singleton
+- `DefaultToolExecutionContextSandboxIT.java`(7 L2 Agent 装配 wiring)—— 2-arg ctor + sandbox.fs() 返 chrooted / 2-arg ctor + sandbox.http() 返 WhitelistedHttpClient / legacy 1-arg ctor 兜底 default FS / legacy 1-arg ctor http() 兜底 PassThroughHttp stub 抛 UOE / null turnCtx 抛 IAE / null sandbox 兜底 default / workingDirectory 委托到 TurnContext.config().getSandbox()
+
+**累计**:**587 + 39 = 626 tests pass** / 3 MCP heartbeat flake pre-existing;R-13 mitigation (d) baseline 镜像 **第 14 次 PASS 0 binary delta**(`FileSystem` SPI + `HttpURLConnection` + `ProcessBuilder` + `HashSet` + `BufferedReader` + `com.sun.net.httpserver.HttpServer` JDK 内置 全 JDK 8 standard 无新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**0 新 Maven 依赖** / **1 新 ErrorCode `LINGS-S01 SANDBOX_ACCESS_DENED`**(Sandbox 域字母 S 段 1 号 — ⚠️ 与 constitution §4 `S = Slot(SPI)` 域 LINGS-S01/S05 现存用法**冲突**,需 RFC 后续统一,本期 implementation 与 `SandboxErrorCodes.java` 一致沿用 S 段 1 号)。
+
+**Story #028 业务价值**:
+- **§6 主链 100% 收口**(dsh §6 关键实现主链 + 全部并行支链 100% ✅ 真庆祝,从原 16/17 + 1 漏项 → 17/17 全合)
+- **§4.10.1 硬规则 2 ToolExecutor 5 步流水线「sandbox」步真实现** —— 之前 PermissionPolicy.check() → ToolRegistry.lookup() → TimeoutWrap → **SandboxApply stub(空跑)** → tool.execute() → Checkpoint,sandbox 步当前是空跑(`PassThroughHttp` 抛 UOE / 默认 FS),Tool 实际可绕过沙箱;本 Story 让 sandbox 步真 delegate 到 `RuntimeSandbox` 接口,4 个 throw sites(`ChrootedFileSystem.getPath` / `WhitelistedHttpClient.get/post/getStream` / `ChrootRuntimeSandbox.process().run(...)` + 4th reserved §4.7)统一抛 `AccessDeniedException` 携带 `[LINGS-S01]` 前缀
+- **`application.yml` 顶层 `agent.sandbox.workingDirectory / commandWhitelist / domainWhitelist` 真生效** —— Story #025 follow-up 只接通字段存储未接通执行,本 Story 真接通 → 4 个内置 Tool(`Read/Write/Edit/Bash`)+ 未来自定义 Tool 都受沙箱 gate 守护
+- **`DefaultAgent.create()` → Agent.run() → Tool.execute()` 全栈 sandbox 守护** —— sandbox 在 AgentFactory.create() 一次性 resolve(同 7-Router 同生命周期),通过 `DefaultTurnContext` 携带 reference 走 ctx→toolCtx,LinearTurnEngine.dispatchWithPolicy 真传 sandbox 到 DefaultToolExecutionContext 2-arg ctor,Tool.execute(call, ctx) 调 `ctx.fs().getPath(...)` 或 `ctx.http().get(...)` 时自动受 gate
+
+**Story #028 后续**:
+- ⚠️ **§4 域字母冲突 RFC**:constitution §4 `S = Slot(SPI)` 已用 `LINGS-S01 / S05`,本 Story 复用 S 段 1 号(`Sandbox` 域),需后续 RFC 统一(候选:`Sandbox` 改 `X` 域 / `Slot` 改其他字母 / 重命名 `LINGS-S01` 为 `LINGS-X01`)
+- 🆕 **v2 真 OS-level chroot**:`ChrootedFileSystem` 仅 JVM-level path-prefix gate(实现层明确声明 "This is not an OS-level chroot"),真实 chroot(2) / Landlock / gVisor 留 v2 follow-up 独立 Story
+- 🆕 **§14 N10 audit-log 接 sandbox deny**:`[LINGS-S01]` 拒绝事件可接入 `AuditLogger.log(SandboxAccessDeniedEvent)`(`SandboxAccessDeniedEvent` 设计时 sandbox 事件源应预留 hook 接口,见 constitution §14 N10 cross-ref)
+- 🆕 **§4.7 PermissionPolicy.check() AskUser deny 路径**:`AccessDeniedException` 第 4 抛点(§4.7 批准门 AskUser 拒绝)本期 reserved,需后续 Story 实施
+
+---
+
+### Story #029 permission-policy-impl(StrictPermissionPolicy 真实现替代 AllowAll stub + `LINGS-P01` + Slot 4 multi-Provider `strict` 命中)
+
+dsh §4.7 PermissionPolicy.check() 当前只有 `AllowAllPermissionPolicy` 1 个 stub(始终返 `Decision.Allow`),Tool 实际无模型层 gate — §6 主链 16/17 闭环,本 Story 把 Slot 4 真正落地为可配置的 allow-list / deny-list 守卫。
+
+**关键设计抉择**(为什么先 multi-Provider 而不直接改 AllowAll):
+- 现有 `AllowAllPermissionPolicyProvider`(`name="default"` + `priority=0`)是 Story #001 零配置 back-compat 锚,任何改它都会破坏 AC-01-2(空 yml 必须 boot);走 v1.5.28 §5.5 多 Provider 模式新增 `StrictPermissionPolicyProvider`(`name="strict"` + `priority=10`)是 zero-friction 路径
+- `PermissionPolicyRouter.resolve("strict", cfg)` 真命中 strict,`resolve("default", cfg)` 兜底 AllowAll,SlotRouter 行为不变(§5.3.1.0 父类兼容)
+- yml 顶层 `permission-policy: strict` 走新 policy;`permission-policy: default` 走回 AllowAll,Story #001 back-compat 守住
+
+**实现要点**(7 文件,4 new + 3 modify):
+
+1. **`PermissionErrorCodes.java`(新 file,`ai.lingshu.core.permission` 包,~15 行)** —— `public final class` + 域字母 P 段 1 号常量 `public static final String LINGS_P01 = "LINGS-P01";` + private ctor 兜底;**🆕 P 域启用** = §15 域字母表 10 字母第 10 个,constitution §4 域字母列表 P 行新增。
+2. **`StrictPermissionPolicy.java`(新 file,~75 行,`ai.lingshu.core.impl.permission` 包)** —— `@Component @Value public class implements PermissionPolicy` + `AgentConfig.ToolsConfig tools` 字段(`@Value` 不可变) + `check()` 3 决策路径(Path 1:allow-list non-empty AND tool not in it → Deny with `[LINGS-P01] Tool 'X' not in allow-list`;Path 2:deny-list non-empty AND tool in it → Deny with `[LINGS-P01] Tool 'X' in deny-list`;Path 3:default → Allow `strict policy: allow`) + 严格 equals 匹配(`List.contains`,no case folding / whitespace / wildcard)。
+3. **`StrictPermissionPolicyProvider.java`(新 file,~30 行)** —— `@Component public class implements Providers.PermissionPolicyProvider` + `name()="strict"` + `priority()=10` + `version()="1.0.0"` + `create(AgentConfig)` 返 `new StrictPermissionPolicy(config.getTools())`(持 ToolsConfig 引用走 `@Value` 不可变契约)。
+4. **`PermissionPolicyAutoConfiguration.java`(新 file,~20 行,`ai.lingshu.core.impl.permission` 包)** —— `@Configuration public class` + `@Bean(name = "permissionPolicyProvider_strict-1.0.0") public PermissionPolicyProvider strictPermissionPolicyProvider()` 返 `new StrictPermissionPolicyProvider()`(对齐 v1.5.28 §5.5 多 Provider 模式 `@Bean(name = "...")` 唯一 Bean 名约定);**项目惯例**:`@Configuration` 而非 `@AutoConfiguration`(对齐 `SkillAutoConfiguration` / `McpTransportAutoConfiguration` / `LocalToolsAutoConfiguration` precedent)。
+5. **`AgentConfig.java`(modify,~10 行新增)** —— `ToolsConfig` 加 `List<String> allowList` + `List<String> denyList` 2 字段 + `defaults()` 返 `Collections.emptyList()` 兜底;顶层加 `String permissionPolicy` 字段(默认 `"default"`)+ 构造器位置 24(末位,沿用 §3 不可变契约)。
+6. **`AgentFactory.java`(modify,~30 行新增)** —— `toAgentConfig(Map, Path)` 加 4 行 YAML 绑定(`stringOr(agent, "permission-policy", "default")` + `stringListOr(toolsMap, "allow-list", ...)` + `stringListOr(toolsMap, "deny-list", ...)` + `booleanOr(toolsMap, "enabled", true)`) + 构造 `AgentConfig.ToolsConfig toolsCfg` 5 字段;加 `booleanOr` private static helper(真 / 1 / yes → true;false / 0 / no → false;其他 → fallback);**关键修复** yml key 拼写:`permission-policy`(kebab-case,匹配 `stringOr(agent, "permission-policy", ...)`)对齐 `working-directory` precedent。
+7. **`demo-product/src/main/resources/application.yml` + `demo-empty/src/main/resources/application.yml`(modify)** —— demo-product 顶层 `permission-policy: strict` + `agent.tools.allow-list: [read_file, write_file, list_dir, bash_safe]`(对齐 `ProductTools` 4 个 `@Component` Tools 已知名);demo-empty 顶层 `agent.permission-policy: strict`(演示 deny 路径,无 tool 注册)。
+
+**测试覆盖 18 新 cases**(6 文件):
+- `StrictPermissionPolicyTest.java`(5 L1)—— Path 1:allow-list non-empty + tool miss → Deny with `[LINGS-P01]` 前缀 / Path 2:deny-list hit → Deny `[LINGS-P01]` / Path 3:both lists empty → Allow / allow-list hit → Allow / `Decision.kind()` 多态
+- `StrictPermissionPolicyProviderTest.java`(2 L1)—— `name()="strict"` + `priority()=10` + `version()="1.0.0"` / `create(cfg)` 返 `StrictPermissionPolicy` 且 `getTools() isSameAs cfg.getTools()`
+- `PermissionErrorCodesTest.java`(1 L1)—— `LINGS_P01 == "LINGS-P01"` 常量锁定
+- `ToolsConfigAllowDenyListTest.java`(3 L1)—— `defaults().getAllowList()` 空 + `getDenyList()` 空 / explicit allow-list round-trip / 双列表同存 round-trip
+- `PermissionPolicyRouterStrictIT.java`(4 L2 slice)—— `resolve("strict", cfg)` 返 `StrictPermissionPolicy` / `resolve("default", cfg)` back-compat 返 `AllowAllPermissionPolicy` / 双 Provider 同存 + 各自 name-resolve 命中 / end-to-end strict policy 在 `cfg.tools.allowList=[read_file, write_file]` 下拒 `bash_safe` 带 `[LINGS-P01]` 前缀
+- `AgentFactoryYamlPermissionPolicyIT.java`(3 L2 slice)—— yml `permission-policy: strict` 真绑顶层字段 / yml 缺 `permission-policy` 字段 back-compat `"default"` / yml `tools.allow-list: [read_file, write_file]` 真绑 `ToolsConfig.allowList`
+
+**编译修复**(Story #029 触 ToolsConfig 扩字段 + 顶层 permissionPolicy 扩字段 ~25 测试文件构造器适配)—— sed 机械批量替换(`AgentConfig.ToolsConfig.defaults()` → `, "default")`)+ 手工处理 4 个内联注释模式 + 6 个直接 `new ToolsConfig(true, X, Y)` 5-arg 化 + 8 个手写 `new AgentConfig(...)` helper 加 `getPermissionPolicy()` 末位参数(DelegateTool / SubAgentInheritance / AgentConfigDefaults / AgentFactory / DelegateAutoConfigurationTest 等);0 行测试 case 逻辑改动(纯机械 5-arg 适配 + 24-arg 适配),`agent.tools.*` 配置语义 0 改动。
+
+**累计**:**626 + 18 = 644 tests pass** / 2 MCP heartbeat flake pre-existing(CLAUDE.md 文档化);R-13 mitigation (d) baseline 镜像 **第 15 次 PASS 0 binary delta**(`List.contains` + `Collections.emptyList()` + `Arrays.asList` + `Lombok @Value` + `Spring @Component` / `@Configuration` 全 JDK 8 standard + 已锁 13 项依赖表内 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**0 新 Maven 依赖** / **1 新 ErrorCode `LINGS-P01 TOOL_NOT_IN_ALLOW_LIST`**(Permission 域 P 段 1 号,**🆕 第 10 个域字母启用**:C/S/L/T/X/R/A/M/Z + 🆕 P,详见 dsh §15)。
+
+**Story #029 业务价值**:
+- **§4.7 PermissionPolicy.check() 真实现替代 stub** —— 之前 Slot 4 router.resolve(...) 永远命中 `AllowAllPermissionPolicy`,任何 tool 调用都通到 ToolRegistry。本 Story 让 `permission-policy: strict` 真生效,allow-list miss / deny-list hit 立即 emit `[LINGS-P01] Tool 'X' not in allow-list` / `[LINGS-P01] Tool 'X' in deny-list`,ToolExecutor 5 步流水线第 1 步真起作用
+- **`agent.tools.allow-list` / `agent.tools.deny-list` yml 配置表面** —— 业务方可纯 YAML 配置工具允许列表(无需写 Java),符合 Story #002 业务配置方「只写 YAML」核心承诺
+- **Slot 4 multi-Provider 模式实证** —— `strict` + `default` 双 Provider 同存走 §5.3.1.0 SlotRouter 按 name 路由,验证了 v1.5.28 §5.5 多 Provider 模式从口号到可工作实现
+
+**Story #029 后续**:
+- 🆕 **§15 ErrorCode 域字母表 10 字母全启用**(C/S/L/T/X/R/A/M/Z + 🆕 P),constitution §4 域字母列表加 `P = Permission` 行,dsh §15.4 P 段 reserved 占位 8 项变实占 1 项
+- 🆕 **§4.7 PermissionPolicy.check() AskUser 路径**:`Decision.AskUser` 路径本期未触发,需后续 Story 实施(批准门 `ApprovalGate.ask` 集成)
+- 🆕 **§14 N10 audit-log 接 `[LINGS-P01]` 拒绝事件**:Permission deny 事件可接入 `AuditLogger.log(PermissionDeniedEvent)`(预留 hook,后续 Story 实施)
+- 🆕 **细粒度审批门**:`PermissionPolicy` interface 已支持 `Decision.AskUser`,但 strict policy 当前只返 Allow / Deny;按 cmd 类型(写 / 删 / 执行)分级 AskUser 留后续 Story
+
+---
+
+### Story #030 permission-policy-ask-user(`Decision.AskUser` 3rd outcome 真接通 + Claude Code overnight parity `approvalTimeoutSeconds=0` 默认无超时 + 3 stub 删除 + demo-product `POST /api/approvals/{sessionId}/{approvalId}` SSE round-trip + `LINGS-P02`)
+
+Story #029 把 `PermissionPolicy` SPI 真接通 + `Decision` 3 子类(`Allow` / `Deny` / `AskUser`)+ `Decision.AskUser` 3rd outcome 设计意图留 stub(3 处:`DefaultToolExecutionContext.approval()` / `DefaultToolExecutor.dispatch()` AskUser 分支 L112-115 / `LinearTurnEngine.dispatchWithPolicy()` AskUser 分支 L437-445);但本 Story 实测发现:**用户配 `permission-policy: ask` + `ask-list: [bash_safe, write_file, web_fetch]` 时 Agent 调危险 Tool 直接走 unreachable code / NPE / 永久 hang 三种坏行为之一** —— Story #029 留下 `Decision.AskUser` 3rd outcome 设计意图但未真接通;同时用户隔夜(下一个工作日)审批 Agent 调危险的 Tool,**当前实现无超时机制会永久 hang**(Claude Code overnight parity 缺失);Story #030 收口 AskUser 真实接通 + Claude Code overnight parity + demo-product SSE round-trip 闭环。
+
+**关键设计抉择**(为什么 `approvalTimeoutSeconds=0` 默认永不超时):
+- 用户 2026-10-02 会话反馈「我在用 Claude Code 的时候有些需要人审批的,过一个晚上还可以审批后继续流转,难道这个超时时间是有个开关的,或者配置成0默认不超时?」—— Claude Code 用户**已经习惯**了「配好 ask 模式 + 等审批人隔夜决定」的 workflow,LingShu 不应强制一个超时上限(企业审批人可能在另一个时区 / 下一个工作日决定,1 小时超时 = 业务中断)
+- `approvalTimeoutSeconds=0` = `CompletableFuture.get()` 不传 timeout,**永不超时** —— `>0` 时 N 秒后未审批 → `Decision.deny("[LINGS-P02] approval timeout after Ns")`(降级为 deny,Engine 走 `ToolResult.denied`,与 deny-list 命中等价语义)
+- 默认值 `0` 与 Claude Code `permission-policies` 默认行为对齐,业务方需要严格超时上限可显式配 `30` / `300` / `3600` 等
+
+**5 段决策**(`AskUserPermissionPolicy.check(Tool, ToolExecutionContext) → Decision`):
+- ① `denyList.contains(tool.name())` → `Decision.deny(reason, [LINGS-P01])`(deny 优先级最高,与 Story #029 strict 一致)
+- ② `allowList.isEmpty() && askList.isEmpty()` → `Decision.allow()`(yolo back-compat,default yml 启动)
+- ③ `askList.contains(tool.name())`(复用 #031 `PermissionPatterns.matches()` 3 形式 pattern 通配)→ `Decision.ask(reason)`(**真接通** 3rd outcome,本期 3 stub 删除)
+- ④ `allowList.isEmpty() && !askList.isEmpty()` + `!askList.contains(tool.name())` → `Decision.allow()`(ask-only 模式,未在 ask-list = 默认允许)
+- ⑤ `!allowList.isEmpty() && allowList.contains(tool.name())` → `Decision.allow()`
+- ⑥ `!allowList.isEmpty() && !allowList.contains(tool.name())` → `Decision.deny(reason, [LINGS-P01])`(strict-allow 模式,不命中 deny)
+
+**3 stub 删除 + 真接通**:
+- `DefaultToolExecutor.dispatch()` L112-115 AskUser 分支 throw stub → 改为 unreachable(`LinearTurnEngine.dispatchWithPolicy()` 已处理 `Decision.AskUser`,Executor 不再单独处理)
+- `LinearTurnEngine.dispatchWithPolicy()` L437-445 AskUser branch:`askDecision = policy.check(...)` → 若 `askDecision.isAsk()`:
+  - `UUID approvalId = UUID.randomUUID()`
+  - `String sessionId = ctx.getSessionId()`
+  - `CompletableFuture<Decision> future = new CompletableFuture<>()`
+  - `approvalRegistry.register(approvalId, sessionId, future::complete)`
+  - emit `AgentEvent.ApprovalRequired(approvalId, sessionId, askDecision)`(Reactive Streams 事件流,前端 SSE 可订阅)
+  - `Decision resolved = future.get(approvalTimeoutSeconds, TimeUnit.SECONDS)`(`approvalTimeoutSeconds=0` → `future.get()` 永不超时;`>0` → N 秒超时抛 `TimeoutException` → catch 转 `Decision.deny("[LINGS-P02] ...")`)
+  - 若 `resolved.isDeny()` → emit `AgentEvent.PermissionDenied([LINGS-P02])` + 走 `ToolResult.denied`
+  - 若 `resolved.isAllow()` → 继续走原 Tool 执行路径
+
+**`ApprovalRegistry` 终局收集器**(`ai.lingshu.core.impl.runtime` @Component):
+- `ConcurrentMap<sessionId+":"+approvalId, Consumer<Decision>>` 主存储
+- `register(approvalId, sessionId, callback)` —— LinearTurnEngine 注册待审批 callback
+- `consume(approvalId, decision)` —— demo-product ChatController 调,触发 callback.accept(decision) + remove(key)
+- `size()` —— 测试 / 监控(当前 in-flight 审批数)
+- `evictBySessionPrefix(sessionId)` —— session 结束时清理该 session 全部 pending approvals(避免内存泄漏)
+- **关键不变项** —— `PermissionPolicy` SPI 公开方法签名 `check(Tool, ToolExecutionContext) → Decision` 不变(只新增 1 个真实现 + 1 个 Provider);`Decision` 3 子类(`Allow` / `Deny` / `AskUser`)不变(只 `StrictPermissionPolicy` 用到 `Allow + Deny`,`AskUserPermissionPolicy` 用到 3 种);`AgentConfig` 不可变契约不变(`@Value` + `@Builder` 24 → 26 字段 final,只扩 `askList` + `approvalTimeoutSeconds` 2 字段);`ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)—— `DefaultToolExecutor.dispatch()` AskUser 路径 stub 删除(LinearTurnEngine 已处理);`AgentFactory` SPI 不变(@Autowired 6-Router ctor **不动**,`AskUserPermissionPolicyProvider` 由 `@Component` 自动注册,`PermissionPolicyRouter` Story #029 v1.5.28 多 Provider 模式自动接管);`Tool` SPI 不变 + `AgentEvent` 基类不变(只 `ApprovalRequired` 子类 ctor 加 3-arg);§4.7 PermissionPolicy / AuditLogger / Cost 域完全兼容 / 9 Slot 体系不变 / JDK 8 兼容(`ConcurrentHashMap` + `CompletableFuture` + `UUID.randomUUID()` + `Collections.emptyList()` + `Arrays.asList()` + Lombok `@Value` + Spring `@Component` + Jackson `@JsonProperty` kebab-case 已锁 13 项依赖,no `var` / `List.of` / sealed / records) + Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住) + ReAct Loop 自实现不变(§4.10.1 硬规则 1 守住)。
+
+**`AskUserPermissionPolicyProvider` SPI**(`ai.lingshu.core.impl.permission` plain class,非 `@Component`):
+- `implements PermissionPolicyProvider`
+- `name() = "ask"` + `priority() = 10` + `version() = "1.0.0"` —— 与 Story #031 `StrictPermissionPolicyProvider` 模式一致
+- `create(AgentConfig cfg)` 构造 `AskUserPermissionPolicy(cfg, toolRegistry.findAll().stream().collect(toMap(t -> t.name(), t -> t.sourceCategory())))` —— 复用 Story #031 `ToolRegistry.findAll()` 启动期构造 `nameToCategory: Map<String, String>`
+- **关键** NOT `@Component` —— 由 `PermissionPolicyAutoConfiguration` 通过 `@Bean(name = "permissionPolicyProvider_ask-1.0.0")` 唯一注册(§5.5 v1.5.28 多 Provider 模式 name-based resolve)
+
+**demo-product SSE round-trip 闭环**(`lingshu-examples/demo-product`):
+- `ChatController` 加 `POST /api/approvals/{sessionId}/{approvalId}` 端点 ~+55 行
+- HTTP body `{decision: "allow" | "deny", reason?: string}` → `approvalRegistry.consume(approvalId, decision)` → 触发 `CompletableFuture.complete(decision)` → `LinearTurnEngine` 等的 future 拿到 decision 继续 dispatch
+- `application.yml` 顶层 `permissionPolicy: "ask"` + `tools.ask-list: [Bash, Write, Edit]` + `approval-timeout: 0`(默认永不超时)
+- 前端 SSE 同意变 permanent hang 风险:本 Story 真接通后,**前端 SSE subscribe `ApprovalRequired` event → 弹 modal → 用户 approve/deny → POST `/api/approvals/...` → future 解阻塞 → 真实 blocking-then-resume 流转路径**(面向用户作为可工作的示例)
+
+**23 new case 跨 7 文件**:
+- `AskUserPermissionPolicyTest.java`(5 L1)—— 5 段决策路径全覆盖(deny 优先 / allow-list 空 / ask-list 命中 / allow-only 命中 / allow-only 不命中)
+- `AskUserPermissionPolicyProviderTest.java`(2 L1)—— `create(cfg)` 注入 `nameToCategory` from `ToolRegistry.findAll()`
+- `ApprovalRegistryTest.java`(4 L1)—— `register/consume/size/evictBySessionPrefix` 4 方法 + 不存在 approvalId 防御
+- `AgentEventApprovalRequiredTest.java`(2 L1)—— 3-arg ctor + `approvalId: UUID` 字段
+- `AgentConfigAskListTest.java`(3 L1)—— `ToolsConfig` 6-arg ctor + `askList` 默认 `Collections.emptyList()`
+- `LinearTurnEngineAskUserTest.java`(3 L2)—— AskUser 真接通 + 永不超时 + 异常路径(`future.get` 抛 `TimeoutException` → catch 转 `Decision.deny("[LINGS-P02] ...")`)
+- `PermissionPolicyRouterAskIT.java`(3 L2)—— multi-Provider 模式 `strict` + `ask` 双 Provider 共存 + 实际 dispatch
+- 1 L3 demo-product blackbox round-trip —— ChatController SSE 端到端 verify approve → 阻塞-解阻塞 + deny → future.cancel + timeout → `LINGS-P02`
+
+最终 **684 tests pass**(0 fail / 2 MCP heartbeat flake pre-existing 与本变更**无关**);**R-13 mitigation (d) baseline 镜像 第 16 次 PASS 0 binary delta**(`mvn -pl lingshu-core,lingshu-examples/demo-product dependency:tree -DoutputType=text` pre/post diff **仅时间戳不同** —— `ConcurrentHashMap` + `CompletableFuture` + `UUID.randomUUID()` + `Collections.emptyList()` + `Arrays.asList()` + Lombok `@Value` + Spring `@Component` + Jackson `@JsonProperty` kebab-case 已锁 13 项依赖 0 新 binary 引入);**0 新 Maven 依赖** / **1 新 ErrorCode** `LINGS-P02 PERMISSION_APPROVAL_TIMEOUT`(Permission 域 P 段 2 号,**仅** `approvalTimeoutSeconds > 0` 时触发)。
+
+**Story #030 业务价值**:
+- **`Decision.AskUser` 3rd outcome 真接通** —— Story #029 留的 3 stub 真删除(变 unreachable code),`Decision.AskUser` 从死类型变活 SPI,OQ-9 follow-up 第二段收口
+- **Claude Code overnight parity** —— `approvalTimeoutSeconds=0` 默认**永不超时**,企业审批隔夜(下一个工作日)决定也能 merge / `>0` 时明确走超时路径 → `LINGS-P02`
+- **R-04 privilege escalation 缓解**(分值 8)—— 用户可配 `permission-policy: ask` + `ask-list: [bash_safe, write_file, web_fetch]` + Agent 调危险 Tool 需 demo-product ChatController 后台 approve/deny + large-scale enable 企业部署
+- **demo-product SSE round-trip 闭环** —— 前端 SSE 同意变 permanent hang 风险(Story #029 stub 时期)+ 真实 blocking-then-resume 流转路径(本 Story 真接通后),面向用户作为可工作的示例
+- **Story #029 follow-up #1 + #2 收口** —— Decision 3 outcome 真接通 + 永不超时机制同时落地,OQ-9 全面 close
+
+**Story #030 后续**:
+- 🆕 **`PermissionPolicy` 多种 ask 策略组合**:Story #031 pattern + Story #030 ask 组合,业务方可配 `permission-policy: ask` + `ask-list: ["mcp:*", "delegate:*"]`(category 通配 + ask 模式),新接入 MCP server 自动进入 ask 流(本期未实现,pattern + ask 组合已支持但 ask-list 仍是 exact-name list)
+- 🆕 **批量审批**:前端一次展示 5 个待审批 Tool(用户批量 approve/deny),降低 single-approval 摩擦(本期 demo-product 单个 approve 端点)
+- 🆕 **审批历史持久化**:`ApprovalRegistry` 当前 in-memory,session 结束即丢;接 SessionStore 后可查「3 天前审批过哪些 Tool」(本期未实现)
+- 🆕 **§14 N10 audit-log 接 `ApprovalRequired` / `ApprovalGranted` / `ApprovalDenied` 事件**:AuditLogger 接 3 类新事件,合规审计可追(预留 hook,后续 Story 实施)
+- 🆕 **审批人角色**(Admin / Developer / Auditor 三级):不同审批人对不同 Tool 类别有不同权限(本期单一 approval 角色,所有 approve 一视同仁)
+
+---
+
+### Story #031 permission-policy-pattern-matching(Story #029 `List.contains` 12 行静态枚举 → `PermissionPatterns` 三形式通配 + 5 保留 category:`*` / `<name>` / `<category>:*`)
+
+Story #029 落地了 `StrictPermissionPolicy`,但 yml 配置 `allow-list: [read_file, write_file, list_dir, bash_safe]` 实质是把 Tool 名硬编码进 yml —— 任何新增 Tool 都得手改 yml,本质上是把 "维护死亡名单" 转嫁给业务方。本 Story 把 strict policy 从"字符串白名单"升级为"通配 + 分类"匹配,业务方一行 `mcp:*` 即覆盖所有 MCP Tool,新接入 MCP server 自动可见。
+
+**关键设计抉择**(为什么 `Tool.sourceCategory()` 默认方法 + 5 保留 category 而不是 string union):
+- 5 个核心 category (`local / mcp / skill / a2a / delegate`) 是 §6.5 Tool 三种 Scheme 来源 + Skill 单独支 + A2A 单独支 + Delegate 单独支的最自然划分,既覆盖现有 Tool 来源又给 plugin 留自定义 string 自由
+- 改为 `Tool.sourceCategory()` **默认方法**(`return "local"` 兜底),**不**改 `Tool` interface 签名(§4.6 Tool SPI 不变),不破坏现有 Tool 实现,只是 5 个核心 Tool 类型覆盖 `sourceCategory()` 返各自 category
+- `PermissionPatterns.matches(toolName, toolCategory, pattern)` 接受 3 形式 pattern:`"*"` / `"<exact-name>"` / `"<category>:*"` —— **不**走 `Pattern.compile()`(避免注入风险 + JDK 8 `String.startsWith` + `String.equals` 已足够),plain string match 零新依赖
+
+**三形式 Pattern grammar**(`PermissionPatterns.java` ~50 行,纯 JDK `String`):
+- `*` → 始终 true(允许/拒绝所有 Tool)
+- `<exact-name>` → `toolName.equals(pattern)`(back-compat with Story #029 字符串 yml 条目,**Story #029 5 个 L1 测试不改 0 行回归**)
+- `<category>:*` → `toolCategory.equals(category) && "*".equals(suffix)`(category 必须为 `local / mcp / skill / a2a / delegate` 五值之一,**未**做 strict 校验,plugin 可用自定义 string)
+
+**实现要点**(8 文件,1 new + 7 modify):
+1. **`PermissionPatterns.java`(新 file,`ai.lingshu.core.impl.permission` 包,~50 行)** —— `public final class` + private ctor + `public static boolean matches(String toolName, String toolCategory, String pattern)` 三形式 ladder(if-else 顺序:`*` → exact → `<category>:*`,first-match wins)+ private static helpers(`isCategoryPrefix(pattern)` / `extractCategory(pattern)`)
+2. **`Tool.java`(modify,`ai.lingshu.core.slot` 接口,~3 行新增)** —— `default String sourceCategory() { return "local"; }` 默认方法 + Javadoc 5 保留 category 列表 + 「plugin 自定义 string 自由」说明
+3. **`McpToolAdapter.java`(modify,`ai.lingshu.core.mcp`,~1 行)** —— `public String sourceCategory() { return "mcp"; }`(覆盖默认 local)
+4. **`SpringAiToolAdapter.java`(modify,`ai.lingshu.core.springai`,~1 行)** —— `public String sourceCategory() { return "local"; }`(显式声明,虽然默认值一致,但语义清晰)
+5. **`RemoteAgentTool.java`(modify,`ai.lingshu.core.a2a`,~1 行)** —— `public String sourceCategory() { return "a2a"; }`
+6. **`DelegateTool.java`(modify,`ai.lingshu.core.delegate`,~1 行)** —— `public String sourceCategory() { return "delegate"; }`
+7. **`SkillTool.java`(modify,`ai.lingshu.core.skill`,~1 行)** —— `public String sourceCategory() { return "skill"; }`
+8. **`StrictPermissionPolicy.java`(modify,~30 行新增/重构)** —— 移除 `@Component`(value-object 不是 Spring Bean,Provider 拥有 lifecycle)+ `@Value` → `@Getter @ToString` 简化 + 2-arg ctor `(ToolsConfig, Map<String,String> nameToCategory)` + 1-arg ctor 保留 back-compat + `check()` 4 段决策(deny 命中 → Deny / allow 空 → default-allow / allow 命中 → Allow / 不命中 → Deny with `category=<cat>` 上下文)+ `nameToCategory` lookup,缺省回退 `"local"`
+9. **`StrictPermissionPolicyProvider.java`(modify,~10 行)** —— 移除 `@Component`(避免与 `PermissionPolicyAutoConfiguration.@Bean` 重复注册触发 `NoUniqueBeanDefinitionException`)+ `@Autowired` 构造器注入 `ToolRegistry` 注入 + no-arg 构造器保留 back-compat(for test fixtures)+ `create(AgentConfig)` 调 `toolRegistry.findAll()` 构造 `nameToCategory: Map<String, String>` 注入 StrictPolicy
+10. **`demo-product/src/main/resources/application.yml`(modify)** —— 12 行 `allow-list` 静态枚举 → 单行 `allow-list: ["*"]` 通配
+11. **`DemoProductApplication.java`(modify,~30 行新增)** —— `readTools(Environment, ToolsConfig)` 私有静态 helper 真正吃 yml `agent.tools.allow-list[N]` + `agent.tools.deny-list[N]`(索引式 list walking,fallback 到 `defaults().getTools()`)+ `readToolsList` 索引式 list helper + `mergeConfig` 签名 +1 `ToolsConfig tools` 参数(对齐 §4 不可变契约)
+
+**测试覆盖 26 新 cases**(8 文件):
+- `PermissionPatternsTest.java`(8 L1)—— `*` 通配 / exact-name 命中 / exact-name 不命中 / `mcp:*` 命中 / `mcp:*` 不命中(不同 category)/ `local:*` 命中(默认 category)/ `local:*` 不命中 / 空 pattern 不匹配任何
+- `ToolSourceCategoryTest.java`(4 L1)—— `DefaultTool.sourceCategory()` 返 `"local"` / `McpToolAdapter.sourceCategory()` 返 `"mcp"` / `RemoteAgentTool.sourceCategory()` 返 `"a2a"` / `DelegateTool.sourceCategory()` 返 `"delegate"`
+- `StrictPermissionPolicyPatternTest.java`(6 L1)—— `mcp:*` allow-list + mcp tool → Allow / `mcp:*` allow-list + local tool → Deny / `*` allow-list + any tool → Allow / `*` deny-list + any tool → Deny / `read_file` exact-name 命中 back-compat / `read_file` exact-name 不命中
+- `StrictPermissionPolicyReasonTest.java`(1 L1)—— Deny reason 嵌 `category=<cat>` 上下文(Story #029 无 category,本 Story 强化诊断信息)
+- `StrictPermissionPolicyProviderTest.java`(2 L1,Story #029 共享 + 0 改动)—— `name()="strict"` + `create(cfg)` 注入 `nameToCategory` from `ToolRegistry.findAll()`
+- `AgentFactoryPatternMatchingIT.java`(2 L2)—— yml `allow-list: ["mcp:*", "skill:*", "read_file"]` 真绑 `ToolsConfig.allowList` 三形式混合 + yml `permission-policy: strict` + 通配 `allow-list: ["*"]` 端到端 Allow 全部 Tool
+- `DemoProductPermissionWildcardIT.java`(1 L3,新 file,`demo-product/src/test/java/.../`)—— `@SpringBootTest(classes=DemoProductApplication.class, webEnvironment=NONE)` + `@Autowired StrictPermissionPolicyProvider strictProvider` + `@Autowired AgentConfig demoAgentConfig` + `policy()` helper 调 `strictProvider.create(demoAgentConfig)` + 12 个代表性 Tool 名(`read_file / write_file / list_dir / bash_safe / time / calc / random / uuid / agent / compact / clear / help`)逐一 Allow(通配 `*` 命中)
+- `DemoProductPermissionCategoryPatternIT.java`(1 L3,新 file,6 inline cases)—— `@TestPropertySource(properties = {"agent.tools.allow-list[0]=mcp:*", "agent.tools.allow-list[1]=skill:*", "agent.tools.allow-list[2]=read_file", "agent.tools.deny-list[0]=", "agent.mcp.servers="})` + `@Import(TestToolsConfig.class)` 注册 3 stub Tool beans(`echo`→mcp / `remote_agent`→a2a / `Task`→delegate)+ 6 cases:echo/agent/read_file = Allow,write_file/remote_agent/Task = Deny with `category=local/a2a/delegate` 上下文
+
+**关键 Bug 修复**:
+- **Story #029 follow-up #1 yml-binding 漏洞**:`demo-product/application.yml` 顶层 `allow-list: [...]` 自 Story #029 合入以来一直**未被 `agentConfig(Environment)` 真正读取** —— `mergeConfig` 用的 `defaults.getTools()`(空 allow/deny list)+ `strict policy` 实际不生效。本 Story 借机补 `readTools(Environment, ToolsConfig)` + `readToolsList` helper 真正走 `Environment.getProperty("agent.tools.allow-list[N]")` 索引式 walking + `@TestPropertySource` 验证 yml 真生效
+- **`@Component` 双注册**:`StrictPermissionPolicy` 与 `StrictPermissionPolicyProvider` 之前均有 `@Component`,但 `PermissionPolicyAutoConfiguration` 也用 `@Bean(name="permissionPolicyProvider_strict-1.0.0")` 显式注册 — 触发 `NoUniqueBeanDefinitionException`(2 个 `permissionPolicyProvider_strict-1.0.0` Bean)。本 Story 移除两个 `@Component`,对齐 v1.5.28 §5.5 多 Provider 模式"unique `@Bean(name=...)` 唯一 Bean 名约定"
+- **`StrictPermissionPolicy` Spring 反射兜底失败**:`StrictPermissionPolicy` 移除 `@Value` 改为手动 2-arg ctor 后,Spring 仍尝试按 `@Component` 反射实例化(无 default ctor → fail)。本 Story 同步移除 `@Component`,Policy 改为纯 value-object,Provider 拥有 lifecycle
+
+**累计**:**626 + 26 = 647 tests pass** / 2 MCP heartbeat flake pre-existing(CLAUDE.md 文档化,与 #031 无关);R-13 mitigation (d) baseline 镜像 **第 16 次 PASS 0 binary delta**(`Pattern` + `String.startsWith` + `String.equals` + `HashMap` 全 JDK 8 standard + 已锁 13 项依赖表内 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-P01`,Deny 路径不变)
+
+**Story #031 业务价值**:
+- **Story #029 "维护死亡名单"反模式根治** —— yml `allow-list: [read_file, write_file, list_dir, bash_safe]` 4 行 → 单行 `allow-list: ["mcp:*"]` 一行覆盖所有 MCP Tool,新接入 MCP server **自动可见**,业务方无需手动维护白名单
+- **5 保留 category 与 §6.5 Tool 三种 Scheme 来源 + Skill / A2A / Delegate 支自然对齐** —— 业务方可写 `mcp:*` 允许所有 MCP / `local:*` 允许所有本地 / `skill:*` 允许所有 Skill / `a2a:*` 允许所有 RemoteAgent / `delegate:*` 允许所有 Delegate sub-agent
+- **`sourceCategory()` 默认方法零侵入** —— 现有 Tool 实现(Read/Write/Edit/Bash 等)无需任何改动即可获得 `"local"` 默认 category,只有 5 个核心 Tool 类型覆盖返各自 category(`McpToolAdapter` / `SpringAiToolAdapter` / `RemoteAgentTool` / `DelegateTool` / `SkillTool`)
+- **Story #029 back-compat 100% 守住** —— Story #029 5 个 L1 测试不改 0 行回归,exact-name 形式通过 Path 2 命中,业务方原有 yml `allow-list: [read_file, write_file]` 仍按原语义工作
+
+**Story #031 后续**:
+- 🆕 **`agent.tools.allow-list` / `agent.tools.deny-list` 文档化 Pattern grammar** —— dsh §4.7 `PermissionPolicy` 段补 `PermissionPatterns` 三形式 grammar + 5 保留 category 表 + examples
+- 🆕 **plugin 自定义 category**:`sourceCategory()` 返 string 完全自由,plugin 可自创 category(如 `Rag:*` / `Db:*`),`PermissionPatterns` 不强制白名单,只按字符串相等匹配
+- 🆕 **Story #029 AskUser 路径 + Story #031 pattern 组合**:`permission-policy: ask` 时按 pattern 类型分级 AskUser(`mcp:*` 可自动 AskUser,`<dangerous-cmd>` 必 AskUser),本期未实现
+
+---
+
+### Story #032 web-fetch-local-tool(Claude Code parity 三件套:本地 `WebFetch` + MCP fetch server 共存)
+
+Story #019 落地了 Read / Write / Edit / Bash 4 个本地 Tool,但**网络**这条腿一直是空的 —— Agent 想要查 GitHub README / 调 OpenAI API / 抓任意 HTTPS 页面,要么自己手写 MCP server,要么走 Story #021a-c MCP fetch server。本 Story 把 Claude Code 的 `WebFetch` 思路搬到 LingShu:**本地 Tool + sandbox HTTP client** 组合,POST/PUT/DELETE 走 MCP fetch server,GET-only 本地 Tool 直发 + 沙箱 domain-whitelist 守卫。**业务方一句话总结**:Claude Code 里有 `WebFetch`,LingShu 现在也有。
+
+**关键设计抉择**(为什么本地 WebFetchTool 而非纯靠 MCP):
+- **Claude Code parity** —— Claude Code 内置 `WebFetch` + MCP fetch server **共存**(built-in + MCP 并行,非互斥)。LingShu 早期误判"MCP covers HTTP,无 local Tool",实测 grep `McpHttpSupport.java` / `StreamableHttpMcpServerConnection.java` / `SseMcpServerConnection.java` 全部走 raw JDK `HttpURLConnection`,**不接 `WhitelistedHttpClient.check()`** —— 即 MCP HTTP transports 当前没有沙箱 domain-whitelist 守卫。本 Story 提供本地 Tool 把 Story #028 落地的 `WhitelistedHttpClient` 基建**激活** + 给业务方 Claude Code 同等的「开箱即用 GET」能力
+- **激活 idle 基建** —— Story #028 落地 `WhitelistedHttpClient` 后,`RuntimeSandbox.http()` 一直返实例但**没有任何 Tool 调它**(Read/Write/Edit/Bash 都是 fs/process,不走 HTTP)。本 Story 是 `WhitelistedHttpClient.check()` 第一次真正在 Tool 执行路径上 enforce
+- **GET-only 范围锁定** —— 本地 Tool 只发 GET,POST/PUT/DELETE 走 MCP fetch server(后续 Story)。description 显式声明 `POST/PUT/DELETE traffic is NOT supported`,业务方从工具描述就能看到边界
+- **HTTPS 透明** —— 用 JDK `HttpURLConnection` + `HttpsURLConnection`(JDK 内置,0 新依赖),`WhitelistedHttpClient.openConnection` 自动按 scheme 选实现,HTTPS 不需要额外证书配置(走默认 `TrustManager`)
+
+**实现要点**(5 文件,1 new + 4 modify):
+1. **`WebFetchTool.java`(新 file,`ai.lingshu.core.impl.tool.local`,~164 行)** —— `@Component("webFetchTool") implements Tool` 对齐 ReadTool/BashTool precedent + 5 段:`TOOL_NAME="web_fetch"` 常量 + `DEFAULT_MAX_BYTES=1_048_576` 1 MB + `TRUNCATION_MARKER="\n...[truncated, original %d bytes]"` + `description()` 静态字符串含 "domain whitelist" + "POST/PUT/DELETE traffic is NOT supported" + `inputSchema()` 静态 JSON Schema `{url: string required, max_bytes?: integer}` + `execute(call, ctx)` 4 段:`args.path("url").asText()` 校验 → `args.has("max_bytes")` 解析 maxBytes → `ctx.http().get(url)` 委托 → truncation marker 拼接;catch `AccessDeniedException` → `ToolResult.error("[LINGS-S01] Domain not whitelisted: ...")`;catch `IOException` → `ToolResult.error("HTTP fetch failed: ...")`,**`sourceCategory()` 不 override**(对齐 ReadTool/WriteTool/EditTool/BashTool 约定走默认 `"local"`);类级 Javadoc 覆盖 (1) Claude Code parity rationale + (2) GET-only 范围锁定 + (3) HTTPS transparent + (4) `@Component` 而非 `@Autowired` 因 stateless + (5) `ctx.http()` 必须走 `WhitelistedHttpClient.check()` 防御
+2. **`LocalToolsAutoConfiguration.java`(NO modify)** —— `Map<String, Tool> tools` autowiring 自动接住 `@Component("webFetchTool")`,无需新增 `@Bean`(spec §4 T02 原本建议加 `@Bean public Tool webFetchTool()`,本 Story 实测发现 Map<String, Tool> autowiring 已经覆盖,**cleaner**)。原有 4 `@Bean`(`readTool` / `writeTool` / `listDirTool` / `bashTool`)**0 改动**
+3. **`demo-product/src/main/resources/application.yml`(modify)** —— `agent.sandbox.domain-whitelist` 段加 5 示例 domain(`api.openai.com` / `api.anthropic.com` / `raw.githubusercontent.com` / `huggingface.co` / `localhost` for IT)+ 注释 `🆕 Story #032 — domain-whitelist now enforced for local web_fetch Tool (Claude Code parity, Read/Bash/WebFetch triplet complete);HTTPS supported transparently`
+4. **`specs/032-web-fetch-local-tool/spec.md` + `plan.md` + `tasks.md`(新 files,`specs/` 标准目录)** —— Story 完整三件套(why / what / tasks 拆 8 段 T01-T08 + 6 AC-NN validate + 4 dep-tree 自查 + 11 doc-sync + 7 PR)
+
+**测试覆盖 15 新 cases**(4 文件):
+- `WebFetchToolTest.java`(8 L1)—— `name()="web_fetch"` / `description()` 含 "domain whitelist" + "POST/PUT/DELETE traffic is NOT supported" / `inputSchema()` url required + max_bytes optional integer / `sourceCategory()="local"` 默认 / **AC-NN-7 reverse**:`new WhitelistedHttpClient(Collections.<String>emptyList())` 真 client + `http://anywhere.example/path` → `[LINGS-S01]` / 2 MB body + default 1 MB cap → truncation marker `...[truncated, original 2097152 bytes]` + 1 KB body + `max_bytes=100` override → 100 字节截断 + missing `url` argument → `ToolResult.error("url is required")`
+- `WebFetchToolHttpServerIT.java`(4 L2)—— `@BeforeEach startServer()` 用 JDK `com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)` + `server.start()`(实测踩坑:`HttpServer.create()` 只构造不 bind,**必须**调 `server.start()` 才接受连接)+ `@AfterEach stopServer()` `server.stop(0)`;happy path 200 → `ToolResult.success("hello world")` / **AC-NN-6 HTTPS 透明**:`/probe` 端点捕获 `User-Agent` header,断言 `ChaOS-LingShu-Sandbox/1.0`(证明请求**真正**经过 JDK `HttpURLConnection` 层,不是 mock 短路)/ localhost whitelist 命中(显式 `new WhitelistedHttpClient(Collections.singletonList("localhost"))`,证明 whitelist check 走真路径)/ HTTP 404 → `WhitelistedHttpClient.get()` 抛 `IOException("HTTP 404")` → `ToolResult.error("HTTP fetch failed: ...")`
+- `LocalToolsAutoConfigurationWebFetchIT.java`(2 L2)—— 手动 `new DefaultToolRegistry` + `new LocalToolsAutoConfiguration(registry, sandbox, bash, toolBeans, env).afterPropertiesSet()`(沿用 Story #019 `LocalToolsAutoConfigurationTest` manual-instantiation 样板,不复用 `@SpringBootTest` 避免加载全部 Spring Boot autoconfig)/ Map<String, Tool> 注入 5 个 Tool(`readTool / writeTool / editTool / bashTool / webFetchTool`)+ 断言 `registry.asMap()` containsKeys `("Read", "Write", "Edit", "Bash", "web_fetch")` size=5 / `registry.findByName("web_fetch")` 返回 `WebFetchTool` 实例(注意:**findByName 返 `Tool` not `Optional<Tool>`**,实测踩坑:第一次写 `Optional.of(registry.findByName(...))` 编译失败,SPI 契约是 findByName throws IllegalArgumentException if missing)+ `Tool.sourceCategory()="local"` 默认
+- `DemoProductWebFetchIT.java`(1 L3,`demo-product/src/test/java/.../`)—— `@SpringBootTest(classes=DemoProductApplication.class, webEnvironment=NONE)` + `@TestPropertySource(properties = {"agent.sandbox.domain-whitelist=localhost"})` 覆盖 production yml 7 个 domain,只留 localhost 让断言清晰 / `@Autowired WebFetchTool` + `@Autowired RuntimeSandbox` / 强转 `sandbox.http()` 为 `WhitelistedHttpClient`(WhitelistedHttpClient 是 production 唯一 NetworkClient 实现)/ mock `HttpServer` 绑 `127.0.0.1:0` / **双半同 case**:`http://localhost:<port>/data` → SUCCESS `"mock-body"`(whitelist 命中)+ `https://example.com/anything` → ERROR `[LINGS-S01] Domain not whitelisted: example.com`(whitelist miss,yml-driven check 真生效,不是 hardcoded)
+
+**累计**:**647 + 15 = ~662 tests pass**(lingshu-core surefire 655 + 6 IT in surefire via `-Dtest=`)/ 2 MCP heartbeat flake pre-existing(CLAUDE.md 文档化,Story #028 已落,与 #032 无关;`mvn -pl lingshu-core test -Dtest=StdioMcpServerConnectionHeartbeatTest` 在 stash 上无 local changes 仍 fail,确认 pre-existing);R-13 mitigation (d) baseline 镜像 **第 17 次 PASS 0 binary delta**(`WebFetchTool` 是纯 JDK `HttpURLConnection` / `HttpsURLConnection` + Jackson `ObjectMapper` 已锁 13 项依赖表内 + `com.sun.net.httpserver.HttpServer` JDK 内置,0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;`mvn -pl lingshu-core dependency:tree -Dverbose` 59 unique transitive coords vs Story #027b baseline(10963 字节 post.txt)diff = **空**;**0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-S01`,Sandbox 域 S 段 1 号,Story #028 已落)
+
+**Story #032 业务价值**:
+- **Claude Code parity 三件套完成** —— Read(本地 fs)+ Bash(本地 process)+ **WebFetch(本地 http)** 三件套对齐 Claude Code 生态,business 用户从 Claude Code 切到 LingShu 体验零差异
+- **`WhitelistedHttpClient` 基建从 idle → enforced** —— Story #028 落地的 `RuntimeSandbox.http()` 第一次真正在 Tool 执行路径上 enforce domain-whitelist,业务方 yml 改一行就生效(`agent.sandbox.domain-whitelist` 加新 domain)
+- **HTTPS 零配置** —— 业务方不需要管证书 / TrustManager,JDK `HttpsURLConnection` 默认 `TrustManager` + `WhitelistedHttpClient.openConnection` 按 scheme 自动选实现
+- **1 MB truncation marker 防御** —— 默认 `DEFAULT_MAX_BYTES = 1_048_576`(1 MB),LLM 单 turn token budget 不会被巨型 response 击穿;`max_bytes` 字段允许 override(per-call 灵活调整)
+
+**Story #032 后续**(Story #033 推迟):
+- ⏸ **Story #033 mcp-http-domain-guard(Path B + Mitigation 1)** —— MCP HTTP transports(SSE / streamable_http)走 raw `HttpURLConnection`,**不接** `WhitelistedHttpClient.check()`,意味着通过 MCP fetch server 调 URL 可以绕过 sandbox domain-whitelist。Path B(check-only hook)+ Mitigation 1(sandbox 配 MCP 共享 whitelist)是用户已审批方案,但实现涉及 `McpTransport.connect()` 加 `onBeforeRequest()` callback + MCP 配置 schema 扩字段,预估 6-8 文件改动 + 8-10 cases,**已超出 #032 Story 边界**,作为单独 Story 后续实施
+- 🆕 **`McpServerProperties` pattern 字段**(本期 unused):Story #031 的 `sourceCategory()` + `PermissionPatterns` 已落地,Story #033 可借机给 MCP fetch server 加 `pattern` 字段(`mcp-fetch:*` allow-list pattern),业务方一行 `mcp-fetch: ["http://internal-api.company.com/*"]` 控制 MCP fetch 范围
+- 🆕 **POST/PUT/DELETE 走 MCP** —— 本地 Tool 显式 GET-only(description 写明),业务方需要 POST 走 MCP fetch server(后续 Story 落地 story-021c 已有 streamable_http 支持)
+
+---
+
+### Story #033 mcp-http-domain-guard(Path B + Mitigation 1:MCP HTTP transports 沙箱守卫)
+
+Story #028 落地的 `WhitelistedHttpClient` 走 `RuntimeSandbox.http()`,但 **MCP HTTP transports(SSE / streamable_http)走 raw JDK `HttpURLConnection`** 不接 `WhitelistedHttpClient.check()` —— 通过 MCP fetch server 调 URL 可以绕过 sandbox domain-whitelist。本 Story **复用** `McpHttpSupport.checkOrThrow(url, whitelist)` 静态 helper,在 MCP 发 HTTP 请求**之前**前置守卫,12 hook point(SSE 7 + Streamable HTTP 5)失败抛 `AccessDeniedException[LINGS-S01]`,真实请求**不**发起。
+
+**关键设计抉择**(为什么不走 Path A 把 MCP HTTP 切到 `WhitelistedHttpClient`):
+- **§4.10.1 硬规则 2 守住** —— MCP 长连接 + JSON-RPC envelope + SSE streaming 协议层,不能简单套 `WhitelistedHttpClient`(它是短连接 client,SSE 持久连接会卡死)
+- **Path B 最小触碰** —— 只在 12 个 hook 点前**加 1 行** `McpHttpSupport.checkOrThrow(url, domainWhitelist)`,公开 API 0 改动,影响面积小
+- **Mitigation 1 沙箱配置** —— `McpServerConfig.@Builder.Default List<String> domainWhitelist = new ArrayList<>()` + ctor defensive copy,镜像 Story #028 `WhitelistedHttpClient` 的语义
+- **strict mode 默认** —— 空 whitelist = deny all,业务方必须显式配置 `McpServerConfig.builder().domainWhitelist(["host1", ...])` 才允许出站
+
+**实现要点**(8 modify 0 new 源):
+1. **`McpHttpSupport.checkOrThrow(String url, List<String> whitelist)` 静态 helper(新)** —— JDK `URI.create(url).getHost()` 拿 host + `whitelist.contains(host)`;空 whitelist / null whitelist / malformed URL / null host 全 deny;**只**调 `whitelist.contains(host)` 不创建 full `WhitelistedHttpClient` 实例(避免无谓 client 实例化)
+2. **`McpServerConfig` 扩 `domainWhitelist` 字段** —— `@Builder.Default List<String>` 兜底空 list + ctor defensive copy `new ArrayList<>(cfg.getDomainWhitelist())`;`McpServerConnectionFactory.create(cfg)` 把 whitelist 透传给 `SseMcpServerConnection` / `StreamableHttpMcpServerConnection`
+3. **`SseMcpServerConnection` 加 7 个 hook** —— `callTool` + 3 `doConnect`(initialize / notifications/initialized / tools/list)+ `heartbeatTick` + `openSseStream`(`/sse` GET)+ `relistTools`(listChanged 触发重拉)
+4. **`StreamableHttpMcpServerConnection` 加 5 个 hook** —— `callTool` + 3 `doConnect` + `heartbeatTick`
+5. **`StdioMcpServerConnection` 0 改动** —— stdio 走子进程 IPC 不走 HTTP,无沙箱必要
+6. **9 现有 SSE/Streamable HTTP 测试 fixture 加 `.domainWhitelist(Arrays.asList("127.0.0.1"))`** —— 让本地 127.0.0.1 fixture 通过守卫
+7. **`banned-dependencies` enforcer Rule 0 passed** + R-13 mitigation (d) baseline 镜像 **第 18 次 PASS 0 binary delta**(`URI.create` JDK 1.4 内置 + `List.contains` + `ArrayList` 0 新 binary 引入)
+8. **`specs/033-mcp-http-domain-guard/spec.md` + `plan.md` + `tasks.md`(新 files)** —— Story 完整三件套
+
+**测试覆盖 13 新 cases**(3 文件):
+- `McpHttpSupportCheckOrThrowTest.java`(8 L1)—— `checkOrThrow` 单元:emptyWhitelist 全 deny / nullWhitelist / matchingHost OK / nonMatchingHost deny / nullOrEmptyUrl deny / malformedUrl deny / caseSensitive / IPv4 host 提取
+- `McpHttpDomainGuardIT.java`(4 L2)—— JDK `com.sun.net.httpserver.HttpServer` 起服 + **AC-NN-1**:SSE whitelisted reaches CONNECTED + **AC-NN-2**:SSE non-whitelisted stays RECONNECTING + Streamable HTTP non-whitelisted stays RECONNECTING
+- `McpServerConnectionFactoryTest.java`(+1 L1)—— factory dispatch `create_sse_domainWhitelistPropagated` 验证 wire-through
+
+**累计**:**660 pass / 2 MCP heartbeat flake pre-existing**(35 existing test files updated `Arrays.asList("127.0.0.1")` 让 fixture 走沙箱白名单);R-13 mitigation (d) baseline 镜像 **第 18 次 PASS 0 binary delta**;**0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-S01`);**0 SPI 改动** —— `McpServerConnection` / `A2aTransport` / `Tool` / `RuntimeSandbox` / `WhitelistedHttpClient` / `McpTransport` / `StdioMcpServerConnection` / `McpServerConnectionFactory.create()` 全部 0 改动。
+
+**业务价值**:
+- **MCP HTTP 路径沙箱守卫到位** —— Agent 调任何 MCP HTTP fetch server 必须先过 sandbox domain-whitelist,与本地 Tool(`WebFetchTool` #032)对齐
+- **`WhitelistedHttpClient` 基建完全 enforced** —— #028 落地的 `RuntimeSandbox.http()` + #033 MCP HTTP 的 12-hook + 后续 #034 A2A,沙箱守卫真正在所有 HTTP 出站路径上生效
+- **strict mode 安全** —— 空 whitelist 默认 deny all,业务方必须显式配才允许出站,避免"沉默全开"风险
+
+**Story #033 后续**(OQ-Future):
+- ⚠️ **OQ-Future 风险**:MCP HTTP 配置 schema 暂未绑定 yml(`agent.mcp.servers[*]` 走 hand-rolled YAML parser,parser 暂未解析该字段),whitelist 暂**只能**通过 `McpServerConfig.builder().domainWhitelist(...)` 编程方式设置
+- 🆕 **配置绑定** —— `McpTransportAutoConfiguration` 解析 `domain-whitelist` 字段推到 Story #034+
+
+---
+
+### Story #034 a2a-http-domain-guard(A2A HTTP transport 沙箱守卫 — 复用 #033 `McpHttpSupport.checkOrThrow`)
+
+Story #033 把 MCP HTTP 路径走通了沙箱守卫,**A2A HTTP transport**(`HttpJsonRpcA2aTransport`)走 raw JDK `java.net.http.HttpClient`,同样**不接** `WhitelistedHttpClient.check()` —— 通过 `RemoteAgentTool` 调远端 A2A agent 可以绕过 sandbox domain-whitelist。本 Story **完全复用 #033** `McpHttpSupport.checkOrThrow(url, whitelist)` 静态 helper,在 A2A transport 发 HTTP 请求**之前**前置守卫,**2 hook point**(`fetchCard` + `jsonRpcCall`,submit/get/cancel 都走同一 hook),失败抛 `AccessDeniedException[LINGS-S01]`,真实请求**不**发出。
+
+**关键设计抉择**(为什么完全复用 #033):
+- **A2A 与 MCP 路径对称** —— 两者都**走 raw HTTP client**,**都**不接 `WhitelistedHttpClient`(SSE 长连接 / A2A 短连接都不能简单套),复用同一静态 helper 是最自然的选择
+- **per-remote-agent 配置粒度** —— `AgentRef.@Value` 加 `List<String> domainWhitelist` 字段(per-remote-agent 配置,yml `domain-whitelist: [host1, ...]` kebab-case 绑定);`HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory` 启动期 union `cfg.a2a.remoteAgents[*].domainWhitelistOrEmpty()` 去重后传给 transport(多 remote agent 共用 transport 实例,白名单取并集)
+- **strict mode 镜像 #033** —— 空 whitelist = deny all,与 `McpServerConfig.domainWhitelist` 语义对齐
+- **5-arg ctor + 4-arg ctor back-compat** —— 4-arg ctor 保留供现有测试 / `McpHttpSupport.checkOrThrow` 等不传 whitelist 的调用方使用(传 `Collections.emptyList()` strict mode)
+- **grpc / in-process transport 0 改动** —— 走进程内 RPC 不走 HTTP,无沙箱必要
+
+**实现要点**(4 modify 0 new 源):
+1. **`HttpJsonRpcA2aTransport` 加 5-arg ctor** —— 接收 `List<String> domainWhitelist` + defensive copy `new ArrayList<>(domainWhitelist)` + 4-arg ctor 保留 back-compat wrapper(传 `Collections.emptyList()` strict mode);`fetchCard(String agentName)` + `jsonRpcCall(...)` 私有方法**前**调 `McpHttpSupport.checkOrThrow(url, this.domainWhitelist)`,失败抛 `AccessDeniedException[LINGS-S01]`
+2. **`AgentRef` 扩 `domainWhitelist` 字段** —— `@Value` Lombok @Builder 默认 `Collections.emptyList()` + `getDomainWhitelistOrEmpty()` null-safe accessor(strict mode default);`HttpJsonRpcA2aTransportFactory.build()` 把 `cfg.a2a.remoteAgents[*].domainWhitelistOrEmpty()` 走 `HashSet<String>` union 去重传给 transport
+3. **`HttpJsonRpcA2aTransportAutoConfiguration` 加 `HttpJsonRpcA2aTransportFactory` 静态 inner class** —— ctor 收 `AgentConfig` + `ObjectMapper` + `AgentCardCache`,`previewWhitelistUnion()` 测试用 accessor + `build()` 产 transport;`@Bean(name="a2aTransportFactory_http-jsonrpc")` 暴露给 `RemoteAgentToolAutoConfiguration.remoteAgentTool()`
+4. **`RemoteAgentToolAutoConfiguration.remoteAgentTool()` 注入 factory** —— `if (transportName=="http-jsonrpc-1.0.0") transport = httpJsonRpcFactory.build();` 否则 `router.resolve(...)`(grpc / in-process 不走 HTTP 不变)
+
+**测试覆盖 13 新 cases**(4 文件):
+- `HttpJsonRpcA2aTransportCheckOrThrowTest.java`(6 L1)—— `checkOrThrow` 单元:emptyWhitelist 全 deny / nonMatchingHost deny / matchingHost OK / 5-arg ctor validation 6 子 case / defensiveCopy 防御性拷贝 / snapshotReturn 返回快照
+- `HttpJsonRpcA2aTransportDomainGuardIT.java`(3 L2)—— JDK `com.sun.net.httpserver.HttpServer` 计数 hits 真发请求,**AC-2.1**:whitelisted hits==2+SUCCESS / **AC-2.2**:non-whitelisted hits==0+AccessDenied(证明 hook 在请求离开 JVM 前生效) / **AC-2.3**:strict-mode empty hits==0+AccessDenied
+- `HttpJsonRpcA2aTransportAutoConfigurationTest.java`(+1 L1)—— factory union dedup 验证 `previewWhitelistUnion()` + `factory.build().getDomainWhitelist()` 跨 AgentRef 去重(alice[a,b] + bob[b,c] + carol[null] → [a,b,c])
+- `HttpJsonRpcA2aTransportTest.java`(modify)—— 3 call site 4-arg → 5-arg(`Arrays.asList("127.0.0.1")` 让 127.0.0.1 fixture 通过沙箱)
+
+**累计**:**673 pass / 0 fail / 2 MCP heartbeat flake pre-existing**;R-13 mitigation (d) baseline 镜像 **第 22 次 PASS 0 binary delta**(`URI.create` + `List.contains` + `HashSet` JDK 8 内置 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-S01`);**关键不变项** —— `A2aTransport` 5 方法 SPI 不变 / `A2aTransportRouter` 不变 / `RemoteAgentTool` 不变(只看 `A2aTransport` 接口)/ `McpHttpSupport.checkOrThrow` 公开方法不变(只被新增 caller 调用)/ `AccessDeniedException[LINGS-S01]` ErrorCode 复用 / `Tool` SPI 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)/ `AgentConfig` 不可变契约不变(只 AgentRef 内部加字段)/ `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动)/ §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容 / 9 Slot 体系不变 / JDK 8 兼容(`URI.create` + `List.contains` + `HashSet` + `ArrayList` + `Collections.emptyList` + `Arrays.asList` + Jackson `@JsonProperty` kebab-case 已锁,no `var` / `List.of` / sealed / records)
+
+**业务价值**:
+- **A2A 路径沙箱守卫到位** —— Agent 调任何远端 A2A server 必须先过 sandbox domain-whitelist,与本地 Tool(`WebFetchTool` #032)+ MCP HTTP(#033)对齐
+- **`WhitelistedHttpClient` 基建完全 enforced** —— 一路通过 #028 → #033 MCP + #034 A2A 真正在**所有 HTTP 出站路径**上 enforce
+- **per-remote-agent 粒度配置** —— 不同 remote agent 不同 domain-whitelist,A2A 多 server 部署友好(主 agent 调内网 server 拉 agent 调外部 SaaS)
+- **grpc / in-process 0 改动** —— 不走 HTTP 不受沙箱约束,符合最小触碰原则
+
+---
+
+### Story #037 permission-policy-multi-provider-alignment(Slot 4 PermissionPolicy 3 Provider 注册路径 100% 对齐 v1.5.28 §5.5 多 Provider 模式 — `AllowAllPermissionPolicyProvider` 也走显式 `@Bean`)
+
+实测发现(2026-10-02),Slot 4 PermissionPolicy 3 Provider 中 2 个(`StrictPermissionPolicyProvider` #029 + `AskUserPermissionPolicyProvider` #030)在 #029 / #030 阶段都**主动**移除了 `@Component` 注解,改为 plain POJO 模式,由 `PermissionPolicyAutoConfiguration` 显式 `@Bean(name="permissionPolicyProvider_<name>-1.0.0")` 走 v1.5.28 §5.5 多 Provider 模式注册;但 **`AllowAllPermissionPolicyProvider` 是 Story #001 时代遗留**,当时是 `@Component` 自动注册 → Bean 名 `allowAllPermissionPolicyProvider`(camelCase 类名自动派生)。这与 v1.5.28 §5.5 multi-Provider pattern 不符,且潜在触发 R-19 风险(`@Component` + `@Bean` 双胜出 → `BeanDefinitionOverrideException`)。本 Story 把 3 Provider 注册路径 100% 对齐,**纯 tech debt 清理,0 行为变化**。
+
+**关键设计抉择**(为什么不动 v1.5.28 之前的 `@Component` 模式):
+- **多 Provider 模式友好** —— v1.5.28 §5.5 取消 `@ConditionalOnMissingBean` 改 plain `@Bean(name = "<slot>Provider_<name>")`,3 Provider 命名风格 100% 一致;plugin 作者看到 3 个样板就明白怎么写
+- **`PermissionPolicyRouter` 按 `name()` 路由不变** —— `resolve("default", cfg)` → `AllowAllPermissionPolicy`,行为完全 back-compat
+- **避免双 Bean 漂移** —— 3 Provider 都是 `@Bean` 唯一注册 → 启动期不会因为某个 `@Component` 漏删导致 bean name 冲突
+- **0 字段 / 0 ErrorCode / 0 SPI 改动** —— 纯注解清理 + 一个 `@Bean` 方法
+
+**实现要点**(2 modify 2 new):
+1. **`AllowAllPermissionPolicyProvider` 删 `@Component` + 删 `import org.springframework.stereotype.Component`** —— 改纯 POJO 模式,与 sibling `StrictPermissionPolicyProvider` / `AskUserPermissionPolicyProvider` 对齐(此 2 在 #029 / #030 阶段已主动删除);Javadoc 改写对齐 sibling 风格,解释「Not @Component」设计意图 + 引用 `PermissionPolicyAutoConfiguration.defaultPermissionPolicyProvider()` 注册路径
+2. **`PermissionPolicyAutoConfiguration` 加 `@Bean(name = "permissionPolicyProvider_default-1.0.0") public PermissionPolicyProvider defaultPermissionPolicyProvider()`** —— 平行 strict / ask 两个 `@Bean`,3 Provider 命名风格 `permissionPolicyProvider_<name>-<version>` 100% 一致;Javadoc 同步补「🆕 v1.5.53 Story #037 — AllowAll 也走显式 `@Bean` 模式,3 Provider 注册路径风格对齐」+ 「§5.2 同名竞争约束」+ 引用 `AllowAllPermissionPolicyProvider.java` 设计意图段
+3. **`AllowAllPermissionPolicyProviderTest.java`(新 ~80 行 L1,4 case)** —— `provider_name_is_default` / `provider_priority_is_zero` / `provider_version_is_1_0_0` / `provider_create_returnsAllowAllPolicy_alwaysAllows`
+4. **`PermissionPolicyRouterMultiProviderIT.java`(新 ~120 行 L2,5 case)** —— **直接构造** 3 `@Bean` 方法 + reflection set `toolRegistry` field 模仿 Spring 容器 field-injection(沿用 Story #007 / #023 模式规避 Mockito 5.x + JDK 23 inline mockmaker 兼容 issue),`routerViaAutoConfiguration()` helper + `resolve("default")` 返 `AllowAllPermissionPolicy` / `resolve("strict")` 返 `StrictPermissionPolicy` / `resolve("ask")` 返 `AskUserPermissionPolicy` + 反射拿 `SlotRouter` 父类 `byName` 私有 `Map<String, Provider>` size=3 keys=["default","strict","ask"] + 反射验证 `AllowAllPermissionPolicyProvider.class.getDeclaredAnnotation(Component.class) == null`
+
+**测试覆盖 9 new cases**(2 文件):
+- `AllowAllPermissionPolicyProviderTest.java`(4 L1)—— US1-AS1 `name()="default"` / US1-AS2 `priority()=0` / US1-AS3 `version()="1.0.0"` / US1-AS4 `create(AgentConfig)` 反射验证返 `AllowAllPermissionPolicy` 实现类 + `check()` 永远 `Decision.Allow`(allow-all behavior 验证)
+- `PermissionPolicyRouterMultiProviderIT.java`(5 L2)—— US2-AS1 `resolve("default")` 返 `AllowAllPermissionPolicy` / US2-AS2 `resolve("strict")` 返 `StrictPermissionPolicy` / US2-AS3 `resolve("ask")` 返 `AskUserPermissionPolicy` / US2-AS4 反射拿 `SlotRouter.byName` Map size=3 含 3 个 key / US2-AS5 反射验证 `AllowAllPermissionPolicyProvider` 类**无** `@Component` 注解
+
+**累计**:**688 pass** / 0 fail / 2 MCP heartbeat flake pre-existing;R-13 mitigation (d) baseline 镜像 **第 23 次 PASS 0 binary delta**(`Spring @Component` / `@Bean` / `@Configuration` / `@Autowired` + JDK 8 内置 + Lombok `@Value` 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed;**0 新 Maven 依赖** / **0 新 ErrorCode**;**关键不变项** —— `PermissionPolicy` SPI 不变(公开方法签名 0 改动) + `Decision` 3 子类(Allow / Deny / AskUser)不变 + `PermissionPolicyProvider` SPI 不变(`name()` / `priority()` / `version()` / `create(AgentConfig)` 公开方法签名 0 改动) + `PermissionPolicyRouter` 行为不变(按 `name()` 路由,3 yml 配置 back-compat `permission-policy: default` / `: strict` / `: ask` 都不抛 `BeanDefinitionOverrideException`) + `PermissionPolicyAutoConfiguration` SPI 不变(`@Configuration` + 3 `@Bean` Bean name 互不冲突) + `AgentConfig` 不可变契约不变(0 字段新增) + `AgentFactory` SPI 不变(@Autowired 6-Router ctor 不动) + 9 Slot 体系不变 + JDK 8 兼容(`Spring @Configuration` + `@Bean` + `@Autowired` 已锁,no `var` / `List.of` / sealed / records)
+
+**业务价值**:
+- **3 Provider 注册路径 100% 对齐 v1.5.28 §5.5 多 Provider 模式** —— plugin 作者未来参考样板 3 个 Provider 全同一个样板
+- **IDE 静态分析 noise 减少** —— 3 Provider 类级别不再有 `@Component`,`@Autowired` constructor 警告不再触发
+- **0 行为变化** —— Router 按 `name()` 路由逻辑不变,3 yml 配置 back-compat(`permission-policy: default` / `: strict` / `: ask` 都不抛 `BeanDefinitionOverrideException`)
+- **R-19 风险缓解** —— 防止 `@Component` + `@Bean` 双胜出触发 `BeanDefinitionOverrideException`(`@Component` 自动注册 + `@Bean` 显式注册 → 同 Provider 类在 Spring 容器里有 2 个 Bean,启动期 fail-fast)
+- **与 sibling `StrictPermissionPolicyProvider` #029 / `AskUserPermissionPolicyProvider` #030 对齐** —— 3 Provider 现在全纯 POJO 模式 + `@Bean(name="permissionPolicyProvider_<name>-1.0.0")` 显式注册
+
+**修复者** Claude Code(根据用户 2026-10-02 会话反馈,实测发现 3 Provider 中 1 个(`AllowAllPermissionPolicyProvider`)残留 v1.5.27 之前的 `@Component` 模式与 v1.5.28 §5.5 多 Provider 模式不符,要求补齐对齐,触发本 Story 实施 + 9 case AC 黑盒验证 + R-13 mitigation (d) baseline 镜像 **第 23 次 PASS 0 binary delta**)。
 
 ---
 

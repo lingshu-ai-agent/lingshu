@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.a2a.client;
 
 import ai.lingshu.core.message.ToolCall;
@@ -277,6 +292,16 @@ public class RemoteAgentTool implements Tool {
         inputNode.put("description", "JSON args matching the skill's input schema");
         root.putArray("required").add("agentName").add("skill").add("input");
         return root;
+    }
+
+    /**
+     * 🆕 Story #031 — Remote-agent-wrapped tools report {@code "a2a"} as their source category so
+     * operators can write {@code "a2a:*"} in {@link AgentConfig.ToolsConfig#getAllowList()}
+     * to allow every skill exposed by every configured remote A2A agent (dsh §5.6.3 + §4.7).
+     */
+    @Override
+    public String sourceCategory() {
+        return "a2a";
     }
 
     @Override

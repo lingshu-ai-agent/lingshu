@@ -1,9 +1,25 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.ToolSpec;
 import ai.lingshu.core.spi.ContractVersionRef;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -131,6 +147,31 @@ public interface ToolRegistry {
      * @throws IllegalArgumentException if no tool is registered under {@code name}
      */
     Tool findByName(String name);
+
+    /**
+     * 🆕 Story #031 — All currently registered {@link Tool Tools} (live snapshot). Used by
+     * {@link ai.lingshu.core.impl.permission.StrictPermissionPolicyProvider} to populate the
+     * {@code name → sourceCategory} map that backs category-prefix pattern matching
+     * ({@code "mcp:*"}, {@code "skill:*"}, etc.).
+     *
+     * <p><b>Back-compat:</b> default returns {@link Collections#emptyList()} so existing
+     * implementations (only {@code DefaultToolRegistry} overrides this) do not need to
+     * implement the new method. {@code DefaultToolRegistry.findAll()} returns a fresh
+     * snapshot each call (not a live view) — consistent with the snapshot semantics of
+     * {@link #names()}.
+     *
+     * <p><b>Ordering:</b> implementations SHOULD return a stable-sorted collection
+     * (e.g. by name) so that {@link StrictPermissionPolicyProvider} builds a
+     * deterministic category map across JVM restarts — this aids log greppability and
+     * unit-test reproducibility (cf. Story #020a stable-sort contract on
+     * {@link #modelVisibleSpecs()}).
+     *
+     * @return a snapshot collection, possibly empty; never {@code null}
+     * @since 1.0.0
+     */
+    default Collection<Tool> findAll() {
+        return Collections.emptyList();
+    }
 
     /**
      * 🆕 Story #021b — Unregister a previously-registered tool by name.

@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.cli;
 
 import ai.lingshu.core.decision.Decision;
@@ -368,6 +383,11 @@ public class SkillCommandDispatcher {
         @Override public ApprovalGate approval() {
             // No approval flow in CLI single-shot mode — user-initiated commands are
             // implicitly user-approved.
+            //
+            // 🆕 Story #041 — AC-041-08 verifies this fail-safe contract:
+            // {@code ask(...)} must return Deny immediately (well under 1s, no blocking),
+            // and the Deny reason must contain "CLI Skill dispatch" + "AskUser approval"
+            // + "Story #020c MVP". See {@code SkillCommandDispatcherStubApprovalTest}.
             return new ApprovalGate() {
                 @Override public Decision ask(Decision.AskUser ask) {
                     return new Decision.Deny(

@@ -1,6 +1,22 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.sandbox;
 
 import ai.lingshu.core.runtime.AgentConfig;
+import ai.lingshu.core.slot.AccessDeniedException;
 import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.ToolExecutionContext;
 import ai.lingshu.core.slot.ToolException;
@@ -13,7 +29,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
@@ -89,34 +104,29 @@ public class DefaultRuntimeSandbox implements RuntimeSandbox {
 
     @Override
     public FileSystem fs() {
-        // Story #001 chroot is a follow-up; default to the host fs for v0.1.
-        return FileSystems.getDefault();
+        // 🆕 Story #028 — chrooted FileSystem. When workingDirectory is configured,
+        // wrap the default FS with a ChrootedFileSystem that enforces the prefix
+        // boundary. When null, fall back to the unconfined default FS (legacy
+        // behaviour — #001 demos never set working-directory).
+        Path rootDir = (fallbackConfig != null && fallbackConfig.getSandbox() != null)
+            ? fallbackConfig.getSandbox().getWorkingDirectory()
+            : null;
+        if (rootDir == null) {
+            return FileSystems.getDefault();
+        }
+        return new ChrootedFileSystem(FileSystems.getDefault(), rootDir);
     }
 
     @Override
     public ToolExecutionContext.NetworkClient http() {
-        // HTTP enforcement is out of scope for Story #006 — leave as a minimal stub
-        // that throws. Future Story will plug in a real domain-whitelist enforcer.
-        return new ToolExecutionContext.NetworkClient() {
-            @Override
-            public String get(String url) throws IOException {
-                throw new IOException(
-                    "DefaultRuntimeSandbox.http() is a stub — HTTP enforcement "
-                        + "lands in a follow-up Story");
-            }
-            @Override
-            public String post(String url, String body) throws IOException {
-                throw new IOException(
-                    "DefaultRuntimeSandbox.http() is a stub — HTTP enforcement "
-                        + "lands in a follow-up Story");
-            }
-            @Override
-            public InputStream getStream(String url) throws IOException {
-                throw new IOException(
-                    "DefaultRuntimeSandbox.http() is a stub — HTTP enforcement "
-                        + "lands in a follow-up Story");
-            }
-        };
+        // 🆕 Story #028 — domain-whitelist enforcing HTTP client. Empty whitelist
+        // results in every request being denied with [LINGS-S01].
+        List<String> whitelist = (fallbackConfig != null
+            && fallbackConfig.getSandbox() != null
+            && fallbackConfig.getSandbox().getDomainWhitelist() != null)
+            ? fallbackConfig.getSandbox().getDomainWhitelist()
+            : Collections.<String>emptyList();
+        return new WhitelistedHttpClient(whitelist);
     }
 
     @Override

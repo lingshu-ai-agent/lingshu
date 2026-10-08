@@ -1,6 +1,22 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 /**
  * Slot 4 marker — Skill is a Tool variant with extra discovery semantics, not a separate type.
@@ -20,7 +36,10 @@ import ai.lingshu.core.spi.ContractVersionRef;
  * Future extensions (user-level aliases {@code /c → commit}, permission-tier
  * "user-only-triggerable", danger-level hints feeding the approval gate) can hang off this
  * interface without breaking implementers that only need {@link Tool} semantics.
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface Skill extends Tool {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

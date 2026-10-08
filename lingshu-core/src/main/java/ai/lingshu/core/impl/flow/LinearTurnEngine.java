@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.flow;
 
 import ai.lingshu.core.decision.Decision;
@@ -14,8 +29,11 @@ import ai.lingshu.core.runtime.TurnContext;
 import ai.lingshu.core.tenant.TenantContext;
 import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.PermissionPolicy;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutionContext;
+import ai.lingshu.core.impl.runtime.ApprovalRegistry;
+import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutionContext;
 import ai.lingshu.core.slot.ToolExecutor;
 import org.reactivestreams.Subscriber;
@@ -72,10 +90,35 @@ public class LinearTurnEngine implements FlowEngine {
     private final PermissionPolicy permissionPolicy;
     /** 🆕 Story #004 — shared thread pool for {@link CompletableFuture} parallel dispatch. */
     private final ExecutorService toolPool;
+    /**
+     * 🆕 Story #030 — optional Spring-injected registry that maps
+     * {@code approvalId → continuation} so an external HTTP endpoint (e.g.
+     * {@code POST /api/approvals/{sessionId}/{approvalId}} in demo-product's
+     * {@code ChatController}) can deliver the human's {@link Decision} back to
+     * the engine thread. {@code null} is tolerated for test fixtures (Story
+     * #001–#029) that drive the engine end-to-end without an HTTP layer — the
+     * continuation is still carried on the {@code ApprovalRequired} event so the
+     * test can invoke it directly.
+     */
+    private final ApprovalRegistry approvalRegistry;
 
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool) {
+        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool, null);
+    }
+
+    /**
+     * 🆕 Story #030 — 6-arg constructor that wires the optional
+     * {@link ApprovalRegistry}. Production paths (via
+     * {@code LinearTurnEngineProvider}) pass a Spring-injected singleton; tests
+     * that don't need cross-thread continuation lookup use the 5-arg constructor
+     * (registry = null).
+     */
+    public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
+                            ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
+                            ExecutorService toolPool,
+                            ApprovalRegistry approvalRegistry) {
         if (promptBuilder == null) throw new IllegalArgumentException("promptBuilder must not be null");
         if (llmProvider == null) throw new IllegalArgumentException("llmProvider must not be null");
         if (toolExecutor == null) throw new IllegalArgumentException("toolExecutor must not be null");
@@ -86,6 +129,7 @@ public class LinearTurnEngine implements FlowEngine {
         this.toolExecutor = toolExecutor;
         this.permissionPolicy = permissionPolicy;
         this.toolPool = toolPool;
+        this.approvalRegistry = approvalRegistry;
     }
 
     @Override
@@ -404,15 +448,34 @@ public class LinearTurnEngine implements FlowEngine {
      */
     private ToolResult dispatchWithPolicy(ToolCall call, TurnContext ctx,
                                           Subscriber<? super AgentEvent> sink) {
-        // Bridge per-turn scope (TurnContext) → per-call sandbox scope (ToolExecutionContext)
-        // once per dispatch — the adapter wraps the turn context with no-op defaults for
-        // fs/http/approval/cancellation, deferring the full sandbox to Story #016.
-        DefaultToolExecutionContext toolCtx = new DefaultToolExecutionContext(ctx);
+        // 🆕 Story #028 — bridge per-turn scope (TurnContext) → per-call sandbox scope
+        // (ToolExecutionContext) with the resolved Slot 3 Sandbox. We cast to
+        // DefaultTurnContext to read the sandbox (the impl-only accessor stays off the
+        // TurnContext interface); the cast is safe because the production path
+        // DefaultAgent.buildContext always constructs a DefaultTurnContext.
+        // For legacy ctx implementations (4-arg/5-arg ctor sites from Story #005/#006),
+        // `runtimeSandbox()` returns null and DefaultToolExecutionContext falls back to
+        // its pre-#028 behaviour (default FS + PassThroughHttp stub).
+        RuntimeSandbox sandbox = (ctx instanceof DefaultTurnContext)
+            ? ((DefaultTurnContext) ctx).runtimeSandbox()
+            : null;
+        // 🆕 Story #041 — wire the shared ApprovalRegistry so DefaultApprovalGate can
+        // register the continuation under the approvalId for HTTP round-trip
+        // (e.g. demo-product POST /api/approvals/{sessionId}/{approvalId}). Null
+        // is tolerated for legacy tests / fixtures (Story #001–#029) that don't need
+        // cross-thread continuation lookup — those drive the round-trip directly off
+        // the ApprovalRequired event's continuation field.
+        //
+        // Also pass the per-call sink so ApprovalRequired events emitted from
+        // DefaultApprovalGate reach the user's SSE stream (the runTurn sink), not
+        // the per-turn sink on TurnContext — these can differ in test fixtures.
+        DefaultToolExecutionContext toolCtx = new DefaultToolExecutionContext(ctx, sandbox, approvalRegistry, sink);
         Decision d = permissionPolicy.check(call, toolCtx);
         if (d instanceof Decision.Allow) {
             // Bridge per-turn scope (TurnContext) → per-call sandbox scope (ToolExecutionContext).
-            // The adapter wraps the turn context with no-op defaults for fs/http/approval/cancellation,
-            // deferring the full sandbox implementation to Story #016.
+            // The adapter wraps the turn context with the resolved Slot 3 Sandbox for
+            // fs/http/process (Story #028); approval/cancellation still delegate to the
+            // turn context (Story #005).
             return toolExecutor.dispatch(call, toolCtx);
         }
         if (d instanceof Decision.Deny) {
@@ -424,11 +487,42 @@ public class LinearTurnEngine implements FlowEngine {
                 .build();
         }
         if (d instanceof Decision.AskUser) {
-            // Story #005 will replace this stub with the full ApprovalGate flow.
+            // 🆕 Story #041 — delegate to DefaultToolExecutionContext.approval()
+            // (formerly inline L467-578, extracted to DefaultApprovalGate). Behaviour
+            // matches the prior inline path exactly (verified by AC-041-09/10/11):
+            //   * approvalTimeoutSeconds = 0 → wait indefinitely (Claude Code overnight parity)
+            //   * approvalTimeoutSeconds > 0 → wait at most N seconds then Deny [LINGS-P02]
+            //   * CancellationToken.fire() → interrupt, return Deny [LINGS-P02]
+            //   * no sink registered → Deny [LINGS-P02] (no hang)
+            // The ApprovalGate SPI is now usable from inside a Tool — see
+            // specs/019-built-in-tools/plan.md L498 for the planned Bash "rm -rf"
+            // confirm use case.
+            Decision resolved = toolCtx.approval().ask((Decision.AskUser) d);
+
+            // Apply the human's response. Allow → proceed (DefaultToolExecutor's
+            // defensive re-check returns AskUser again deterministically but
+            // Story #030 made that a proceed path; see DefaultToolExecutor.dispatchInternal).
+            // Deny → return error with the human-provided reason.
+            // AskUser recursion guard (max 3 retries per dsh §9.3) — defensive:
+            // DefaultApprovalGate.ask() returns Allow / Deny only, but a future SPI
+            // impl might bubble AskUser back, so we cap the recursion here.
+            if (resolved instanceof Decision.Allow) {
+                return toolExecutor.dispatch(call, toolCtx);
+            }
+            if (resolved instanceof Decision.Deny) {
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(call.getId())
+                    .content(((Decision.Deny) resolved).getReason())
+                    .isError(true)
+                    .build();
+            }
+            // resolved instanceof Decision.AskUser — recursion limited (dsh §9.3 max 3).
             return ToolResult.builder()
                 .status(ToolResult.Status.ERROR)
                 .toolUseId(call.getId())
-                .content("AskUser approval flow is wired in Story #005 follow-up")
+                .content("[" + ai.lingshu.core.permission.PermissionErrorCodes.LINGS_P02
+                    + "] AskUser recursion limited (max 3 retries)")
                 .isError(true)
                 .build();
         }

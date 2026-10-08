@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.examples.demoproducta2aserver;
 
 import ai.lingshu.a2a.server.A2aServerAutoConfiguration;
@@ -89,8 +104,10 @@ public class DemoProductA2aServerApplication {
             defaults.getTenants(),
             defaults.getA2a(),
             defaults.getCompactorConfig(),
-            defaults.getTools()
-        );
+            defaults.getTools(),
+            "default",  // permissionPolicy (🆕 Story #029 — Slot 4; default = AllowAll)
+            16,         // 🆕 Story #044 — maxConcurrentTurns (dsh §10 NFR row 4 default 16)
+            32);        // 🆕 Story #044 — maxConcurrentQueueDepth (dsh §10 NFR row 4 queue ≤ 32)
     }
 
     public static void main(String[] args) {

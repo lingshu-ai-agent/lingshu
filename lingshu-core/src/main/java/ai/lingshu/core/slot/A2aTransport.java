@@ -1,7 +1,23 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.message.ToolResult;
 import ai.lingshu.core.spi.ContractVersionRef;
+import ai.lingshu.core.spi.PublicApi;
 
 /**
  * Slot 9 — Agent-to-Agent transport (dsh §5.6). Bridges to a remote agent process via
@@ -20,7 +36,10 @@ import ai.lingshu.core.spi.ContractVersionRef;
  *   <li>{@link #cancel} is best-effort; remote may have already completed</li>
  *   <li>{@link #subscribe} streams incremental events back; default impl polls every 1s</li>
  * </ul>
+ *
+ * @since 0.1.0
  */
+@PublicApi(PublicApi.Level.STABLE)
 public interface A2aTransport {
 
     /** 🆕 Story #003 — Contract version (semver MAJOR.MINOR.PATCH). */

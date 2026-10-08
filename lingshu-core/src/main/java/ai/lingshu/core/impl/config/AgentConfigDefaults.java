@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.config;
 
 import ai.lingshu.core.runtime.AgentConfig;
@@ -11,8 +26,10 @@ import java.util.Map;
  *
  * <p>Every field is populated. Slots that have no provider registered yet get a sentinel
  * {@code "default"} name (the Router will fail-fast at startup with a clear "Unknown X"
- * message if no provider is registered, see dsh §5.2). The 27-field default is documented
- * field-by-field in {@link AgentConfig}.
+ * message if no provider is registered, see dsh §5.2). The 29-field default is documented
+ * field-by-field in {@link AgentConfig} (🆕 Story #044 added 2 fields:
+ * {@code maxConcurrentTurns=16} + {@code maxConcurrentQueueDepth=32} to honour
+ * dsh §10 NFR row 4 «最大并发 turn 数»).
  */
 public final class AgentConfigDefaults {
 
@@ -57,7 +74,7 @@ public final class AgentConfigDefaults {
             null,    // skills
             8,       // toolParallelism
             60,      // toolTimeoutSeconds
-            300,     // approvalTimeoutSeconds
+            0,       // 🆕 Story #030 — approvalTimeoutSeconds: 0 = wait indefinitely (matches Claude Code overnight behavior)
             0,       // turnTimeoutSeconds (no limit)
             60,      // llmTimeoutSeconds
             50,      // reactMaxSteps
@@ -68,7 +85,10 @@ public final class AgentConfigDefaults {
             null,            // tenants (Story #006 — null = single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
+            AgentConfig.ToolsConfig.defaults(),      // tools (Story #019)
+            DEFAULT_NAME,                            // permissionPolicy (Story #029)
+            16,      // 🆕 Story #044 — maxConcurrentTurns (dsh §10 NFR row 4 default 16)
+            32);     // 🆕 Story #044 — maxConcurrentQueueDepth (dsh §10 NFR row 4 queue ≤ 32)
     }
 
     /** Static fallback map (used by tests / debug endpoints). */

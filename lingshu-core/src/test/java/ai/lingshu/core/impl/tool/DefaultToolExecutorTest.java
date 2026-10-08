@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.tool;
 
 import ai.lingshu.core.decision.Decision;
@@ -122,17 +137,22 @@ class DefaultToolExecutorTest {
     }
 
     @Test
-    @DisplayName("L1-005: dispatch_permissionAskUser_returnsErrorResult (Edge Case)")
-    void dispatch_permissionAskUser_returnsErrorResult() {
+    @DisplayName("L1-005: dispatch_permissionAskUser_proceedsToExecute (Story #030 — engine has already handled approval)")
+    void dispatch_permissionAskUser_proceedsToExecute() {
+        // 🆕 Story #030 — engine's dispatchWithPolicy runs the policy FIRST; on AskUser
+        // it blocks on the human's response and then re-invokes dispatch with the
+        // (now-resolved) decision. The deterministic policy returns AskUser again
+        // on the re-check, so the executor must proceed rather than throw.
+        registry.register(successTool("bash", "rm-output"));
         when(policy.check(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
             .thenReturn(new Decision.AskUser("Run rm -rf?", Collections.<Decision.Option>emptyList()));
 
         ToolResult result = executor.dispatch(call("bash", "call-3"), ctx);
 
-        assertThat(result.getStatus()).isEqualTo(ToolResult.Status.ERROR);
+        assertThat(result.getStatus()).isEqualTo(ToolResult.Status.SUCCESS);
         assertThat(result.getToolUseId()).isEqualTo("call-3");
-        assertThat(result.getContent()).contains("AskUser approval flow");
-        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).isEqualTo("rm-output");
+        assertThat(result.isError()).isFalse();
     }
 
     @Test

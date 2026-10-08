@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.tool;
 
 import ai.lingshu.core.decision.Decision;
@@ -108,10 +123,18 @@ public class DefaultToolExecutor implements ToolExecutor {
             throw new ToolException.PermissionDeniedException(
                 ((Decision.Deny) decision).getReason());
         }
-        // AskUser → Story #005 will replace this stub with the full ApprovalGate flow
+        // 🆕 Story #030 — AskUser arrives here on the second, defensive policy re-check
+        // (LinearTurnEngine.dispatchWithPolicy ran the same check first and handled
+        // AskUser by emitting ApprovalRequired + blocking on the human's response).
+        // If the human responded Allow, the engine calls back into dispatch — and the
+        // deterministic policy returns AskUser again. We must proceed to execute the
+        // tool rather than throwing, otherwise the user's approval is wasted.
+        // The Deny path doesn't reach here (engine returns error before dispatching);
+        // AskUser here == "human already approved in this turn". This is the only
+        // correct semantic given the documented determinism contract.
         if (decision instanceof Decision.AskUser) {
-            throw new ToolException.PermissionDeniedException(
-                "AskUser approval flow is wired in Story #005 follow-up");
+            LOG.debug("Tool {} AskUser re-check reached executor — engine has already handled approval, proceeding to execute",
+                call.getName());
         }
 
         // Step 2: Registry lookup — consults the shared ToolRegistry bean

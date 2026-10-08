@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.agent;
 
 import ai.lingshu.core.runtime.AgentConfig;
@@ -68,8 +83,10 @@ class SubAgentInheritanceTest {
             null, null,
             AgentConfig.A2a.defaults(),
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
-        );
+            AgentConfig.ToolsConfig.defaults(), "default"
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     /** Minimal parent AgentConfig with null Identity (forces defaults() fallback). */
@@ -87,8 +104,11 @@ class SubAgentInheritanceTest {
             null, // <-- null identity
             baseline.getInstructions(), baseline.getMemory(),
             baseline.getA2aTransport(), baseline.getTenants(), baseline.getA2a(),
-            baseline.getCompactorConfig(), baseline.getTools()
-        );
+            baseline.getCompactorConfig(), baseline.getTools(),
+            baseline.getPermissionPolicy()
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     /** Empty-child skeleton (everything null/0). Used to isolate "inherit from parent" branches. */
@@ -99,8 +119,10 @@ class SubAgentInheritanceTest {
             0, 0, 0, 0, 0, 0,
             null, null, null,
             null, null, null,
-            null, null
-        );
+            null, null, null
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     private static AgentConfig makeChildWith(Identity id, Instructions inst, Memory mem) {
@@ -110,8 +132,10 @@ class SubAgentInheritanceTest {
             0, 0, 0, 0, 0, 0,
             id, inst, mem,
             null, null, null,
-            null, null
-        );
+            null, null, null
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     // ── Identity merge ───────────────────────────────────────────────────
@@ -234,8 +258,11 @@ class SubAgentInheritanceTest {
             parent.getLlmTimeoutSeconds(), parent.getReactMaxSteps(),
             null, null, null,
             null, null, parent.getA2a(),
-            parent.getCompactorConfig(), parent.getTools()
-        );
+            parent.getCompactorConfig(), parent.getTools(),
+            parent.getPermissionPolicy()
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
         AgentConfig childAllNull = makeEmptyChild();
 
         AgentConfig merged = SubAgentInheritance.inheritFromParent(

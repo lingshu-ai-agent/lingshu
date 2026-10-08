@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.tool;
 
 import ai.lingshu.core.message.ToolSpec;
@@ -94,6 +109,20 @@ public class DefaultToolRegistry implements ToolRegistry {
     @Override
     public Collection<String> names() {
         return Collections.unmodifiableCollection(registry.keySet());
+    }
+
+    /**
+     * 🆕 Story #031 — Live snapshot of all registered {@link Tool Tools} (including
+     * {@link Skill Skills}). Used by {@code StrictPermissionPolicyProvider} to build
+     * the {@code name → sourceCategory} map for pattern matching.
+     *
+     * <p>Returns a fresh snapshot each call (mirrors the snapshot semantics of
+     * {@link #names()}); the underlying map is a {@link ConcurrentHashMap} so concurrent
+     * registration between {@code findAll()} and iteration is tolerated as best-effort.
+     */
+    @Override
+    public Collection<Tool> findAll() {
+        return new ArrayList<>(registry.values());
     }
 
     // ─────────────────────────────────────────────────────────────────────

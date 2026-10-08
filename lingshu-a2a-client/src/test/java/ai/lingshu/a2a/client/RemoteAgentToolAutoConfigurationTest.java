@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.a2a.client;
 
 import ai.lingshu.core.impl.router.A2aTransportRouter;
@@ -57,8 +72,8 @@ class RemoteAgentToolAutoConfigurationTest {
                     .as("@Bean name for RemoteAgentTool must be 'remoteAgentTool'")
                     .containsExactly("remoteAgentTool");
                 assertThat(m.getParameterCount())
-                    .as("remoteAgentTool(@Bean) must take 4 args (router, cfg, json, schemaBuilder)")
-                    .isEqualTo(4);
+                    .as("remoteAgentTool(@Bean) must take 5 args (router, cfg, json, schemaBuilder, httpJsonRpcFactory) — 🆕 Story #034")
+                    .isEqualTo(5);
             }
         }
         assertThat(foundToolBean)
@@ -119,7 +134,9 @@ class RemoteAgentToolAutoConfigurationTest {
     @DisplayName("TC-009e-AC-4: beanWiring_propagatesRemoteAgents_fromCfg")
     void beanWiring_propagatesRemoteAgents_fromCfg() {
         // AgentRef is a Lombok @Value — single all-args constructor.
-        AgentRef ref = new AgentRef("agent-foo", "http://localhost:9999", 10);
+        // 🆕 Story #034 — domainWhitelist=null means deny-all strict mode (no
+        // real HTTP calls in this test, so the default is fine).
+        AgentRef ref = new AgentRef("agent-foo", "http://localhost:9999", 10, null);
         AnnotationConfigApplicationContext ctx = buildContext(
             null /* cfg default http-jsonrpc */, Arrays.asList(ref));
 
@@ -214,6 +231,14 @@ class RemoteAgentToolAutoConfigurationTest {
             // AgentConfig — synthesize a minimal one matching HttpJsonRpcA2aTransportProviderTest#cfg
             AgentConfig effectiveCfg = (cfg != null) ? cfg : buildDefaultAgentConfig(remoteAgents);
             ctx.registerBean(AgentConfig.class, () -> effectiveCfg);
+            // 🆕 Story #034 — register the factory Bean (httpJsonRpcFactory) so
+            // RemoteAgentToolAutoConfiguration.remoteAgentTool can autowire it.
+            ctx.registerBean(
+                HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory.class,
+                () -> new HttpJsonRpcA2aTransportAutoConfiguration.HttpJsonRpcA2aTransportFactory(
+                    effectiveCfg,
+                    ctx.getBean(ObjectMapper.class),
+                    new AgentCardCache(java.time.Duration.ofMinutes(5))));
             // The configuration under test
             ctx.register(RemoteAgentToolAutoConfiguration.class);
             // Refresh
@@ -257,7 +282,10 @@ class RemoteAgentToolAutoConfigurationTest {
             null,
             a2a,
             AgentConfig.CompactorConfig.defaults(),
-            AgentConfig.ToolsConfig.defaults()
-        );
+            AgentConfig.ToolsConfig.defaults(),
+            "default"
+                ,
+        16,		// 🆕 Story #044 — maxConcurrentTurns
+        32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

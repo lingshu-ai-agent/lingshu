@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.flow;
 
 import ai.lingshu.core.impl.router.Routers;
@@ -102,7 +117,9 @@ class LinearTurnEngineProviderTest {
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
+                        AgentConfig.ToolsConfig.defaults(), "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 
     @Test
@@ -123,7 +140,7 @@ class LinearTurnEngineProviderTest {
             4, r -> { Thread t = new Thread(r, "test-pool"); t.setDaemon(true); return t; });
 
         LinearTurnEngineProvider provider = new LinearTurnEngineProvider(
-            prompt, llm, tool, policy, pool);
+            prompt, llm, tool, policy, pool, null);  // 🆕 Story #030 — null ApprovalRegistry
 
         AgentConfig cfg = defaultConfig();
         FlowEngine engine = provider.create(cfg);
@@ -161,7 +178,7 @@ class LinearTurnEngineProviderTest {
         ExecutorService pool = Executors.newFixedThreadPool(2);
 
         LinearTurnEngineProvider provider = new LinearTurnEngineProvider(
-            prompt, llm, tool, policy, pool);
+            prompt, llm, tool, policy, pool, null);  // 🆕 Story #030 — null ApprovalRegistry
 
         // Wire a config whose toolExecutor name is unknown — Router.resolve() must throw.
         AgentConfig bad = new AgentConfig(
@@ -180,7 +197,9 @@ class LinearTurnEngineProviderTest {
             null,                  // tenants (Story #006 — single-tenant mode)
             AgentConfig.A2a.defaults(),    // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),  // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());     // tools (Story #019)
+                        AgentConfig.ToolsConfig.defaults(), "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.create(bad))
             .isInstanceOf(IllegalArgumentException.class)

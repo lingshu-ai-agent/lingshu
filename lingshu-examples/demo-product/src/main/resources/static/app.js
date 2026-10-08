@@ -111,7 +111,56 @@
       bubble.textContent += '\n— turn completed (' + data.reason + ')';
     } else if (eventName === 'compacted') {
       bubble.textContent += '\n— compacted (≈' + (data.approxTokensFreed || 0) + ' tokens freed)';
+    } else if (eventName === 'approval') {
+      // Story #042 — render Allow / Deny buttons inline so we don't have to
+      // open DevTools to manually POST. Backend contract (Story #030 + #041):
+      // POST /api/approvals/{sessionId}/{approvalId} body {decision, reason}.
+      var askPrompt = (data.ask && data.ask.prompt) ? data.ask.prompt : '(no prompt)';
+      var aid = data.approvalId;
+      ev.innerHTML = '';
+      ev.appendChild(document.createTextNode('approval ' + aid.slice(0, 8) + ' — ' + askPrompt));
+      var reasonInput = document.createElement('input');
+      reasonInput.type = 'text';
+      reasonInput.className = 'reason';
+      reasonInput.placeholder = 'reason (optional)';
+      ev.appendChild(reasonInput);
+      var allowBtn = document.createElement('button');
+      allowBtn.className = 'btn-allow';
+      allowBtn.textContent = 'Allow';
+      allowBtn.onclick = function () { postDecision(aid, 'allow', reasonInput.value, ev); };
+      ev.appendChild(allowBtn);
+      var denyBtn = document.createElement('button');
+      denyBtn.className = 'btn-deny';
+      denyBtn.textContent = 'Deny';
+      denyBtn.onclick = function () { postDecision(aid, 'deny', reasonInput.value, ev); };
+      ev.appendChild(denyBtn);
     }
+  }
+
+  function postDecision(approvalId, decision, reason, rowEl) {
+    var body = JSON.stringify({ decision: decision, reason: reason || '' });
+    fetch('/api/approvals/' + sessionId + '/' + approvalId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body
+    }).then(function (r) {
+      var inputs = rowEl.querySelectorAll('button, input');
+      inputs.forEach(function (b) { b.disabled = true; });
+      rowEl.querySelectorAll('button').forEach(function (b) {
+        b.textContent = decision === 'allow' ? '✓ Allowed' : '✗ Denied';
+      });
+      if (!r.ok) {
+        var err = document.createElement('span');
+        err.className = 'approval-err';
+        err.textContent = ' [approval expired (HTTP ' + r.status + ')]';
+        rowEl.appendChild(err);
+      }
+    }).catch(function (err) {
+      var e = document.createElement('span');
+      e.className = 'approval-err';
+      e.textContent = ' [network error: ' + err + ']';
+      rowEl.appendChild(e);
+    });
   }
 
   function appendMsg(role, text) {

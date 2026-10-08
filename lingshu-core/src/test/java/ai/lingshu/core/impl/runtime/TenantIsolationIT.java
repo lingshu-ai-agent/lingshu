@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.runtime;
 
 import ai.lingshu.core.impl.cost.CostBudgetExceededException;
@@ -108,7 +123,9 @@ class TenantIsolationIT {
             new AgentConfig.TenantsConfig(true, tenantMap),          // tenants enabled
             AgentConfig.A2a.defaults(),                             // a2a (Story #009)
             AgentConfig.CompactorConfig.defaults(),                // compactorConfig (Story #018)
-            AgentConfig.ToolsConfig.defaults());                  // tools (Story #019)
+                        AgentConfig.ToolsConfig.defaults(), "default",
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
 
         // 2) Wire up the four components — no Spring context.
         TenantConfigProvider provider = new YamlTenantConfigProvider(rootCfg);

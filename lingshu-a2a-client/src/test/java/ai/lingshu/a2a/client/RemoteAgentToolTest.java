@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.a2a.client;
 
 import ai.lingshu.core.message.ToolCall;
@@ -229,8 +244,10 @@ class RemoteAgentToolTest {
 
         RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
         List<AgentRef> refs = Arrays.asList(
-            new AgentRef("alice", "http://alice:8080", 10),
-            new AgentRef("bob", "http://bob:8080", 5));
+            // 🆕 Story #034 — domainWhitelist=null → deny-all strict mode (this
+            // test mocks the transport via putCard(), so no real HTTP occurs).
+            new AgentRef("alice", "http://alice:8080", 10, null),
+            new AgentRef("bob", "http://bob:8080", 5, null));
         RemoteAgentTool fullTool = new RemoteAgentTool(
             transport, json, sb, refs, 10);
 
@@ -263,7 +280,8 @@ class RemoteAgentToolTest {
         RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
         RemoteAgentTool fullTool = new RemoteAgentTool(
             transport, json, sb,
-            Collections.singletonList(new AgentRef("alice", null, 0)),
+            // 🆕 Story #034 — domainWhitelist=null → deny-all strict mode (mocked).
+            Collections.singletonList(new AgentRef("alice", null, 0, null)),
             5);
 
         String desc = fullTool.description();
@@ -284,7 +302,8 @@ class RemoteAgentToolTest {
         RemoteAgentSchemaBuilder sb = new RemoteAgentSchemaBuilder(json);
         RemoteAgentTool fullTool = new RemoteAgentTool(
             transport, json, sb,
-            Collections.singletonList(new AgentRef("alice", null, 0)),
+            // 🆕 Story #034 — domainWhitelist=null → deny-all strict mode (mocked).
+            Collections.singletonList(new AgentRef("alice", null, 0, null)),
             10);
 
         String desc = fullTool.description();

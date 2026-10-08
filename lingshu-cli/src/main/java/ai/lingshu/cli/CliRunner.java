@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.cli;
 
 import ai.lingshu.a2a.server.A2aServer;
@@ -350,9 +365,9 @@ public class CliRunner implements ApplicationRunner {
             cfg.getA2a().getCallTimeout(),
             cfg.getA2a().getRemoteAgents(),
             cfg.getA2a().getDescriptionSkillLimit());
-        // AgentConfig has 25 fields (Story #006 added tenants, #009 added a2a,
-        // #018 added compactorConfig, #019 added toolsConfig);
-        // preserve all 24, swap only a2a (22nd).
+        // AgentConfig has 26 fields (Story #006 added tenants, #009 added a2a,
+        // #018 added compactorConfig, #019 added toolsConfig, #029 added permissionPolicy);
+        // preserve all 25, swap only a2a (22nd).
         return new AgentConfig(
             cfg.getFlowEngine(),
             cfg.getLlm(),
@@ -377,6 +392,9 @@ public class CliRunner implements ApplicationRunner {
             cfg.getTenants(),
             newA2a,
             cfg.getCompactorConfig(),
-            cfg.getTools());
+            cfg.getTools(),
+                        cfg.getPermissionPolicy(),
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

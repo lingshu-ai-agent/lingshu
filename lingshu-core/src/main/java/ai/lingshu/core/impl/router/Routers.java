@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.router;
 
 import ai.lingshu.core.runtime.AgentConfig;
@@ -7,6 +22,7 @@ import ai.lingshu.core.slot.LlmProvider;
 import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
+import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.spi.Providers;
 import ai.lingshu.core.spi.SlotRouter;
@@ -138,5 +154,23 @@ public final class Routers {
             }
             return result;
         }
+    }
+
+    /**
+     * 🆕 Story #028 — RuntimeSandbox router. Resolves one {@link RuntimeSandbox}
+     * by {@code cfg.sandbox.runtime} name (e.g. {@code "chroot"}).
+     *
+     * <p>By design NOT in {@code SlotResolver}; {@code AgentFactory} autowires it
+     * directly (dsh §5.3.1.0 "7 个隐式 Router concrete 类") and passes the resolved
+     * instance to {@code DefaultToolExecutionContext} so each {@code Tool.execute(...)}
+     * call can route fs / http / process through the sandbox boundary.
+     */
+    @Component
+    public static class RuntimeSandboxRouter
+            extends SlotRouter<Providers.RuntimeSandboxProvider, RuntimeSandbox> {
+        public RuntimeSandboxRouter(List<Providers.RuntimeSandboxProvider> providers) {
+            super(providers, "RuntimeSandbox", LoggerFactory.getLogger(RuntimeSandboxRouter.class));
+        }
+        @Override protected Class<RuntimeSandbox> getSlotInterface() { return RuntimeSandbox.class; }
     }
 }

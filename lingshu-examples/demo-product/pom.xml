@@ -45,6 +45,17 @@
             <artifactId>lingshu-a2a-client</artifactId>
             <version>${revision}</version>
         </dependency>
+        <!--
+          🆕 Story #031 — L3 blackbox ITs for the PermissionPolicy pattern matching
+          wiring (DemoProductPermissionWildcardIT + DemoProductPermissionCategoryPatternIT).
+          Pattern copied verbatim from demo-local-tools/pom.xml:29-31 — spring-boot-starter-test
+          brings JUnit 5 + Spring TestContext + AssertJ transitively.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

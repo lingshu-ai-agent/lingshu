@@ -1,9 +1,26 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.impl.tool.local;
 
 import ai.lingshu.core.impl.config.AgentConfigDefaults;
 import ai.lingshu.core.runtime.AgentConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,7 +37,7 @@ class LocalToolPropsTest {
     @DisplayName("AC-019-13: from_fullConfig_capturesByteCaps")
     void from_fullConfig_capturesByteCaps() {
         AgentConfig cfg = AgentConfigDefaults.defaults();
-        AgentConfig.ToolsConfig tc = new AgentConfig.ToolsConfig(true, 50_000, 500_000);
+        AgentConfig.ToolsConfig tc = new AgentConfig.ToolsConfig(true, Collections.<String>emptyList(), Collections.<String>emptyList(), Collections.<String>emptyList(), 50_000, 500_000);
         AgentConfig withTools = withToolsConfig(cfg, tc);
 
         LocalToolProps props = LocalToolProps.from(withTools);
@@ -54,7 +71,7 @@ class LocalToolPropsTest {
         // The byte caps apply whether or not tools are enabled — disabled just
         // skips the engine registry registration.
         AgentConfig cfg = withToolsConfig(AgentConfigDefaults.defaults(),
-            new AgentConfig.ToolsConfig(false, 123, 789));
+            new AgentConfig.ToolsConfig(false, Collections.<String>emptyList(), Collections.<String>emptyList(), Collections.<String>emptyList(), 123, 789));
 
         LocalToolProps props = LocalToolProps.from(cfg);
 
@@ -68,7 +85,7 @@ class LocalToolPropsTest {
         // Edge: read cap 1, write cap 1_000_000_000 — verify both fields are stored
         // independently (no implicit conversion, no shared state).
         AgentConfig cfg = withToolsConfig(AgentConfigDefaults.defaults(),
-            new AgentConfig.ToolsConfig(true, 1, 1_000_000_000));
+            new AgentConfig.ToolsConfig(true, Collections.<String>emptyList(), Collections.<String>emptyList(), Collections.<String>emptyList(), 1, 1_000_000_000));
 
         LocalToolProps props = LocalToolProps.from(cfg);
 
@@ -90,6 +107,9 @@ class LocalToolPropsTest {
             base.getIdentity(), base.getInstructions(), base.getMemory(),
             base.getA2aTransport(), base.getTenants(), base.getA2a(),
             base.getCompactorConfig(),
-            tools);
+            tools,
+                        base.getPermissionPolicy(),
+            16,		// 🆕 Story #044 — maxConcurrentTurns
+            32);		// 🆕 Story #044 — maxConcurrentQueueDepth
     }
 }

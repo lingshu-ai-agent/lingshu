@@ -1,3 +1,18 @@
+/*
+ * Copyright 2026 The LingShu Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package ai.lingshu.core.slot;
 
 import ai.lingshu.core.decision.Decision;
@@ -62,8 +77,29 @@ public interface ToolExecutionContext {
 
     /**
      * Asks the human a question from inside a tool (e.g. Bash needs confirmation for
-     * {@code rm -rf}). Blocks until the user answers or {@code approvalTimeoutSeconds}
-     * elapses.
+     * {@code rm -rf}). Blocks until the user answers, {@code approvalTimeoutSeconds}
+     * elapses, or the {@link CancellationToken} fires.
+     *
+     * <p><b>🆕 Story #041 — SPI extraction.</b> Production engine path delegates to
+     * {@link ai.lingshu.core.impl.tool.DefaultApprovalGate}, which registers a
+     * {@link java.util.function.Consumer Decision consumer} with the singleton
+     * {@link ai.lingshu.core.impl.runtime.ApprovalRegistry} (Spring {@code @Component})
+     * and emits an {@code AgentEvent.ApprovalRequired} carrying the UUID
+     * {@code approvalId}. The transport layer (e.g. demo-product
+     * {@code POST /api/approvals/&#123;sessionId&#125;/&#123;approvalId&#125;}) looks up
+     * the consumer by id and invokes it with the resolved {@link Decision}, unblocking
+     * the engine thread.
+     *
+     * <p><b>Fail-safe semantics:</b> when no human channel exists (CLI single-shot mode,
+     * standalone A2A server, A2A {@code message/send} dispatcher without a UI sink), the
+     * implementation must return {@link Decision.Deny} immediately with a
+     * context-specific message rather than blocking forever. See the SPI contract
+     * implemented by {@code SkillCommandDispatcher.CliSkillToolExecutionContext},
+     * {@code A2aServerToolExecutionContext}, and {@code DemoA2aServer.StubToolExecutionContext}
+     * (all 3 fail-safe in &lt; 1 second, verified by
+     * {@code SkillCommandDispatcherStubApprovalTest},
+     * {@code A2aServerToolExecutionContextApprovalTest},
+     * {@code DemoA2aServerStubApprovalTest}).
      */
     interface ApprovalGate {
         Decision ask(Decision.AskUser ask);
