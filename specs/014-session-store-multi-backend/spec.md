@@ -374,6 +374,12 @@ public final class LingsSessionStoreException extends RuntimeException {
 - `banned-dependencies` enforcer Rule 0: passed
 - `R-13 mitigation (d) baseline 镜像` PASS 第 28 次
 
+> **🆕 fix commit 修正** —— R-13 baseline 的真正检查口径是 **`pom.xml` md5 跨 commit 不变**(确定性),**不是** `mvn dependency:tree` 输出 md5。后者因含 `[INFO] Build` timestamp / plugin 输出 metadata,**非确定**(连跑 3 次 md5 都不同: `e7878fa0` / `2d344646` / `850531ff`)。原 commit body 写的 `b5604af0704a3423c581510062df2feb` 是单次快照,会误导后续实施者。正确表述:`git show <commit>:lingshu-core/pom.xml | md5sum` 在 base / head / Story commit 三处**完全相同** = 0 binary delta。验证命令(任意 R-13 自查):
+> ```bash
+> for c in <base> <story-commit>; do git show ${c}:lingshu-core/pom.xml | md5sum; done
+> ```
+> 两次输出必须一致。本 Story 验证:`96b607e / 63935d5 / fa3b5e3` 三处 `pom.xml` md5 均为 `d7fdb140ba26383472e28d8bb89c9673` → 0 binary delta 真 PASS。
+
 ### AC-NN-spi-1: SessionStore SPI 0 改动
 - `ai.lingshu.core.slot.SessionStore` 接口签名完全不变(`save` / `load` / `CONTRACT_VERSION`)
 - `ai.lingshu.core.message.Checkpoint` 类签名完全不变
