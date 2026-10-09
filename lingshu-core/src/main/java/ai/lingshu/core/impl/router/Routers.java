@@ -23,6 +23,7 @@ import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.RuntimeSandbox;
+import ai.lingshu.core.slot.SessionStore;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.spi.Providers;
 import ai.lingshu.core.spi.SlotRouter;
@@ -172,5 +173,33 @@ public final class Routers {
             super(providers, "RuntimeSandbox", LoggerFactory.getLogger(RuntimeSandboxRouter.class));
         }
         @Override protected Class<RuntimeSandbox> getSlotInterface() { return RuntimeSandbox.class; }
+    }
+
+    /**
+     * 🆕 Story #014 — SessionStore router (Slot 5). Resolves one {@link SessionStore}
+     * by {@code cfg.sessionStore} name (e.g. {@code "memory"} / {@code "file"}).
+     *
+     * <p>By design NOT in {@code SlotResolver}; {@code AgentFactory} autowires it
+     * directly (dsh §5.3.1.0 — 8th implicit Router concrete 类, sibling of
+     * {@link RuntimeSandboxRouter}). The resolved instance is currently used only
+     * for self-describe logging in {@code AgentFactory.description()}; full
+     * {@code save/load} wiring into the Agent loop is the work of a follow-up
+     * Story that integrates Checkpoint persistence into {@code DefaultAgent.run}.
+     *
+     * <p>Why a Router when {@link SessionStore} has only 2 providers today?
+     * The Router is the same shape that every other Slot uses (dsh §5.2), so
+     * users adding new backends (Redis / JDBC / etc.) only need to ship a
+     * {@code SessionStoreProvider} + a unique {@code @Bean(name=...)} —
+     * no AgentFactory or Router code changes required. This is the
+     * v1.5.28 §5.5 multi-Provider pattern's main payoff: framework code never
+     * changes to add a new implementation.
+     */
+    @Component
+    public static class SessionStoreRouter
+            extends SlotRouter<Providers.SessionStoreProvider, SessionStore> {
+        public SessionStoreRouter(List<Providers.SessionStoreProvider> providers) {
+            super(providers, "SessionStore", LoggerFactory.getLogger(SessionStoreRouter.class));
+        }
+        @Override protected Class<SessionStore> getSlotInterface() { return SessionStore.class; }
     }
 }
