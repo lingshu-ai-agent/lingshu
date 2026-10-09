@@ -9,6 +9,7 @@
         <groupId>ai.lingshu</groupId>
         <artifactId>lingshu-parent</artifactId>
         <version>${revision}</version>
+
     </parent>
 
     <artifactId>lingshu-a2a-server</artifactId>

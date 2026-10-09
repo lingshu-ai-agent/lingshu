@@ -28,6 +28,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+
 /**
  * Story #009c (originally) — SPI registration for {@link HttpJsonRpcA2aTransportProvider}.
  *
@@ -60,6 +61,28 @@ public class HttpJsonRpcA2aTransportAutoConfiguration {
     @Bean(name = "a2aTransportProvider_http-jsonrpc-1.0.0")
     public Providers.A2aTransportProvider httpJsonRpcA2aTransportProvider() {
         return new HttpJsonRpcA2aTransportProvider();
+    }
+
+    /**
+     * 🆕 Story #034 — exposes {@link AgentCardCache} as a Spring bean so the
+     * {@link HttpJsonRpcA2aTransportFactory} below can be auto-wired. Before this
+     * method existed, the factory's constructor parameter {@code AgentCardCache}
+     * had no supplier in the context, causing
+     * {@code required a bean of type 'ai.lingshu.a2a.client.AgentCardCache'
+     * that could not be found} at startup.
+     *
+     * <p>TTL resolves from {@code agent.a2a.card-ttl} (default 5 min, matching
+     * {@link HttpJsonRpcA2aTransportProvider#DEFAULT_CARD_TTL}); null/blank
+     * config falls back to the same default so zero-config boot still works
+     * (Story #001 AC-01-2).
+     */
+    @Bean
+    public AgentCardCache agentCardCache(AgentConfig cfg) {
+        Duration cardTtl = HttpJsonRpcA2aTransportProvider.DEFAULT_CARD_TTL;
+        if (cfg != null && cfg.getA2a() != null && cfg.getA2a().getCardTtl() != null) {
+            cardTtl = cfg.getA2a().getCardTtl();
+        }
+        return new AgentCardCache(cardTtl);
     }
 
     /**
