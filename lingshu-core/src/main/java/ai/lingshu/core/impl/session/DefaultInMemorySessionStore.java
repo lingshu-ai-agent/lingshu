@@ -18,7 +18,6 @@ package ai.lingshu.core.impl.session;
 import ai.lingshu.core.message.Checkpoint;
 import ai.lingshu.core.slot.SessionStore;
 import ai.lingshu.core.tenant.TenantContext;
-import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -67,8 +66,15 @@ import java.util.concurrent.ConcurrentMap;
  *   <li>I-4: a load for an unknown sessionId returns {@link Optional#empty()}
  *       — not a thrown exception. Matches {@code SessionStore#load} contract.</li>
  * </ul>
+ *
+ * <p><b>🆕 Story #014 — removed {@code @Component}</b>: registration is exclusively
+ * via {@code SessionStoreAutoConfiguration#memorySessionStoreProvider()} which
+ * produces the uniquely-named Bean {@code "sessionStoreProvider_memory-1.0.0"}.
+ * Removing {@code @Component} prevents Spring from auto-registering a second
+ * conflicting Bean named {@code "defaultInMemorySessionStore"} (the default
+ * camelCase from class name). Aligned with v1.5.28 §5.5 multi-Provider pattern
+ * (mirror of {@code StrictPermissionPolicyProvider}, Story #031).
  */
-@Component("defaultInMemorySessionStore")
 public class DefaultInMemorySessionStore implements SessionStore {
 
     /** Physical bucket store — keyed by {@code buildKey(tid, sessionId)}. */

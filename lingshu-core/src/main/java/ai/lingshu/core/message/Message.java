@@ -15,8 +15,11 @@
  */
 package ai.lingshu.core.message;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 
 import java.time.Instant;
 import java.util.List;
@@ -40,7 +43,26 @@ import java.util.List;
  * <p>Each subtype is immutable; {@code Assistant.timestamp()} is recorded at construction time.
  * Use {@code @RequiredArgsConstructor} + {@code @Getter} rather than {@code @Value} because
  * {@code @Value} makes the class {@code final} and incompatible with subclassing.
+ *
+ * <h2>Polymorphic JSON round-trip (🆕 Story #014)</h2>
+ *
+ * <p>{@code @JsonTypeInfo} + {@code @JsonSubTypes} enables Jackson to round-trip
+ * a {@code List<Message>} through {@link com.fasterxml.jackson.databind.ObjectMapper}
+ * — needed because {@code Checkpoint.history} is a {@code List<Message>} that
+ * {@code FileSessionStore} serializes and deserializes. The discriminator is
+ * the fully-qualified class name ({@code JsonTypeInfo.Id.CLASS}) — safe because
+ * the four concrete subclasses are part of the production binary, not user-
+ * supplied types, so the standard Jackson polymorphic validator suffices and
+ * there's no attack surface. Field shape stays the same as before; this is
+ * purely additive (no SPI or field rename).
  */
+@JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, include = JsonTypeInfo.As.PROPERTY)
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = Message.System.class,      name = "System"),
+    @JsonSubTypes.Type(value = Message.User.class,        name = "User"),
+    @JsonSubTypes.Type(value = Message.Assistant.class,   name = "Assistant"),
+    @JsonSubTypes.Type(value = Message.ToolResult.class,  name = "ToolResult")
+})
 public abstract class Message {
 
     /** Role tag — "system" / "user" / "assistant" / "tool_result". */
@@ -52,11 +74,18 @@ public abstract class Message {
     // ── System ──────────────────────────────────────────────────────────
     /** Static system block assembled by PromptBuilder (§4.5 5 段装配顺序). */
     @Getter
-    @RequiredArgsConstructor
     public static class System extends Message {
         private final String content;
         /** Origin tag (e.g. {@code "role"}, {@code "instructions"}, {@code "memory"}). */
         private final String source;
+
+        @JsonCreator
+        public System(
+            @JsonProperty("content") String content,
+            @JsonProperty("source") String source) {
+            this.content = content;
+            this.source = source;
+        }
 
         @Override public String role() { return "system"; }
 
@@ -65,9 +94,13 @@ public abstract class Message {
 
     // ── User input ───────────────────────────────────────────────────────
     @Getter
-    @RequiredArgsConstructor
     public static class User extends Message {
         private final String content;
+
+        @JsonCreator
+        public User(@JsonProperty("content") String content) {
+            this.content = content;
+        }
 
         @Override public String role() { return "user"; }
 
@@ -76,12 +109,23 @@ public abstract class Message {
 
     // ── Assistant (LLM output) ───────────────────────────────────────────
     @Getter
-    @RequiredArgsConstructor
     public static class Assistant extends Message {
         private final String text;
         private final List<ToolCall> toolCalls;
         private final StopReason stopReason;
         private final Usage usage;
+
+        @JsonCreator
+        public Assistant(
+            @JsonProperty("text") String text,
+            @JsonProperty("toolCalls") List<ToolCall> toolCalls,
+            @JsonProperty("stopReason") StopReason stopReason,
+            @JsonProperty("usage") Usage usage) {
+            this.text = text;
+            this.toolCalls = toolCalls;
+            this.stopReason = stopReason;
+            this.usage = usage;
+        }
 
         @Override public String role() { return "assistant"; }
 
@@ -90,11 +134,20 @@ public abstract class Message {
 
     // ── ToolResult (tool return) ─────────────────────────────────────────
     @Getter
-    @RequiredArgsConstructor
     public static class ToolResult extends Message {
         private final String toolUseId;
         private final String content;
         private final boolean isError;
+
+        @JsonCreator
+        public ToolResult(
+            @JsonProperty("toolUseId") String toolUseId,
+            @JsonProperty("content") String content,
+            @JsonProperty("isError") boolean isError) {
+            this.toolUseId = toolUseId;
+            this.content = content;
+            this.isError = isError;
+        }
 
         @Override public String role() { return "tool_result"; }
 
