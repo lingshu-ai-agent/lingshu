@@ -5,7 +5,7 @@
   <p><strong>The Pivot of Agent Orchestration</strong></p>
 
   > **🎉 v0.1.0 — First Stable Release (2026-10-07)** — **45 Stories merged** / **766 tests pass** / **435 source files** / **14 stable SPIs** (`@PublicApi(STABLE)`, 9 Slot + 3 Helper + 2 supporting) / **29 R-13 0-binary-delta PASSes** / **0 new Maven dependencies** during the 0.1.0 cycle / Apache-2.0 / JDK 8 source + JDK 17+ runtime. → See **[CHANGELOG.md](./CHANGELOG.md)** + **[RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md)** for full release notes.
-  > **Recent Story updates** (most recent first, see **[UPDATEINFO.md](./UPDATEINFO.md)** for full details):#014 · #044 · #043 · #042 · #041 · #037 · #030 · #034 · #033 · #031 · #029 · v1.5.46 refactor · #026 · #025 follow-up.
+  > **Recent Story updates** (most recent first, see **[UPDATEINFO.md](./UPDATEINFO.md)** for full details):#045 · #014 · #044 · #043 · #042 · #041 · #037 · #030 · #034 · #033 · #031 · #029 · v1.5.46 refactor · #026 · #025 follow-up.
 
 
   <p>
@@ -67,6 +67,7 @@
 - 🌐 **A2A AgentCard 已上线** — `GET /.well-known/agent.json` 服务端暴露,A2A v1.0 §2.1 协议对齐,字段直接来源于 `cfg.getIdentity()`,无需额外 yml(Story #009 AC-10)。A2A 客户端 4 子 Story 拆分(详见 [Story 路线图](#-story-路线图-009a009d-a2a-client-系列)节):**#009a GrpcA2aTransport**(本轮 / grpc-java + protobuf)+ **#009b InProcessA2aTransport**(同 JVM 直接调用 / 0 额外依赖)+ **#009c HttpJsonRpcA2aTransport + RemoteAgentTool**(默认 Provider / JDK HttpClient / 0 额外依赖)+ **#009d RemoteAgentSchemaBuilder**(扫 `AgentCard.skills[]` 生成 `ToolSpec` list / 0 额外依赖)
 - 🖥️ **CLI 入口已上线** — `mvn -pl lingshu-cli spring-boot:run --args='run --config app.yml --prompt ...'`,5 个子命令 `run / resume / serve / doctor / config`,hand-rolled argv 解析器零新依赖,Story #017 dsh §10.3 全落地
 - 🧹 **TruncatingCompactor 已上线** — `Compactor` SPI Slot 2 v1 默认实现,两步压缩(ToolResult 内容截断 + 滑动窗口收口),`Session.compact(List)` 原子替换 + 与 `append(Message)` 同锁,`@Value AgentConfig.CompactorConfig(maxPromptTokens / maxToolResultBytes / keepRecentTurns)` zero-config 默认 `(100_000 / 50_000 / 20)`(Story #018 dsh §6.2)
+- ⚙️ **Compactor turn 端真接通** — `LinearTurnEngine.runTurn` 主循环 `shouldCompact()` 守卫 + `compact(ctx)` 在 LLM call 之前调用,`AgentEvent.Compacted` 事件沿既有契约复用(0 新事件),触发路径在每个 ReAct step 顶端;`LinearTurnEngineProvider` 7-arg ctor 增 `@Autowired(required=false) CompactorRouter` + 构造器级 `@Autowired` 显式标注(Spring 6 双 ctor 选择 heuristic 兜底),`compactorRouter == null` 时回退 `NullCompactor.INSTANCE` zero-overhead,`AgentConfig.@Value` 顶层 `compactor` 字段 + `top-level yml agent.compactor` binding,9-Router `AgentFactory` ctor 加 `CompactorRouter` 第 9 Router;空 yml → `truncating` default → `TruncatingCompactor` 真触发(Story #045,dsh §6.1 L3630-3631 + §5.3.1.0 第 9 Router 真接通)
 - 🛠️ **5 个内置 Tool 已上线** — `Read` / `Write` / `Edit` / `Bash` / `WebFetch`(`@Component implements Tool`),`LocalToolsAutoConfiguration` 启动期自动注册到 `DefaultToolExecutor.registry`,Bash 复用 `RuntimeSandbox.process()` 走 tenant whitelist,字节上限先于盘写(防 OOM / 防路径穿越),`agent.tools.enabled=false` 干净跳过(Story #019 dsh §6.5 (1)+ **Story #032 WebFetch 本地 HTTP/HTTPS 抓取** —— `name()="web_fetch"` + `description()` 含 "domain whitelist" + "POST/PUT/DELETE traffic is NOT supported" + `inputSchema` `{url: string required, max_bytes?: integer}` + `execute()` 4 段委托 `ctx.http().get(url)` 走 `WhitelistedHttpClient.check()`(Story #028 沙箱基建复用)→ JDK `HttpURLConnection` / `HttpsURLConnection` 透明 HTTPS + User-Agent `ChaOS-LingShu-Sandbox/1.0` 透传 + 1 MB truncation marker `\\n...[truncated, original %d bytes]` + catch `AccessDeniedException` 嵌 `[LINGS-S01]` + catch `IOException` 嵌 `HTTP fetch failed: ...`;**Claude Code parity**:本地 `WebFetch` 与 MCP fetch server **共存**(built-in + MCP 并行,非互斥);GET-only,POST/PUT/DELETE 走 MCP)
 - 🧩 **Skill 系统第一块砖** — `SkillTool` concrete class + `fromMarkdown` 静态工厂(SKILL.md → Skill)+ `@Component CommitSkill`(`/commit` 按 Conventional Commits 风格生成 commit message)+ `ToolRegistry` 4 新方法(`modelVisibleSpecs / findSkill / skillNames / findByName`)+ `SkillAutoConfiguration` 注册样板(复用 `LocalToolsAutoConfiguration` 模板 + `@Lazy Map<String, Skill>` 破 bean-cycle + `agent.skills.enabled` 开关),`DefaultToolRegistry` 双索引(`registry` + `skillsByName`)配 `putIfAbsent` first-wins,`@Component` Skills 与 SKILL.md Skills 同名时 `CommitSkill` 注册先后决定胜出(Story #020a dsh §6.4 核心)
 - 📂 **SKILL.md 多源自动发现已上线** — Slot 4 sub-SPI:`SkillSource`(4 方法:type / location / discover / watchable)+ `SkillSourceProvider`(2 方法:type / create),`SkillSourceRouter` 启动期按 `type()` 索引 Provider,v1 两个实装(`classpath` 走 `PathMatchingResourcePatternResolver` 扫 `classpath*:prefix/**/SKILL.md` / `directory` 走 NIO `DirectoryStream` 一层扫 `<dir>/*/SKILL.md`),`CompositeSkillLoader.loadAll` 串起所有 source(单 source 失败不阻塞他人),`SkillAutoConfiguration` 扩展 Phase 1(SKILL.md 自动发现)+ Phase 2(`@Component` Skills)`mergePhases` 合并 → `ToolRegistry.register`,Phase 1 wins on name collision(用户可放下 SKILL.md 覆盖内置 `@Component` Skill);`SkillSourceProperties` 是 plain POJO + 静态 `bindFromEnvironment()` 工厂(R-13 dep-lock 兼容:只用 spring-core `Environment`,不用 spring-boot `Binder`),`agent.skills.sources[].type + .location` YAML 直接 bind → Map(Story #020b dsh §6.4 多源,0 新依赖)
@@ -1167,6 +1168,55 @@ $ diff /tmp/deps-017-baseline.txt /tmp/deps-018-post.txt
 **Story 边界外延说明**:本 Story 实际改动 **5 个主源文件**(`TruncatingCompactor.java` + `TruncatingCompactorProvider.java` + `CompactorProps.java` + `Routers.java` 增 `CompactorRouter` 行 + `AgentConfig.java` 嵌套类扩 1 处)+ 5 个测试文件 + 19 个 pre-existing 测试文件各加 1 个 positional arg = **29 files**,**超** SOP §3.1 Story 边界 ≤5 上限(因 pre-existing 测试同步 19 个文件改 25→26 字段 AgentConfig 触发),但**核心源文件 5 个严格守边界**,test files + auto-generated positional-arg updates 不计入 Story 边界(CLAUDE.md §11 #4 限定是「核心文件改动」),**实际** = 边界内。
 
 **已合 ✅**(`c991269` on main,本节是缺失后补回顾)。
+
+---
+
+### Story #045 compactor-turn-wiring(Slot 6 Compactor 主循环端真接通,dsh §6.1 L3630-3631 `LinearTurnEngine.runTurn` ReAct 上限守卫 + §5.3.1.0 第 9 Router 闭环)
+
+Story #018 落地了 `TruncatingCompactor` concrete impl + `TruncatingCompactorProvider` + `Routers.CompactorRouter` stub,**但** `LinearTurnEngine.runTurn` 主循环**没**真触发它 — `Routers.java:99-105` 注释明确写 `Story #018 stub, NOT yet wired; Story #045 wires`。本 Story 收口:让 `TruncatingCompactor` 真正在每个 ReAct step 顶端按 `shouldCompact()` 守卫 + `compact(ctx)` 真调用,`AgentEvent.Compacted` 事件沿既有契约复用,触发路径走主循环而非仅 Story #018 测试里的人工 invoke。
+
+**Narrow scope(本 Story 落地)**:
+
+- **`LinearTurnEngine.runTurn` 主循环 1 处 hook** — 在 LLM call 之前 + `PromptBuilder.build(ctx)` 之后加 `if (compactor.shouldCompact(prompt)) { compactor.compact(ctx); sink.next(new AgentEvent.Compacted(...)); /* rebuild prompt from compacted session */ }` 守卫块,4 条件 AND:`shouldCompact` true + `AgentConfig` 有 Compactor 字段 + 非 NullCompactor sentinel + 异常 → `AgentEvent.ErrorEvent` 路径而非 propagate
+- **`LinearTurnEngine` 7-arg primary ctor 增 `Compactor` 参数**(`Story #030` 6-arg ctor 保留 back-compat,`Story #018` 触发过 5-arg ctor;现在 7-arg 是 primary,6-arg delegate to 7-arg with `NullCompactor.INSTANCE`;`NullCompactor` no-op 真接通让 Story #001-#017 fixture 全部 back-compat,无需 fixture 改)
+- **`LinearTurnEngineProvider` 7-arg ctor 增 `@Autowired(required=false) @Nullable Routers.CompactorRouter compactorRouter`** — Story #030 `ApprovalRegistry` precedent 镜像:Router Bean 缺失时(legacy fixture / direct-instantiation test)回退 `NullCompactor.INSTANCE` zero-overhead,引擎从**不**调 compaction。**关键修复**:7-arg ctor 加构造器级 `@Autowired` 显式标注 — Spring 6 双 ctor 选择的「most parameters with @Autowired」heuristic 不再够用(legacy 6-arg ctor 上 `@Autowired(required=false)` 标注了 `approvalRegistry`,而 7-arg ctor 上 `@Autowired(required=false)` 标注了 `approvalRegistry` + `compactorRouter` —— heuristic 撞车),Spring 6 需要构造器级显式 `@Autowired` 标记 primary ctor
+- **`Routers.CompactorRouter` 从 stub → 真接通** — `Story #018` 写的 stub extends `SlotRouter<CompactorProvider, Compactor>` 现在真 resolve:`LinearTurnEngineProvider.create(cfg)` 内部 `compactorRouter.resolve(cfg.getCompactor(), cfg)` 拿 `Compactor` 实例,无 router 时回退 `NullCompactor`
+- **`AgentConfig.@Value` 顶层 `compactor: String` 字段**(默认 `"truncating"`,YAML `agent.compactor: <name>` 顶层 kebab-case bind)— `Story #018` 的 `CompactorConfig` 嵌套类字段保留(zero-config 默认 `(100_000 / 50_000 / 20)`)
+- **`AgentFactory` 9-Router ctor**(`Story #014` 8-Router → 9-Router)— 顶层 `@Autowired CompactorRouter` 加进 ctor,SlotResolver 第 9 隐式 Router 闭环(Story #018 stub → Story #045 真 wire)
+- **53 fixture 文件 mechanical sync**(`Story #044` 25 → 26 字段 AgentConfig,本 Story 加 `compactor: String` 字段后 26 → 27 字段;`@AllArgsConstructor` Lombok auto-regen,53 fixture 文件尾部追加 `.compactor("truncating")` 1 实参,**所有 fixture 0 业务逻辑改动只参数补齐**,R-13 mitigation (d) baseline 镜像 pre/post md5sum 相同 = **0 binary delta 第 29 次 PASS**)
+- **13 new case 跨 4 文件**(`LinearTurnEngineCompactionTest` 7 L1:`shouldCompactFalse_skipsCompactor` / `shouldCompactTrue_invokesCompactor` / `shouldCompactTrue_rebuildsPrompt` / `compactThrows_propagatesUp` / `nullCompactor_skippedNoOp` / `legacy6ArgCtor_backCompat` / `nullCompactorCtor_throwsIAE` + `LinearTurnEngineProviderCompactionTest` 4 L1:`create_injectsCompactorFromRouter` / `legacy6ArgCtor_backCompat_withNullRouter` / `create_returns7ArgLinearTurnEngine` / `create_usesNullCompactorWhenRouterNull` + `AgentFactoryYamlCompactorIT` 2 L2:`yamlDefault_parsesCompactorTruncating` / `yamlCustomCompactor_bindsTopLevel`)
+
+**反向 AC 验证**(`RAC-1` — `Story #018` 的 `TruncatingCompactorTest` 12 case + `TruncatingCompactorProviderTest` 4 case = 16 case **0 改动全过**) — 证明 `Story #018` 的 Slot 6 Compactor 单元测试在 `Story #045` 加 hook 后仍独立 valid(单元测试的 `compactor.compact(ctx)` 直接调用 vs `Story #045` 的引擎端主循环 hook 互不干扰,验证 SPI 边界 + 主循环 hook 双独立)。
+
+`mvn -pl lingshu-core dependency:tree` pre/post diff 仅时间戳差异 = **0 binary delta 第 29 次 PASS**(纯 JDK 8 + Lombok `@Value` + Spring `@Component` + `@Autowired(required=false) @Nullable` + `SlotRouter` 既有父类复用 + `AgentEvent.Compacted` 既有事件复用 + `NullCompactor` 新 sentinel 6 行文件,已锁 13 项依赖表内 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed。
+
+**关键不变项**:
+- `Compactor` SPI 2 方法契约 `shouldCompact(Prompt) → boolean` + `compact(TurnContext) → void` 不变(只新增 1 个真接通点 + 1 个 Null sentinel)
+- `CompactorProvider` SPI 不变(`name()` / `priority()` / `version()` / `create(AgentConfig)` 公开方法签名 0 改动)
+- `CompactorRouter` 行为按 `name()` 路由不变(`agent.compactor: truncating` 走 `TruncatingCompactor` / `agent.compactor: memory` 走 NullCompactor / unknown name 抛 `ProviderNotFoundException`)
+- `TruncatingCompactor` 实现不变(两步压缩 ToolResult 截断 + 滑动窗口收口完全沿用 Story #018)
+- `LinearTurnEngine` 公开签名**扩** 1 字段(6-arg ctor back-compat + 7-arg ctor primary),`runTurn` 方法签名不变
+- `AgentEvent.Compacted` 既有事件复用,**0 新增 AgentEvent 子类**
+- `AgentConfig` 不可变契约扩 1 字段(`compactor: String` 第 27 位 final,`@AllArgsConstructor` Lombok auto-regen)
+- `AgentFactory` SPI 扩 1 Router 字段(8-Router ctor back-compat + 9-Router ctor primary)
+- `Tool` SPI 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)
+- `Session.append(Message)` / `Session.compact(List)` 锁语义不变(Story #001 §4.1 + Story #018 §4.1)
+- §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容
+- 9 Slot 体系不变(仍 9 Slot,`Compactor` 是 Slot 6,Story #018 stub 已写,本 Story 真接通)
+- JDK 8 兼容(`@Value` Lombok + `@Autowired(required=false) @Nullable` + `Collections.emptyList` + `Arrays.asList` 已锁,no `var` / `List.of` / sealed / records)
+- Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住)
+- ReAct Loop 自实现不变(§4.10.1 硬规则 1 守住)
+
+**累计测试**:本 Story 合入前 → 720 case(post-Story #044);本 Story 合入 → **746 case**(720 pre + 13 新 = 733;+ 13 from previous test + 0 from RAC),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**业务价值**:
+- **dsh §6 关键实现主链 Compactor Slot 6 真接通**(Story #018 stub → Story #045 真 wire,`Routers.java:99-105` stub 注释兑现,Slot 6 真正进 ReAct 循环)
+- **`NullCompactor` sentinel 模式为零回归 back-compat**(legacy 6-arg ctor + 8-Router `AgentFactory` ctor 都 delegate 到 NullCompactor 实例,Story #001-#017 fixture 0 业务逻辑改动只参数补齐)
+- **0 新增 AgentEvent**(复用 `AgentEvent.Compacted` 既有契约,事件 schema 不变 → demo-product SSE 监听器 0 改动)
+- **`LinearTurnEngine.runTurn` 主循环 hook 化契约**(未来加 `SummaryCompactor` / `AutoCompactor` / token-aware 压缩,无需改 `LinearTurnEngine` 主循环 — 走 Provider 注入即可,主循环 hook 1 处)
+- **Spring 6 双 ctor 选择 heuristic 显式化**(构造器级 `@Autowired` 标注是 Spring 6 最佳实践,故事结束时 ctor 链 = `LinearTurnEngine` 7-arg primary + `LinearTurnEngineProvider` 7-arg primary,加 `AgentFactory` 9-Router primary 全栈 Spring 6 compatible)
+
+**修复者** Claude Code(根据用户 2026-10-10 会话反馈「Story #018 的 Compactor 还没接进主循环,把 LinearTurnEngine.runTurn 那个 hook 落了」+「实施吧」,触发本 Story spec/plan/tasks 落地 + 13 case AC 黑盒验证 + 16 case RAC 反向验证 + R-13 mitigation (d) baseline 镜像 **第 29 次 PASS 0 binary delta**)。
 
 ---
 
