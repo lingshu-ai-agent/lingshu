@@ -15,10 +15,12 @@
  */
 package ai.lingshu.core.impl.flow;
 
+import ai.lingshu.core.impl.compaction.NullCompactor;
 import ai.lingshu.core.impl.router.Routers;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
+import ai.lingshu.core.slot.Compactor;
 import ai.lingshu.core.spi.Providers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -43,6 +45,13 @@ import java.util.concurrent.ExecutorService;
  * HTTP-driven approvals), the registry is null and the engine still works —
  * tests / fixtures invoke the continuation directly off the
  * {@code ApprovalRequired} event.
+ *
+ * <p><b>🆕 Story #045 — optional {@link Compactor} injection</b>: when present,
+ * the engine resolves the {@link Compactor} by name from the
+ * {@code CompactorRouter} (default {@code TruncatingCompactor} via
+ * {@code TruncatingCompactorProvider}). When absent (legacy 6-arg constructor
+ * used by Story #001-#029 fixtures), {@link NullCompactor#INSTANCE} is wired
+ * in so the engine never invokes compaction when no router is registered.
  */
 @Component
 public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
@@ -65,29 +74,69 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
     private final ExecutorService agentToolPool;
     /** 🆕 Story #030 — optional; null when no Spring context registers the bean. */
     private final ApprovalRegistry approvalRegistry;
+    /** 🆕 Story #045 — optional; null in legacy 6-arg ctor; resolved into {@link Compactor} in {@link #create(AgentConfig)}. */
+    private final Routers.CompactorRouter compactorRouter;
 
+    /**
+     * 🆕 Story #030 — legacy 6-arg constructor. Since Story #045 it delegates to
+     * the 7-arg constructor with {@code compactorRouter = null}; {@link #create}
+     * falls back to {@link NullCompactor#INSTANCE} so Story #001-#029 fixtures
+     * that pre-date compaction stay compaction-free.
+     */
     public LinearTurnEngineProvider(Routers.PromptBuilderRouter promptBuilderRouter,
                                    Routers.LlmProviderRouter llmProviderRouter,
                                    Routers.ToolExecutorRouter toolExecutorRouter,
                                    Routers.PermissionPolicyRouter permissionPolicyRouter,
                                    @Qualifier("agentToolPool") ExecutorService agentToolPool,
                                    @Autowired(required = false) @Nullable ApprovalRegistry approvalRegistry) {
+        this(promptBuilderRouter, llmProviderRouter, toolExecutorRouter, permissionPolicyRouter,
+             agentToolPool, approvalRegistry, null);
+    }
+
+    /**
+     * 🆕 Story #045 — primary 7-arg constructor that wires the optional
+     * {@link Compactor} via the {@link Routers.CompactorRouter}. Spring's
+     * constructor-injection auto-resolves the router bean when present
+     * (production); null is tolerated for direct-instantiation tests.
+     *
+     * <p>Constructor-level {@code @Autowired} is required (Story #045 follow-up)
+     * because with two public constructors visible (the legacy 6-arg and this
+     * primary 7-arg), Spring's "most parameters with @Autowired" heuristic no
+     * longer suffices — Spring 6 needs an explicit primary ctor marker. Without
+     * it the bean factory falls back to "no default constructor found" at startup.
+     */
+    @Autowired
+    public LinearTurnEngineProvider(Routers.PromptBuilderRouter promptBuilderRouter,
+                                   Routers.LlmProviderRouter llmProviderRouter,
+                                   Routers.ToolExecutorRouter toolExecutorRouter,
+                                   Routers.PermissionPolicyRouter permissionPolicyRouter,
+                                   @Qualifier("agentToolPool") ExecutorService agentToolPool,
+                                   @Autowired(required = false) @Nullable ApprovalRegistry approvalRegistry,
+                                   @Autowired(required = false) @Nullable Routers.CompactorRouter compactorRouter) {
         this.promptBuilderRouter = promptBuilderRouter;
         this.llmProviderRouter = llmProviderRouter;
         this.toolExecutorRouter = toolExecutorRouter;
         this.permissionPolicyRouter = permissionPolicyRouter;
         this.agentToolPool = agentToolPool;
         this.approvalRegistry = approvalRegistry;
+        this.compactorRouter = compactorRouter;
     }
 
     @Override
     public FlowEngine create(AgentConfig config) {
+        // 🆕 Story #045 — resolve the Slot 6 Compactor from the router. When no
+        // router has been registered (legacy / direct instantiation) we wire in
+        // NullCompactor so the engine never calls compaction.
+        Compactor compactor = compactorRouter != null
+            ? compactorRouter.resolve(config.getCompactor(), config)
+            : NullCompactor.INSTANCE;
         return new LinearTurnEngine(
             promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config),
             llmProviderRouter.resolve(config.getLlm().getProvider(), config),
             toolExecutorRouter.resolve(config.getToolExecutor(), config),
             permissionPolicyRouter.resolve(config.getSandbox().getPolicy(), config),
             agentToolPool,
-            approvalRegistry);
+            approvalRegistry,
+            compactor);
     }
 }
