@@ -56,6 +56,15 @@ import java.util.List;
  * <p><b>{@code watchable()} returns {@code false}:</b> jar contents are immutable at
  * runtime; hot-reload would require a {@code JarFile}-level watcher which is out of
  * scope for v1 (Story #020b / dsh §14.8 OQ-Future).
+ *
+ * <p><b>Windows path normalization:</b> on Windows the resolved {@link Resource} is a
+ * {@code FileSystemResource} whose {@link Resource#getDescription()} uses
+ * backslashes ({@code "file [D:\\…\\skills\\commit\\SKILL.md]"}). {@link #deriveName(Resource)}
+ * normalizes {@code \\\\ → /} before walking the path so the parent-directory
+ * extraction is cross-platform. Linux/macOS descriptions use forward slashes already,
+ * so the replace is a no-op there. Without this normalization, the skill name
+ * degenerates to the literal {@code "SKILL.md"} which violates the Anthropic tool-name
+ * wire rule {@code ^[a-zA-Z0-9_-]+$}.
  */
 public class ClasspathSkillSource implements SkillSource {
 
@@ -129,8 +138,14 @@ public class ClasspathSkillSource implements SkillSource {
     /**
      * Extract the parent directory name as the Skill name. For
      * {@code classpath:skills/agent-builtin/commit/SKILL.md} the name is {@code "commit"}.
+     *
+     * <p>Package-private (not {@code private}) so the test
+     * {@code ClasspathSkillSourceTest} can drive this directly with a mock
+     * {@link Resource} returning platform-specific descriptions; otherwise the
+     * Windows backslash normalization below cannot be regression-tested on
+     * Linux/macOS CI runners.
      */
-    private static String deriveName(Resource r) {
+    static String deriveName(Resource r) {
         // Normalize separators: on Windows, wildcard-matched resources are
         // FileSystemResource whose description uses backslashes
         // ("file [D:\...\skills\agent\SKILL.md]") — without this, lastIndexOf('/')

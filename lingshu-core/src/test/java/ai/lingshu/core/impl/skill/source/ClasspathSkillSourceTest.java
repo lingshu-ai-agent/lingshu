@@ -18,12 +18,15 @@ package ai.lingshu.core.impl.skill.source;
 import ai.lingshu.core.slot.Skill;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.Resource;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Story #020b — L2 functional test for {@link ClasspathSkillSource}.
@@ -78,5 +81,53 @@ class ClasspathSkillSourceTest {
             if (s.name().equals(name)) return s;
         }
         throw new AssertionError("Skill not found: " + name);
+    }
+
+    /**
+     * Story #020b follow-up (Windows-path regression): on Windows the resolved
+     * {@link Resource} is a {@code FileSystemResource} whose
+     * {@link Resource#getDescription()} uses backslashes. Without the
+     * {@code '\\' → '/'} normalization in {@link ClasspathSkillSource#deriveName(Resource)},
+     * {@code lastIndexOf('/')} misses and the skill name degenerates to
+     * {@code "SKILL.md"} — which then violates the Anthropic tool-name wire rule
+     * {@code ^[a-zA-Z0-9_-]+$} and breaks the demo-product boot on Windows.
+     *
+     * <p>This test runs on Linux/macOS CI runners (no Windows fixture needed)
+     * by mocking the {@link Resource} to return a backslash-formatted description.
+     */
+    @Test
+    @DisplayName("Windows backslash: deriveName normalizes '\\\\' → '/' and extracts parent dir")
+    void deriveName_handlesWindowsBackslashPath() {
+        Resource resource = mock(Resource.class);
+        when(resource.getDescription()).thenReturn(
+            "file [D:\\workspace\\lingshu\\skills\\agent\\SKILL.md]");
+        assertThat(ClasspathSkillSource.deriveName(resource)).isEqualTo("agent");
+    }
+
+    /**
+     * Sanity-check the same code path on a Linux-style classpath description
+     * (forward slashes only) so a regression on either branch is caught.
+     */
+    @Test
+    @DisplayName("Linux classpath: deriveName extracts parent dir from forward-slash description")
+    void deriveName_handlesLinuxClasspathPath() {
+        Resource resource = mock(Resource.class);
+        when(resource.getDescription()).thenReturn(
+            "class path resource [skills/agent-builtin/commit/SKILL.md]");
+        assertThat(ClasspathSkillSource.deriveName(resource)).isEqualTo("commit");
+    }
+
+    /**
+     * Sanity-check the URL/jar description path (forward slashes; the
+     * replace is a no-op there) — keeps the three Resource subtypes
+     * (FileSystem / ClassPath / Url) covered.
+     */
+    @Test
+    @DisplayName("Jar URL: deriveName extracts parent dir from URL-style description")
+    void deriveName_handlesJarUrlPath() {
+        Resource resource = mock(Resource.class);
+        when(resource.getDescription()).thenReturn(
+            "URL [jar:file:/workspace/lingshu-skills.jar!/skills/agent-builtin/review/SKILL.md]");
+        assertThat(ClasspathSkillSource.deriveName(resource)).isEqualTo("review");
     }
 }
