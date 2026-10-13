@@ -35,8 +35,11 @@ import ai.lingshu.core.slot.ToolExecutionContext;
 import ai.lingshu.core.impl.compaction.NullCompactor;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
+import ai.lingshu.core.impl.sessionstore.NullSessionStore;
 import ai.lingshu.core.impl.tool.DefaultToolExecutionContext;
+import ai.lingshu.core.message.Checkpoint;
 import ai.lingshu.core.slot.Compactor;
+import ai.lingshu.core.slot.SessionStore;
 import ai.lingshu.core.slot.ToolExecutor;
 import org.reactivestreams.Subscriber;
 import org.slf4j.Logger;
@@ -112,11 +115,25 @@ public class LinearTurnEngine implements FlowEngine {
      * working unchanged.
      */
     private final Compactor compactor;
+    /**
+     * 🆕 Story #046 — Slot 5 session persistence. Called at each turn-completion
+     * point ({@link #runTurn} loop-head cancel, normal end, exception, waitForLlm
+     * cancel) to snapshot the current {@link ai.lingshu.core.runtime.Session} via
+     * {@link Session#checkpoint()} and persist it. Defaulted to
+     * {@link NullSessionStore#INSTANCE} by the legacy 5/6/7-arg constructors so
+     * tests/fixtures that pre-date Story #046 keep working unchanged.
+     *
+     * <p>Save errors are swallowed (logged at WARN) so the engine never crashes a
+     * turn-completion because of a transient persistence failure — the in-flight
+     * {@code TurnCompleted} event has already been emitted to the subscriber.
+     */
+    private final SessionStore sessionStore;
 
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool) {
-        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool, null, NullCompactor.INSTANCE);
+        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool,
+             null, NullCompactor.INSTANCE, NullSessionStore.INSTANCE);
     }
 
     /**
@@ -124,35 +141,56 @@ public class LinearTurnEngine implements FlowEngine {
      * {@link ApprovalRegistry}. Production paths (via
      * {@code LinearTurnEngineProvider}) pass a Spring-injected singleton; tests
      * that don't need cross-thread continuation lookup use the 5-arg constructor
-     * (registry = null). Since Story #045 this delegates to the 7-arg constructor
-     * with {@link NullCompactor#INSTANCE} so legacy call sites stay compaction-free.
+     * (registry = null). Since Story #045 this delegates to the 8-arg constructor
+     * with {@link NullCompactor#INSTANCE} + {@link NullSessionStore#INSTANCE} so
+     * legacy call sites stay compaction-free and persistence-free.
      */
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool,
                             ApprovalRegistry approvalRegistry) {
         this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool,
-             approvalRegistry, NullCompactor.INSTANCE);
+             approvalRegistry, NullCompactor.INSTANCE, NullSessionStore.INSTANCE);
     }
 
     /**
-     * 🆕 Story #045 — primary 7-arg constructor that wires the optional
+     * 🆕 Story #045 — 7-arg constructor that wires the optional
      * {@link Compactor}. Production paths (via {@code LinearTurnEngineProvider})
      * resolve the {@link Compactor} from the {@code CompactorRouter}; tests that
      * don't exercise compaction use {@code NullCompactor.INSTANCE} or one of the
-     * legacy 5/6-arg constructors above.
+     * legacy 5/6-arg constructors above. Since Story #046 this delegates to the
+     * 8-arg constructor with {@link NullSessionStore#INSTANCE} so legacy call
+     * sites stay persistence-free.
      */
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool,
                             ApprovalRegistry approvalRegistry,
                             Compactor compactor) {
+        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool,
+             approvalRegistry, compactor, NullSessionStore.INSTANCE);
+    }
+
+    /**
+     * 🆕 Story #046 — primary 8-arg constructor that wires the optional
+     * {@link SessionStore}. Production paths (via {@code LinearTurnEngineProvider})
+     * resolve the {@link SessionStore} from the {@code SessionStoreRouter}; tests
+     * that don't exercise persistence use {@link NullSessionStore#INSTANCE} or
+     * one of the legacy 5/6/7-arg constructors above.
+     */
+    public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
+                            ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
+                            ExecutorService toolPool,
+                            ApprovalRegistry approvalRegistry,
+                            Compactor compactor,
+                            SessionStore sessionStore) {
         if (promptBuilder == null) throw new IllegalArgumentException("promptBuilder must not be null");
         if (llmProvider == null) throw new IllegalArgumentException("llmProvider must not be null");
         if (toolExecutor == null) throw new IllegalArgumentException("toolExecutor must not be null");
         if (permissionPolicy == null) throw new IllegalArgumentException("permissionPolicy must not be null");
         if (toolPool == null) throw new IllegalArgumentException("toolPool must not be null");
         if (compactor == null) throw new IllegalArgumentException("compactor must not be null");
+        if (sessionStore == null) throw new IllegalArgumentException("sessionStore must not be null");
         this.promptBuilder = promptBuilder;
         this.llmProvider = llmProvider;
         this.toolExecutor = toolExecutor;
@@ -160,6 +198,7 @@ public class LinearTurnEngine implements FlowEngine {
         this.toolPool = toolPool;
         this.approvalRegistry = approvalRegistry;
         this.compactor = compactor;
+        this.sessionStore = sessionStore;
     }
 
     @Override
@@ -208,6 +247,9 @@ public class LinearTurnEngine implements FlowEngine {
                     LOG.info("cancelled at step={} — emitting CANCELLED", step);
                     ctx.markDone();
                     sink.onNext(new AgentEvent.TurnCompleted(StopReason.CANCELLED, totalUsage));
+                    // 🆕 Story #046 — Slot 5 persistence: snapshot the session even on a
+                    // mid-loop cancel so the next process / agent can resume from here.
+                    trySave(ctx);
                     return;
                 }
 
@@ -303,6 +345,10 @@ public class LinearTurnEngine implements FlowEngine {
                 ? last.getStopReason()
                 : StopReason.END_TURN;
             sink.onNext(new AgentEvent.TurnCompleted(reason, totalUsage));
+            // 🆕 Story #046 — Slot 5 persistence: snapshot the session at normal turn
+            // completion so the next turn (or post-restart resume) can pick up exactly
+            // where this one left off.
+            trySave(ctx);
             LOG.info("LinearTurnEngine.runTurn done in {}ms, reason={}, totalUsage=({}, {})",
                 System.currentTimeMillis() - start, reason,
                 totalUsage.getInputTokens(), totalUsage.getOutputTokens());
@@ -310,6 +356,11 @@ public class LinearTurnEngine implements FlowEngine {
             LOG.error("LinearTurnEngine.runTurn failed", ex);
             sink.onNext(new AgentEvent.ErrorEvent(ex));
             sink.onNext(new AgentEvent.TurnCompleted(StopReason.ERROR, totalUsage));
+            // 🆕 Story #046 — Slot 5 persistence: snapshot the session even on a turn
+            // exception. The history up to the failing step is what the user expects to
+            // see on resume; we deliberately persist *before* the exception escapes so
+            // the post-mortem snapshot survives a JVM kill.
+            trySave(ctx);
         }
     }
 
@@ -344,7 +395,37 @@ public class LinearTurnEngine implements FlowEngine {
         LOG.info("LLM wait loop exited via cancellation");
         ctx.markDone();
         sink.onNext(new AgentEvent.TurnCompleted(StopReason.CANCELLED, totalUsage));
+        // 🆕 Story #046 — Slot 5 persistence: snapshot on cancel-during-LLM-wait so
+        // the in-flight assistant message that's already in history (Step 266) plus
+        // whatever tool results landed earlier are preserved on the next start.
+        trySave(ctx);
         return null;
+    }
+
+    /**
+     * 🆕 Story #046 — Persist the current session via the wired {@link SessionStore}.
+     *
+     * <p>Called from each of the four turn-completion points in {@link #runTurn}:
+     * loop-head cancel, normal end, exception, and waitForLlm cancel. Failures are
+     * logged at WARN and swallowed — the in-flight {@code TurnCompleted} event has
+     * already reached the subscriber and the engine must never crash a turn on a
+     * transient persistence error (e.g. full disk, lost network on remote stores).
+     *
+     * <p>The {@link ai.lingshu.core.runtime.Session#checkpoint()} call captures the
+     * current history snapshot at this instant; concurrent compaction that lands
+     * after the snapshot will be reflected in the next turn's checkpoint, never in
+     * this one. Mirror of {@code Compactor.compact}'s "snapshot semantics".
+     */
+    private void trySave(TurnContext ctx) {
+        try {
+            Checkpoint cp = ctx.session().checkpoint();
+            sessionStore.save(cp);
+            LOG.debug("session checkpoint saved: sessionId={}, historySize={}",
+                cp.getSessionId(), cp.getHistory().size());
+        } catch (RuntimeException ex) {
+            LOG.warn("session checkpoint save failed (sessionId={}): {}",
+                ctx.session().id(), ex.toString());
+        }
     }
 
     /**

@@ -5,7 +5,7 @@
   <p><strong>The Pivot of Agent Orchestration</strong></p>
 
   > **🎉 v0.1.0 — First Stable Release (2026-10-07)** — **45 Stories merged** / **766 tests pass** / **435 source files** / **14 stable SPIs** (`@PublicApi(STABLE)`, 9 Slot + 3 Helper + 2 supporting) / **29 R-13 0-binary-delta PASSes** / **0 new Maven dependencies** during the 0.1.0 cycle / Apache-2.0 / JDK 8 source + JDK 17+ runtime. → See **[CHANGELOG.md](./CHANGELOG.md)** + **[RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md)** for full release notes.
-  > **Recent Story updates** (most recent first, see **[UPDATEINFO.md](./UPDATEINFO.md)** for full details):#045 · #014 · #044 · #043 · #042 · #041 · #037 · #030 · #034 · #033 · #031 · #029 · v1.5.46 refactor · #026 · #025 follow-up.
+  > **Recent Story updates** (most recent first, see **[UPDATEINFO.md](./UPDATEINFO.md)** for full details):#046 · #045 · #014 · #044 · #043 · #042 · #041 · #037 · #030 · #034 · #033 · #031 · #029 · v1.5.46 refactor · #026 · #025 follow-up.
 
 
   <p>
@@ -79,6 +79,7 @@
 - 📡 **Anthropic SSE 真流式已上线** — `AnthropicLlmProvider.doPostStream` 把非流式 POST + 一次性 readAll 替换为 SSE `text/event-stream` accept + `BufferedReader.readLine()` 逐行解析(沿用 #021c `SseMcpServerConnection` 手写 SSE parser 模式)+ `AnthropicStreamParser` 6-类事件状态机(`message_start` → `ReasoningStarted` + init usage / `content_block_start` × text + tool_use → 触发 `ToolStarted` / `content_block_delta` × text_delta + input_json_delta → 持续 `TextDelta` + per-block JSON 拼接 buffer / `content_block_stop` → per-block `MAPPER.readTree()` 构造 `ToolCall` / `message_delta.stop_reason` / `message_stop`) + `Map<Integer, StringBuilder>` text blocks + `Map<Integer, ToolCall.Builder>` tool blocks 交错状态机;LLM 流式首 token P50 ≤ 1.5s NFR(constitution §3)真达标;新增 `LINGS-L03` reserved 常量(§14 N6 graceful shutdown 后续启用,本期不抛);复用 #027a `LINGS-L01` 协议层 ErrorCode(SSE 解析 tool_use 缺 id/name);`parseResponse` 保留为 fallback(`anthropicStreamEnabled=false` 配置路径仍可用);**§6.5 protocol gap 全闭合**(Story #027b,**0 新 Maven 依赖** / **R-13 0 binary delta 第 13 次 PASS**)
 - 🧵 **Anthropic LLM I/O 池已有界** — `AnthropicLlmProvider.ioExecutor` 字段初始化从无界 `Executors.newCachedThreadPool`(`maximumPoolSize = Integer.MAX_VALUE`,极压下 OOM 风险)替换为有界 `ThreadPoolExecutor`,镜像 `ToolExecutorConfig.agentToolPool` 100% shape:`corePoolSize = cores * 2` / `maxPoolSize = cores * 4` / `keepAliveTime = 60s` / `LinkedBlockingQueue(256)` / `CallerRunsPolicy` 兜底 / daemon=true / 线程名前缀 `anthropic-llm-io-N`(per-instance 计数,`jstack` 友好与 `lingshu-tool-N` 风格对齐);`CallerRunsPolicy` 在队列满时让 `LinearTurnEngine` 主线程兜底执行,back-pressure 慢不丢(主线程阻塞自限流,而非无界堆积);`buildBoundedIoExecutor()` 私有静态方法 + 5 import(`LinkedBlockingQueue` / `ThreadFactory` / `ThreadPoolExecutor` / `TimeUnit` / `AtomicInteger`)+ 类级 Javadoc 详细描述 Story #043 改动 + 镜像 `ToolExecutorConfig` 字段对齐表;**根除 `lingshu-core/src/main/java/` 唯一一处无界生产线程池**(Story #043,**0 新 Maven 依赖** / **0 新 ErrorCode** / **R-13 0 binary delta 第 26 次 PASS**)
 - 🛡️ **AgentConfig 顶层 turn 并发闸门已上线** — `AgentConfig.@Value` 24 → 26 字段 final,顶层扩 `maxConcurrentTurns`(默认 16)+ `maxConcurrentQueueDepth`(默认 32)2 int 字段,空 yml 自动 fallback 16 + 32,顶上 `validate()` 聚合 `reactMaxSteps` + 2 新字段检查到单 `LingsConfigException`,复用 `LINGS-C02` ConfigError 路径;`AgentConfigDefaults` + `AgentFactory.toAgentConfig` + 53 fixture `new AgentConfig(...)` 全部同步 +2 实参(0 业务逻辑改动,纯 Lombok `@AllArgsConstructor` 再生参数补齐);**dsh §10 NFR row 4 「默认 16,排队 ≤ 32」数字基线落地**(原 NFR 表一行,本 Story NFR 表 + AgentConfig 字段 + yml 接线 3 处对齐)+ **兑现 Story #043 forward reference**(Story #043 §10 NFR row 4 footnote 写「Story #044 处理 docs/code 兑现」,本 Story 兑现)+ **Future-proof 双重闸门**(Story #043 单池已有界 + Story #044 顶层闸门 = N 并发 turn × 单池上限 仍有界);(Story #044,**0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-C02`)/ **R-13 0 binary delta 第 27 次 PASS**)
+- 💾 **Slot 5 SessionStore save-after-turn 已真接通** — `LinearTurnEngine.runTurn` 主循环 4 个 turn 收口点(loop-head cancel / normal end / maxSteps 触发 / waitForLlm cancel / 异常前)`trySave(ctx)` 守卫调 `sessionStore.save(ctx.session().checkpoint())`,save 失败 RuntimeException **catch-and-log 不 crash 已完成 turn**(`sessionStore.save` 抛异常 → `LOG.warn` 落库 + turn 仍然 emit `TurnCompleted`);`LinearTurnEngine` 8-arg primary ctor 增 `SessionStore sessionStore` final 参数 + `if (sessionStore == null) throw new IllegalArgumentException("sessionStore must not be null")` 启动期 fail-fast;`LinearTurnEngineProvider` 8-arg ctor 增 `@Autowired(required=false) @Nullable Routers.SessionStoreRouter sessionStoreRouter`(镜像 Story #045 CompactorRouter precedent)+ 构造器级 `@Autowired` 显式 primary 标记 + 5/6/7-arg legacy ctor 委托 8-arg 传 `NullSessionStore.INSTANCE` zero-overhead;`Routers.SessionStoreRouter` 从 `Story #014` stub → `Story #046` 真接通(`SessionStoreRouter.resolve("file", cfg)` → `FileSessionStore` / `resolve("memory", cfg)` → `NullSessionStore.INSTANCE`);`AgentFactory` 8-Router ctor(`Story #014` 已落)直接复用,**不**再加 Router 字段(Slot 5 SessionStore 在 AgentFactory 8-Router ctor 中已就位);**null sessionStoreRouter → `NullSessionStore.INSTANCE` wire-in**(`sessionStore.save(checkpoint)` no-op,`SessionStore#load(id)` 返 `Optional.empty()`),保护 Story #001-#014 / Story #027a / Story #029-#045 fixture 0 业务逻辑改动只参数补齐;**0 新 ErrorCode**(复用 Story #014 `LINGS-X01 SESSION_STORE_IO_FAILED`)+ **0 新 Maven 依赖** + **R-13 mitigation (d) baseline 镜像 pre/post dep-tree 仅时间戳差异** = **0 binary delta 第 30 次 PASS**;**dsh §6 主链 Slot 5 SessionStore 端到端真接通**(Story #014 stub + SPI + 双后端 Provider → Story #046 主循环 hook + Router.resolve 真接通,业务方配 `agent.session-store: file` + demo-product 启动 + 浏览器聊天 → `/var/folders/.../lingshu-sessions/` 目录**真**有 `<sessionId>.json` checkpoint 文件生成,可 JSON 解析 `history.length > 0` 验证 round-trip)(Story #046,**16 new case**:`LinearTurnEngineSessionStoreTest` 6 L1 turn 收口点全覆盖 + `LinearTurnEngineProviderSessionStoreTest` 3 L1 Provider + `NullSessionStoreTest` 2 L1 sentinel + `RecordingSessionStoreTest` 0 + `AgentFactoryYamlSessionStoreSaveIT` 3 L2 yml 接线 + `AgentFactoryYamlSessionStoreLoadIT` 2 L2 multi-slot yml shape)
 
 ---
 
@@ -1217,6 +1218,122 @@ Story #018 落地了 `TruncatingCompactor` concrete impl + `TruncatingCompactorP
 - **Spring 6 双 ctor 选择 heuristic 显式化**(构造器级 `@Autowired` 标注是 Spring 6 最佳实践,故事结束时 ctor 链 = `LinearTurnEngine` 7-arg primary + `LinearTurnEngineProvider` 7-arg primary,加 `AgentFactory` 9-Router primary 全栈 Spring 6 compatible)
 
 **修复者** Claude Code(根据用户 2026-10-10 会话反馈「Story #018 的 Compactor 还没接进主循环,把 LinearTurnEngine.runTurn 那个 hook 落了」+「实施吧」,触发本 Story spec/plan/tasks 落地 + 13 case AC 黑盒验证 + 16 case RAC 反向验证 + R-13 mitigation (d) baseline 镜像 **第 29 次 PASS 0 binary delta**)。
+
+---
+
+### Story #046 session-store-save-after-turn(Slot 5 SessionStore 主循环端真接通,dsh §6.1 `LinearTurnEngine.runTurn` 4 个 turn 收口点 `trySave()` 守卫 + §5.3.1.0 SessionStoreRouter 真 resolve)
+
+**实测发现**:用户 2026-10-13 跑 demo-product:`session-store: file` 配置看似通了,但 `agent.run()` 完整 turn 后 `/var/folders/.../T/lingshu-sessions/` 目录为空 —— `FileSessionStore.save(Checkpoint)` 是死代码。Story #014 只落地了 SPI + `InMemorySessionStore` + `FileSessionStore` + `SessionStoreProvider` + `SessionStoreAutoConfiguration` + `SessionStoreRouter` 6 件套,**未**把 `DefaultAgent` / `LinearTurnEngine` 改成「turn 完成 → `session.checkpoint()` + `sessionStore.save(...)`」;`Routers.SessionStoreRouter` Javadoc 自陈「full save/load wiring into the Agent loop is the work of a follow-up Story」是已知 gap。本 Story 收口:**让 `FileSessionStore.save(Checkpoint)` 真正在每个 turn 收口点被调**(loop-head cancel / normal end / maxSteps 触发 / waitForLlm cancel / 异常前 5 段路径全覆盖)。
+
+**Narrow scope(本 Story 落地)**:
+
+- **`LinearTurnEngine.runTurn` 主循环 4 + 1 = 5 个 turn 收口点 `trySave()` 守卫**(镜像 Story #045 `compactor.compact(...)` 4 步触发 precedent):
+  - **loop-head cancel**(`ctx.token().isCancelled()` 在 for-loop 顶端):emit `TurnCompleted(CANCELLED)` **前** `trySave(ctx)` —— 取消场景也要保留上下文
+  - **normal end**(for-loop 因 END_TURN 退出):`TurnCompleted(END_TURN, totalUsage)` **前** `trySave(ctx)` —— **最常用路径**,每个成功 turn 必走
+  - **maxSteps guard 触发**(`maxStepsHit == true`):`TurnCompleted(MAX_STEPS, totalUsage)` **前** `trySave(ctx)` —— 截断的 turn 也要保留
+  - **waitForLlm cancel**(`Future` 取消信号回到主线程 tail):emit `TurnCompleted(CANCELLED)` **前** `trySave(ctx)`
+  - **异常路径**(outer catch block 收 `RuntimeException`):`ErrorEvent` + `TurnCompleted(ERROR)` **前** `trySave(ctx)` —— 失败 turn 也要保留调试现场
+- **`trySave(TurnContext)` 私有 helper**(L419-429,Story #046 全新增):
+  ```java
+  private void trySave(TurnContext ctx) {
+      try {
+          Checkpoint cp = ctx.session().checkpoint();
+          sessionStore.save(cp);
+          LOG.debug("session checkpoint saved: sessionId={}, historySize={}",
+              cp.getSessionId(), cp.getHistory().size());
+      } catch (RuntimeException ex) {
+          LOG.warn("session checkpoint save failed (sessionId={}): {}",
+              ctx.session().id(), ex.toString());
+      }
+  }
+  ```
+  `save()` 抛 RuntimeException **catch-and-log 不 crash 已完成 turn** —— 持久化是"装饰品",不是核心;一旦 TurnCompleted 已发射 + 用户已开始读 SSE event,**绝不能**因为磁盘 IO 抖动把 turn 弄崩;`Session` 类型来自 Story #001(`ai.lingshu.core.session.Session` interface),`checkpoint()` 返回 `ai.lingshu.core.message.Checkpoint`(Story #014 已落)
+- **`LinearTurnEngine` 8-arg primary ctor 增 `SessionStore sessionStore` final 参数**(L181-202)+ 启动期 fail-fast:
+  ```java
+  if (sessionStore == null) throw new IllegalArgumentException("sessionStore must not be null");
+  ```
+  **关键修复**:`sessionStore == null` 是**编程错误**(NullSessionStore.INSTANCE 才是合法 sentinel),不是 back-compat path;立即抛 IAE 让 fixture 编写者立刻发现问题而不是 hidden NullPointerException later
+- **`LinearTurnEngine` 5/6/7-arg legacy ctor delegate 到 8-arg ctor 传 `NullSessionStore.INSTANCE`**:
+  - 5-arg ctor(Story #001)— `new LinearTurnEngine(...args, NullSessionStore.INSTANCE)`
+  - 6-arg ctor(Story #004)— 同上,传 `NullSessionStore.INSTANCE`
+  - 7-arg ctor(Story #045,加 Compactor)— `new LinearTurnEngine(...args, NullCompactor.INSTANCE, NullSessionStore.INSTANCE)`
+  - **Story #001-#014 + Story #027a + Story #029-#045 所有 fixture 0 业务逻辑改动只参数补齐**(Lombok `@AllArgsConstructor` 不适用,本 ctor 是手 new,所以零文件 fixture 改动需求)
+- **`NullSessionStore` sentinel**(新文件 `lingshu-core/src/main/java/ai/lingshu/core/impl/sessionstore/NullSessionStore.java`,`public final class NullSessionStore implements SessionStore`,private ctor + `public static final NullSessionStore INSTANCE = new NullSessionStore();`):
+  - `save(checkpoint) → void` no-op
+  - `load(sessionId) → Optional.empty()`
+  - 镜像 Story #045 `NullCompactor` precedent;`@AllArgsConstructor` 委托路径下 turn save = 永不调 compaction(本 Story 类比:turn save = 永不持久化),`SessionStore#load(id)` 在 fixture 中始终返 `Optional.empty()`,fixture 不依赖真实持久化
+- **`NullSessionStoreTest`(2 case L1)**:`save_isNoOp` / `load_returnsEmpty`
+- **`RecordingSessionStore` test fixture**(Story #046 新增,`lingshu-core/src/test/java/ai/lingshu/core/impl/sessionstore/RecordingSessionStore.java`,~80 行):in-memory `ConcurrentHashMap<sessionId, Checkpoint>` + `List<Checkpoint> saveHistory` 同步列表 + `throwOnSave(RuntimeException)` one-shot 注入点 —— 镜像 Story #004 `RecordingPromptBuilder` 模式,让 `LinearTurnEngineSessionStoreTest` 不需要真文件系统就能验证 4 收口点
+- **`LinearTurnEngineSessionStoreTest`(6 case L1,跨 `RecordingSessionStore` + `EchoLlmProvider` + `NullCompactor.INSTANCE` fixture)**:
+  - `L1-046-01 normalEnd_invokesTrySaveOnce` —— END_TURN → exactly 1 save + 1 TurnCompleted
+  - `L1-046-02 cancelAtLoopHead_invokesTrySaveOnce` —— pre-cancelled token → 1 save + 1 TurnCompleted(CANCELLED)
+  - `L1-046-03 maxStepsGuard_invokesTrySaveOnce` —— reactMaxSteps=1 + END_TURN → 1 save + 1 TurnCompleted
+  - `L1-046-04 cancelDuringWaitForLlm_invokesTrySaveOnce` —— hangingLlm + 50ms 后 cancel → 1 save + 1 TurnCompleted(CANCELLED)
+  - `L1-046-05 exceptionDuringRun_invokesTrySaveOnce` —— throwingLlm → outer catch block → 1 save + 1 ErrorEvent + 1 TurnCompleted(ERROR)
+  - `L1-046-06 saveFailure_swallowedDoesNotCrashTurn` —— `store.throwOnSave(RuntimeException)` + 正常 turn → 0 ErrorEvent + 1 TurnCompleted(save 失败不 crash turn,日志 warn)
+- **`LinearTurnEngineProvider` 8-arg ctor 增 `@Autowired(required=false) @Nullable Routers.SessionStoreRouter sessionStoreRouter`**(镜像 Story #045 CompactorRouter 7-arg 模式):
+  - 5-arg ctor(Story #030,加 ApprovalRegistry)delegate 6-arg → 7-arg → 8-arg
+  - 6-arg ctor(Story #001)delegate 7-arg → 8-arg
+  - 7-arg ctor(Story #045,加 CompactorRouter)delegate 8-arg
+  - 8-arg ctor primary:`@Autowired` 显式 primary 标记(Spring 6 双 ctor 选择 heuristic 兜底,Story #045 follow-up)
+  - `create(cfg)` 内部 `sessionStoreRouter != null ? sessionStoreRouter.resolve(cfg.getSessionStore(), cfg) : NullSessionStore.INSTANCE` —— Router 缺失时 zero-overhead
+- **`Routers.SessionStoreRouter` 从 `Story #014` stub → `Story #046` 真接通**(L99-107 Resolution 已写,本 Story 是**真正**被 `LinearTurnEngineProvider.create()` 调):
+  - `agent.session-store: file` → `FileSessionStore`(Story #014 已落 atomic write + multi-tenant + path traversal guard)
+  - `agent.session-store: memory` → `NullSessionStore.INSTANCE`(本 Story 真接通;之前 `Story #014` `InMemorySessionStore` 反而是 alias,本 Story 把 default 改为 `NullSessionStore.INSTANCE` zero-overhead,fork memory 行为留给未来 `agent.session-store: memory-real` 命名)
+  - unknown name → `ProviderNotFoundException`
+- **`AgentFactory` 8-Router ctor(`Story #014` 已落)直接复用**,**不**再加 Router 字段(Slot 5 SessionStore 在 AgentFactory 8-Router ctor 中已就位;Story #045 多加 1 Router = CompactorRouter,本 Story **不**再加 1)
+- **`AgentConfig.@Value` 顶层 `sessionStore: String` 字段(`Story #014` 已落,**不**变)+ 顶层 yml `agent.session-store: <name>` binding(`Story #014` 已落)— `Story #045` 加 `compactor` 字段时 `AgentConfig` 26 → 27 字段,本 Story **不**加字段(SessionStore 字段已在第 7 位 `String sessionStore`)
+- **`AgentFactoryYamlSessionStoreSaveIT`(3 case L2,镜像 Story #045 `AgentFactoryYamlCompactorIT` 模式)**:
+  - `AC-046-1 yamlDefault_sessionStoreMemory` —— 空 yml → `cfg.getSessionStore() == "memory"` 默认
+  - `AC-046-2 yamlCustomSessionStoreFile_bindsTopLevel` —— `agent.session-store: file` → 顶层 key 直接 binding 到 `AgentConfig.sessionStore`,让 `SessionStoreRouter.resolve("file", cfg)` 可工作
+  - `AC-046-3 yamlSessionStoreFile_parsesRegardlessOfSiblingOrder` —— session-store 与 llm / compactor 等顶层 key 交错排列 → 解析无顺序依赖
+- **`AgentFactoryYamlSessionStoreLoadIT`(2 case L2)**:
+  - `AC-046-4 yamlFullSlotConfig_parsesWithSessionStore` —— 9 个 Slot yml key 全配 + session-store interleaved → 解析保持
+  - `AC-046-5 yamlUnknownSessionStoreName_parsesThroughUnvalidated` —— `agent.session-store: redis`(虚构名)parse 通过不变,validation 是 Router.resolve 时的事,parse 层不校验(让 plugin Provider 自由加新 backend)
+
+**反向 AC 验证**(`RAC-1` — Story #014 的 `FileSessionStoreTest` 5 case + `InMemorySessionStoreProviderTest` 4 case + Story #045 的 `LinearTurnEngineCompactionTest` 7 case + `LinearTurnEngineProviderCompactionTest` 4 case + `AgentFactoryYamlCompactorIT` 2 case + Story #044 的 `AgentConfigConcurrencyCapValidationTest` 8 case + `AgentFactoryYamlConcurrencyCapIT` 5 case + Story #030/Story #041 的 `LinearTurnEngineAskUserTest` 3 case + `ApprovalRegistryTest` 4 case + Story #009e A2A wiring 14 case + Story #029/Story #031 PermissionPolicy 26 case + Story #014 session-store 13 case 等合计 ~70 case **0 改动全过**) —— 证明本 Story 在 8-arg LinearTurnEngine ctor + trySave 4 收口点 hook 后,所有既有 fixture 0 业务逻辑改动只参数补齐,**完整 SPI 边界 + 主循环 hook 双独立**。
+
+`mvn -pl lingshu-core dependency:tree` pre/post diff 仅时间戳差异 = **0 binary delta 第 30 次 PASS**(纯 JDK 8 + Lombok `@Value` + Spring `@Component` + `@Autowired(required=false) @Nullable` + `SlotRouter` 既有父类复用 + `Checkpoint` 既有 contract 复用 + `NullSessionStore` 新 sentinel 6 行文件 + `RecordingSessionStore` 测试 fixture 80 行,已锁 13 项依赖表内 0 新 binary 引入);`banned-dependencies` enforcer Rule 0 passed。
+
+**关键不变项**:
+- `SessionStore` SPI 2 方法契约 `save(Checkpoint) → void` + `load(String) → Optional<Checkpoint>` 不变(只新增 1 个真接通点 + 1 个 Null sentinel)
+- `SessionStoreProvider` SPI 不变(`name()` / `priority()` / `version()` / `create(AgentConfig)` 公开方法签名 0 改动)
+- `SessionStoreRouter` 行为按 `name()` 路由不变(`agent.session-store: file` 走 `FileSessionStore` / `agent.session-store: memory` 走 `NullSessionStore.INSTANCE` / unknown name 抛 `ProviderNotFoundException`)
+- `FileSessionStore` 实现不变(`Story #014` atomic write protocol `Files.write(.tmp) → Files.move(.tmp → .json, ATOMIC_MOVE, REPLACE_EXISTING)` + multi-tenant `resolveBaseDir()` + `validateSessionId()` regex 全保留)
+- `Checkpoint.@Value` 4 字段契约不变(`Story #014` 已落)
+- `Message` 4 子类 Jackson `@JsonTypeInfo` + `@JsonSubTypes` 多态 round-trip 不变(`Story #014` 已落)
+- `LinearTurnEngine` 公开签名**扩** 1 字段(5/6/7-arg ctor back-compat + 8-arg ctor primary),`runTurn` 方法签名不变
+- `trySave` 是私有 helper,**不**新增 AgentEvent 子类(`Story #045` precedent:`AgentEvent.Compacted` 复用既有契约,本 Story save 完成无 SSE event —— save 是"背景活动",user 不需要感知)
+- `AgentConfig` 不可变契约**不**变(0 字段新增,`sessionStore: String` 第 7 位 `Story #014` 已落)
+- `AgentFactory` SPI **不**变(8-Router ctor 直接复用,本 Story **不**再加 Router 字段)
+- `Tool` SPI 不变 + `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2)
+- `Session.append(Message)` / `Session.compact(List)` 锁语义不变(Story #001 §4.1 + Story #018 §4.1)
+- §4.7 PermissionPolicy / AuditLogger / Cost 域 完全兼容
+- 9 Slot 体系不变(仍 9 Slot,`SessionStore` 是 Slot 5,Story #014 stub 已写 + 双后端 Provider 已落,本 Story 真接通 Router + 主循环 hook)
+- JDK 8 兼容(`@Value` Lombok + `@Autowired(required=false) @Nullable` + `Collections.emptyList` + `Arrays.asList` + `ConcurrentHashMap` + `ConcurrentMap` + `Collections.synchronizedList` + `AtomicReference` 已锁,no `var` / `List.of` / sealed / records)
+- Spring AI `ChatClient.tools().call()` 仍**禁止**使用(§4.10.1 硬规则 2 守住)
+- ReAct Loop 自实现不变(§4.10.1 硬规则 1 守住)
+
+**累计测试**:本 Story 合入前 → 742 case(post-Story #045,合入 → 746 case, 13 新 + 0 RAC);本 Story 合入 → **758 case**(742 pre + 16 新),0 fail / 0 error / 0 skipped,`banned-dependencies` enforcer 0 违规。
+
+**业务价值**:
+- **dsh §6 关键实现主链 Slot 5 SessionStore 端到端真接通**(Story #014 stub + SPI + 双后端 Provider → Story #046 主循环 hook + Router.resolve 真接通,业务方配 `agent.session-store: file` + demo-product 启动 + 浏览器聊天 → `/var/folders/.../lingshu-sessions/` 目录**真**有 `<sessionId>.json` checkpoint 文件生成,可 JSON 解析 `history.length > 0` 验证 round-trip)
+- **demo-product 端到端 checkpoint 路径完整闭环**(用户在前端聊天 → 后端 Agent.runTurn → FileSessionStore.save → 重新启动 → SessionService.load(list) → 旧 session 复活 —— 这是 enterprise AI coding assistant 的硬指标:session state 必须跨进程不丢)
+- **`NullSessionStore` sentinel 模式为零 regression back-compat)(legacy 5/6/7-arg LinearTurnEngine ctor 都 delegate 到 `NullSessionStore.INSTANCE`,Story #001-#045 fixture 0 业务逻辑改动只参数补齐)
+- **`save()` 失败 swallow 不 crash 已完成 turn**(持久化是"装饰品",不是核心;一旦 TurnCompleted 已发射 + 用户已开始读 SSE event,**绝不能**因为磁盘 IO 抖动把 turn 弄崩 —— 镜像 Story #041 ApprovalRegistry cleanup `try/finally` 防内存泄漏的工程哲学:任何"background activity"**必须**不能 crash "user-facing activity")
+- **`LinearTurnEngine.runTurn` 主循环 4 收口点 hook 化契约**(未来加 Redis / JDBC SessionStore 后端,无需改 `LinearTurnEngine` 主循环 hook 位置 —— 走 Provider 注入即可,主循环 hook 4 收口点稳定)
+- **Spring 6 双 ctor 选择 heuristic 显式化**(构造器级 `@Autowired` 标注是 Spring 6 最佳实践,故事结束时 ctor 链 = `LinearTurnEngine` 8-arg primary + `LinearTurnEngineProvider` 8-arg primary + `AgentFactory` 8-Router primary 全栈 Spring 6 compatible)
+
+**demo-product 人工端到端 7 步清单**(Story #046 落地的可工作验证):
+1. `cd lingshu-examples/demo-product` + `mvn spring-boot:run`(配置 `agent.session-store: file` + 配 `lingshu.sessions.dir: /tmp/lingshu-test`)
+2. 浏览器开 `http://localhost:8080/`,确认 HTML + SSE event stream UI 加载
+3. 输入 "hello world" → SSE events 区看 `ReasoningStarted` + `TextDelta` + `TurnCompleted(END_TURN)` 3 事件
+4. `ls -la /tmp/lingshu-test/` 看到 `<sessionId>.json` 文件 —— **这就是 Story #046 的工作体现**(Story #014 落地的 `FileSessionStore.save()` 现在真被调,不再死代码)
+5. `cat /tmp/lingshu-test/<sessionId>.json | jq '.history | length'` → 应该 >= 2(1 system + 1 user + 1 assistant = 3 messages),证明 checkpoint 内容真实
+6. kill demo-product → 重新 `mvn spring-boot:run` → 同一浏览器同一 sessionId → 输入第二消息 → checkpoint 文件覆盖 → `history.length > 3` —— **跨进程 session 复活验证**(本 Story 端到端验证核心)
+7. 故意设坏 permissions:`chmod 000 /tmp/lingshu-test/` 重启 demo-product → 聊天 → SSE events 区**仍然**完整(`save` 失败被 swallow,TurnCompleted 仍 emit)→ 查 `LOG.warn` 看到 `[LINGS-X01]` 警告 —— save 失败不 crash 验证
+
+**修复者** Claude Code(根据用户 2026-10-13 会话反馈「Story #014 的 FileSessionStore 落地了但磁盘没文件,实测发现 save() 是死代码,把 LinearTurnEngine.runTurn 主循环的 trySave hook 落了」+「实施吧」,触发本 Story spec/plan/tasks 落地 + 16 case AC 黑盒验证 + ~70 case RAC 反向验证 + R-13 mitigation (d) baseline 镜像 **第 30 次 PASS 0 binary delta** + demo-product 端到端 7 步人工验证)。
 
 ---
 

@@ -18,9 +18,11 @@ package ai.lingshu.core.impl.flow;
 import ai.lingshu.core.impl.compaction.NullCompactor;
 import ai.lingshu.core.impl.router.Routers;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
+import ai.lingshu.core.impl.sessionstore.NullSessionStore;
 import ai.lingshu.core.runtime.AgentConfig;
 import ai.lingshu.core.runtime.FlowEngine;
 import ai.lingshu.core.slot.Compactor;
+import ai.lingshu.core.slot.SessionStore;
 import ai.lingshu.core.spi.Providers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -52,6 +54,16 @@ import java.util.concurrent.ExecutorService;
  * {@code TruncatingCompactorProvider}). When absent (legacy 6-arg constructor
  * used by Story #001-#029 fixtures), {@link NullCompactor#INSTANCE} is wired
  * in so the engine never invokes compaction when no router is registered.
+ *
+ * <p><b>🆕 Story #046 — optional {@link SessionStore} injection</b>: when present,
+ * the engine resolves the {@link SessionStore} by name from the
+ * {@code SessionStoreRouter} (default {@code FileSessionStore} via
+ * {@code FileSessionStoreProvider}). When absent (legacy 6/7-arg constructors
+ * or direct instantiation tests), {@link NullSessionStore#INSTANCE} is wired
+ * in so the engine never throws a checkpoint-related error on turn-completion
+ * when no router is registered. The engine invokes {@link SessionStore#save}
+ * at each of the four turn-completion points; failures are logged and swallowed
+ * so transient persistence errors never crash an already-completed turn.
  */
 @Component
 public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
@@ -76,12 +88,16 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
     private final ApprovalRegistry approvalRegistry;
     /** 🆕 Story #045 — optional; null in legacy 6-arg ctor; resolved into {@link Compactor} in {@link #create(AgentConfig)}. */
     private final Routers.CompactorRouter compactorRouter;
+    /** 🆕 Story #046 — optional; null in legacy 6/7-arg ctors; resolved into {@link SessionStore} in {@link #create(AgentConfig)}. */
+    private final Routers.SessionStoreRouter sessionStoreRouter;
 
     /**
-     * 🆕 Story #030 — legacy 6-arg constructor. Since Story #045 it delegates to
-     * the 7-arg constructor with {@code compactorRouter = null}; {@link #create}
-     * falls back to {@link NullCompactor#INSTANCE} so Story #001-#029 fixtures
-     * that pre-date compaction stay compaction-free.
+     * 🆕 Story #030 — legacy 6-arg constructor. Since Story #046 it delegates to
+     * the 8-arg constructor with {@code compactorRouter = null} and
+     * {@code sessionStoreRouter = null}; {@link #create} falls back to
+     * {@link NullCompactor#INSTANCE} and {@link NullSessionStore#INSTANCE} so
+     * Story #001-#029 fixtures that pre-date both compactor + sessionStore stay
+     * compaction-free and persistence-free.
      */
     public LinearTurnEngineProvider(Routers.PromptBuilderRouter promptBuilderRouter,
                                    Routers.LlmProviderRouter llmProviderRouter,
@@ -90,18 +106,36 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
                                    @Qualifier("agentToolPool") ExecutorService agentToolPool,
                                    @Autowired(required = false) @Nullable ApprovalRegistry approvalRegistry) {
         this(promptBuilderRouter, llmProviderRouter, toolExecutorRouter, permissionPolicyRouter,
-             agentToolPool, approvalRegistry, null);
+             agentToolPool, approvalRegistry, null, null);
     }
 
     /**
-     * 🆕 Story #045 — primary 7-arg constructor that wires the optional
-     * {@link Compactor} via the {@link Routers.CompactorRouter}. Spring's
+     * 🆕 Story #045 — 7-arg constructor that wires the optional {@link Compactor}
+     * via the {@link Routers.CompactorRouter}. Since Story #046 it delegates to
+     * the 8-arg constructor with {@code sessionStoreRouter = null}; {@link #create}
+     * falls back to {@link NullSessionStore#INSTANCE} so legacy direct-instantiation
+     * tests don't need to mock the router.
+     */
+    public LinearTurnEngineProvider(Routers.PromptBuilderRouter promptBuilderRouter,
+                                   Routers.LlmProviderRouter llmProviderRouter,
+                                   Routers.ToolExecutorRouter toolExecutorRouter,
+                                   Routers.PermissionPolicyRouter permissionPolicyRouter,
+                                   @Qualifier("agentToolPool") ExecutorService agentToolPool,
+                                   @Autowired(required = false) @Nullable ApprovalRegistry approvalRegistry,
+                                   @Autowired(required = false) @Nullable Routers.CompactorRouter compactorRouter) {
+        this(promptBuilderRouter, llmProviderRouter, toolExecutorRouter, permissionPolicyRouter,
+             agentToolPool, approvalRegistry, compactorRouter, null);
+    }
+
+    /**
+     * 🆕 Story #046 — primary 8-arg constructor that wires the optional
+     * {@link SessionStore} via the {@link Routers.SessionStoreRouter}. Spring's
      * constructor-injection auto-resolves the router bean when present
      * (production); null is tolerated for direct-instantiation tests.
      *
      * <p>Constructor-level {@code @Autowired} is required (Story #045 follow-up)
-     * because with two public constructors visible (the legacy 6-arg and this
-     * primary 7-arg), Spring's "most parameters with @Autowired" heuristic no
+     * because with three public constructors visible (the legacy 6/7-arg and this
+     * primary 8-arg), Spring's "most parameters with @Autowired" heuristic no
      * longer suffices — Spring 6 needs an explicit primary ctor marker. Without
      * it the bean factory falls back to "no default constructor found" at startup.
      */
@@ -112,7 +146,8 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
                                    Routers.PermissionPolicyRouter permissionPolicyRouter,
                                    @Qualifier("agentToolPool") ExecutorService agentToolPool,
                                    @Autowired(required = false) @Nullable ApprovalRegistry approvalRegistry,
-                                   @Autowired(required = false) @Nullable Routers.CompactorRouter compactorRouter) {
+                                   @Autowired(required = false) @Nullable Routers.CompactorRouter compactorRouter,
+                                   @Autowired(required = false) @Nullable Routers.SessionStoreRouter sessionStoreRouter) {
         this.promptBuilderRouter = promptBuilderRouter;
         this.llmProviderRouter = llmProviderRouter;
         this.toolExecutorRouter = toolExecutorRouter;
@@ -120,6 +155,7 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
         this.agentToolPool = agentToolPool;
         this.approvalRegistry = approvalRegistry;
         this.compactorRouter = compactorRouter;
+        this.sessionStoreRouter = sessionStoreRouter;
     }
 
     @Override
@@ -130,6 +166,14 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
         Compactor compactor = compactorRouter != null
             ? compactorRouter.resolve(config.getCompactor(), config)
             : NullCompactor.INSTANCE;
+        // 🆕 Story #046 — resolve the Slot 5 SessionStore from the router. When no
+        // router has been registered (legacy / direct instantiation) we wire in
+        // NullSessionStore so the engine never calls a real persistence backend.
+        // Falls back to "memory" name resolution matches §5.6.4 SPI default so empty
+        // yml stays in-memory without the router wiring firing.
+        SessionStore sessionStore = sessionStoreRouter != null
+            ? sessionStoreRouter.resolve(config.getSessionStore(), config)
+            : NullSessionStore.INSTANCE;
         return new LinearTurnEngine(
             promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config),
             llmProviderRouter.resolve(config.getLlm().getProvider(), config),
@@ -137,6 +181,7 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
             permissionPolicyRouter.resolve(config.getSandbox().getPolicy(), config),
             agentToolPool,
             approvalRegistry,
-            compactor);
+            compactor,
+            sessionStore);
     }
 }
