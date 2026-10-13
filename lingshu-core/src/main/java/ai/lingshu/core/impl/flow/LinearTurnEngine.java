@@ -32,9 +32,11 @@ import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutionContext;
+import ai.lingshu.core.impl.compaction.NullCompactor;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.tool.DefaultToolExecutionContext;
+import ai.lingshu.core.slot.Compactor;
 import ai.lingshu.core.slot.ToolExecutor;
 import org.reactivestreams.Subscriber;
 import org.slf4j.Logger;
@@ -101,11 +103,20 @@ public class LinearTurnEngine implements FlowEngine {
      * test can invoke it directly.
      */
     private final ApprovalRegistry approvalRegistry;
+    /**
+     * 🆕 Story #045 — Slot 6 history compactor. Triggered in {@link #runTurn} before
+     * each LLM call when {@link Compactor#shouldCompact(Prompt)} returns {@code true};
+     * after {@link Compactor#compact(TurnContext)} we re-build the prompt so the LLM
+     * sees the post-compaction history. Defaulted to {@link NullCompactor#INSTANCE}
+     * by the legacy constructors so tests/fixtures that pre-date Story #045 keep
+     * working unchanged.
+     */
+    private final Compactor compactor;
 
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool) {
-        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool, null);
+        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool, null, NullCompactor.INSTANCE);
     }
 
     /**
@@ -113,23 +124,42 @@ public class LinearTurnEngine implements FlowEngine {
      * {@link ApprovalRegistry}. Production paths (via
      * {@code LinearTurnEngineProvider}) pass a Spring-injected singleton; tests
      * that don't need cross-thread continuation lookup use the 5-arg constructor
-     * (registry = null).
+     * (registry = null). Since Story #045 this delegates to the 7-arg constructor
+     * with {@link NullCompactor#INSTANCE} so legacy call sites stay compaction-free.
      */
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
                             ExecutorService toolPool,
                             ApprovalRegistry approvalRegistry) {
+        this(promptBuilder, llmProvider, toolExecutor, permissionPolicy, toolPool,
+             approvalRegistry, NullCompactor.INSTANCE);
+    }
+
+    /**
+     * 🆕 Story #045 — primary 7-arg constructor that wires the optional
+     * {@link Compactor}. Production paths (via {@code LinearTurnEngineProvider})
+     * resolve the {@link Compactor} from the {@code CompactorRouter}; tests that
+     * don't exercise compaction use {@code NullCompactor.INSTANCE} or one of the
+     * legacy 5/6-arg constructors above.
+     */
+    public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
+                            ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
+                            ExecutorService toolPool,
+                            ApprovalRegistry approvalRegistry,
+                            Compactor compactor) {
         if (promptBuilder == null) throw new IllegalArgumentException("promptBuilder must not be null");
         if (llmProvider == null) throw new IllegalArgumentException("llmProvider must not be null");
         if (toolExecutor == null) throw new IllegalArgumentException("toolExecutor must not be null");
         if (permissionPolicy == null) throw new IllegalArgumentException("permissionPolicy must not be null");
         if (toolPool == null) throw new IllegalArgumentException("toolPool must not be null");
+        if (compactor == null) throw new IllegalArgumentException("compactor must not be null");
         this.promptBuilder = promptBuilder;
         this.llmProvider = llmProvider;
         this.toolExecutor = toolExecutor;
         this.permissionPolicy = permissionPolicy;
         this.toolPool = toolPool;
         this.approvalRegistry = approvalRegistry;
+        this.compactor = compactor;
     }
 
     @Override
@@ -186,6 +216,26 @@ public class LinearTurnEngine implements FlowEngine {
                 Prompt prompt = promptBuilder.build(ctx);
                 LOG.debug("step {}: prompt built — messages={}, tools={}",
                     step, prompt.getMessages().size(), prompt.getTools().size());
+
+                // 🆕 Story #045 (dsh §6.1 L3630-3631) — Compactor turn trigger.
+                // After building the prompt we ask the compactor whether the history is
+                // already too large to send; if yes we shrink ctx.session().history()
+                // and rebuild the prompt so the LLM sees the post-compaction view.
+                // The previous prompt reference is discarded — its messages list is
+                // stale once the compactor mutates the session.
+                if (compactor.shouldCompact(prompt)) {
+                    int historyBefore = ctx.session().history().size();
+                    LOG.info("step {}: compactor triggered — compacting history (current messages={})",
+                        step, historyBefore);
+                    compactor.compact(ctx);
+                    prompt = promptBuilder.build(ctx);
+                    LOG.info("step {}: compactor done — history {} → {} messages",
+                        step, historyBefore, ctx.session().history().size());
+                    // Reuse the existing AgentEvent.Compacted signal (story #001 originally
+                    // left it as the "presence is the signal" marker); subscribers (e.g.
+                    // demo-product SSE) can flush UI state when this fires.
+                    sink.onNext(new AgentEvent.Compacted());
+                }
 
                 // Stream the LLM call; future completes with the final structured response.
                 CompletableFuture<LlmResponse> fut = llmProvider.stream(prompt, ctx, sink);

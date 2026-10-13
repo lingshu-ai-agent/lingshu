@@ -24,6 +24,7 @@ import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.RuntimeSandbox;
+import ai.lingshu.core.slot.SessionStore;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.spi.Providers;
 import org.junit.jupiter.api.DisplayName;
@@ -102,6 +103,13 @@ class AgentFactoryYamlConcurrencyCapIT {
             @Override public String version() { return "1.0.0"; }
             @Override public RuntimeSandbox create(AgentConfig cfg) { return null; }
         };
+        // 🆕 Story #014 — SessionStore stub so the 8-Router @Autowired ctor resolves.
+        Providers.SessionStoreProvider sessionStore = new Providers.SessionStoreProvider() {
+            @Override public String name() { return "memory"; }
+            @Override public int priority() { return 0; }
+            @Override public String version() { return "1.0.0"; }
+            @Override public SessionStore create(AgentConfig cfg) { return null; }
+        };
         return new AgentFactory(
             new Routers.LlmProviderRouter(Collections.singletonList(llm)),
             new Routers.ToolExecutorRouter(Collections.singletonList(tool)),
@@ -109,7 +117,8 @@ class AgentFactoryYamlConcurrencyCapIT {
             new Routers.PromptBuilderRouter(Collections.singletonList(prompt)),
             new Routers.FlowEngineRouter(Collections.singletonList(flow)),
             new Routers.MemorySourceRouter(Collections.singletonList(memory)),
-            new Routers.RuntimeSandboxRouter(Collections.singletonList(sandbox)));
+            new Routers.RuntimeSandboxRouter(Collections.singletonList(sandbox)),
+            new Routers.SessionStoreRouter(Collections.singletonList(sessionStore)));
     }
 
     @Test

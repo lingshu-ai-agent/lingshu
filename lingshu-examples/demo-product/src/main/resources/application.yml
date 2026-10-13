@@ -53,6 +53,19 @@ agent:
       project: ./CLAUDE.md
       user: ~/.lingshu/CLAUDE.md
 
+  # ── Session store (Story #014) ─────────────────────────────────────────
+  # Slot 5 SessionStore provider name. `memory` (default) keeps all state
+  # in-process; `file` persists each turn's Checkpoint to disk so it can
+  # be reloaded across process restarts. The file backend stores
+  # ${java.io.tmpdir}/lingshu-sessions/{tenant-or-"_default"}/{sessionId}.json
+  # using an atomic write protocol (write-tmp + ATOMIC_MOVE) so partial
+  # writes never leave a corrupt checkpoint on disk. Multi-tenant mode
+  # reads TenantContext.current(); the demo runs single-tenant so files
+  # land under the `_default/` subdirectory. Switch to `file` here to
+  # exercise the new Slot 5 backend end-to-end via ChatController — turn
+  # the demo off, restart, ask again, and history is restored.
+  session-store: file
+
   # ── Skills (Story #020) — classpath SKILL.md auto-discovery ────────────
   skills:
     sources:

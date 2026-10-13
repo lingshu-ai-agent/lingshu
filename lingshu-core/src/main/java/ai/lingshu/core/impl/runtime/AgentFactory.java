@@ -26,6 +26,7 @@ import ai.lingshu.core.slot.MemorySource;
 import ai.lingshu.core.slot.PermissionPolicy;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.RuntimeSandbox;
+import ai.lingshu.core.slot.SessionStore;
 import ai.lingshu.core.slot.ToolExecutor;
 import ai.lingshu.core.slot.ToolExecutionContext.CancellationToken;
 import ai.lingshu.core.spi.SlotRouter;
@@ -109,6 +110,10 @@ public class AgentFactory implements InitializingBean {
     private final Routers.MemorySourceRouter memorySourceRouter;
     /** 🆕 Story #028 — 7th implicit Router for Slot 3 Sandbox (dsh §5.3.1.0). */
     private final Routers.RuntimeSandboxRouter runtimeSandboxRouter;
+    /** 🆕 Story #014 — 8th implicit Router for Slot 5 SessionStore (dsh §5.3.1.0). */
+    private final Routers.SessionStoreRouter sessionStoreRouter;
+    /** 🆕 Story #045 — 9th implicit Router for Slot 6 Compactor (dsh §5.3.1.0). */
+    private final Routers.CompactorRouter compactorRouter;
 
     @Autowired
     public AgentFactory(Routers.LlmProviderRouter llmRouter,
@@ -117,7 +122,9 @@ public class AgentFactory implements InitializingBean {
                         Routers.PromptBuilderRouter promptBuilderRouter,
                         Routers.FlowEngineRouter flowRouter,
                         Routers.MemorySourceRouter memorySourceRouter,
-                        Routers.RuntimeSandboxRouter runtimeSandboxRouter) {
+                        Routers.RuntimeSandboxRouter runtimeSandboxRouter,
+                        Routers.SessionStoreRouter sessionStoreRouter,
+                        Routers.CompactorRouter compactorRouter) {
         this.llmRouter = llmRouter;
         this.toolRouter = toolRouter;
         this.policyRouter = policyRouter;
@@ -125,13 +132,38 @@ public class AgentFactory implements InitializingBean {
         this.flowRouter = flowRouter;
         this.memorySourceRouter = memorySourceRouter;
         this.runtimeSandboxRouter = runtimeSandboxRouter;
+        this.sessionStoreRouter = sessionStoreRouter;
+        this.compactorRouter = compactorRouter;
+    }
+
+    /**
+     * 🆕 Story #014 — legacy 8-Router constructor (Slot 5 wired). Sets
+     * {@code compactorRouter = null} (Story #045) so test subclasses can bypass the Spring
+     * wiring without dragging in a stub CompactorRouter; production code paths always use
+     * the 9-Router ctor above so the Slot 6 Compactor is actually resolved. The
+     * {@link ai.lingshu.core.impl.flow.LinearTurnEngineProvider#create(AgentConfig)}
+     * method's null-guard treats a null {@code compactorRouter} as "no Compactor
+     * configured" and falls back to {@link ai.lingshu.core.impl.compaction.NullCompactor}.
+     */
+    public AgentFactory(Routers.LlmProviderRouter llmRouter,
+                        Routers.ToolExecutorRouter toolRouter,
+                        Routers.PermissionPolicyRouter policyRouter,
+                        Routers.PromptBuilderRouter promptBuilderRouter,
+                        Routers.FlowEngineRouter flowRouter,
+                        Routers.MemorySourceRouter memorySourceRouter,
+                        Routers.RuntimeSandboxRouter runtimeSandboxRouter,
+                        Routers.SessionStoreRouter sessionStoreRouter) {
+        this(llmRouter, toolRouter, policyRouter, promptBuilderRouter, flowRouter,
+            memorySourceRouter, runtimeSandboxRouter, sessionStoreRouter, null);
     }
 
     /**
      * 🆕 Story #028 — legacy 6-Router constructor. Sets {@code runtimeSandboxRouter = null}
-     * so test subclasses (e.g. {@code StubAgentFactory} in {@code DelegateToolTest}) can
-     * bypass the Spring wiring without dragging in a 7th stub Router. Production code paths
-     * always use the 7-Router ctor above so the Slot 3 Sandbox is actually resolved.
+     * and {@code sessionStoreRouter = null} (Story #014) so test subclasses
+     * (e.g. {@code StubAgentFactory} in {@code DelegateToolTest}) can bypass the Spring
+     * wiring without dragging in stub Routers. Production code paths always use the
+     * 9-Router ctor above so Slot 3 Sandbox, Slot 5 SessionStore and Slot 6 Compactor
+     * are all actually resolved.
      *
      * <p>The {@link #create(AgentConfig, AgentConfigRegistry)} method's null-guard treats a
      * null {@code runtimeSandboxRouter} as "no Sandbox configured" — pre-#028 tests that
@@ -144,7 +176,7 @@ public class AgentFactory implements InitializingBean {
                         Routers.FlowEngineRouter flowRouter,
                         Routers.MemorySourceRouter memorySourceRouter) {
         this(llmRouter, toolRouter, policyRouter, promptBuilderRouter, flowRouter,
-            memorySourceRouter, null);
+            memorySourceRouter, null, null);
     }
 
     /**
@@ -254,14 +286,24 @@ public class AgentFactory implements InitializingBean {
         RuntimeSandbox runtimeSandbox = (runtimeSandboxRouter != null)
             ? runtimeSandboxRouter.resolve(config.getSandbox().getRuntime(), config)
             : null;
+        // 🆕 Story #014 — resolve SessionStore (Slot 5 via the 8th implicit Router).
+        // Null-guard for the legacy 6-Router ctor path; production paths always inject
+        // the sessionStoreRouter via the 8-Router @Autowired ctor above.
+        // The resolved instance is logged at INFO below for visibility but not yet
+        // injected into DefaultAgent — full save/load wiring into the turn loop is the
+        // work of a follow-up Story that integrates Checkpoint persistence.
+        SessionStore sessionStore = (sessionStoreRouter != null)
+            ? sessionStoreRouter.resolve(config.getSessionStore(), config)
+            : null;
 
         Session session = new DefaultSession();
-        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{} sandbox={} registry={}",
+        LOG.info("AgentFactory.create: sessionId={} flowEngine={} llm={}/{} sandbox={} sessionStore={} registry={}",
             session.id(),
             config.getFlowEngine(),
             config.getLlm().getProvider(),
             config.getLlm().getModel(),
             config.getSandbox().getRuntime(),
+            sessionStore != null ? sessionStore.getClass().getSimpleName() : "none",
             registry != null ? "hot-reload (frozen per turn)" : "static");
 
         // Story #001: ToolExecutor / PermissionPolicy / PromptBuilder are resolved but
@@ -307,6 +349,10 @@ public class AgentFactory implements InitializingBean {
         if (config.getSandbox().getRuntime() == null || config.getSandbox().getRuntime().isEmpty()) {
             throw new IllegalArgumentException("config.sandbox.runtime is required");
         }
+        // 🆕 Story #014 — sessionStore is also required so the Slot 5 SessionStore Router can resolve.
+        if (config.getSessionStore() == null || config.getSessionStore().isEmpty()) {
+            throw new IllegalArgumentException("config.sessionStore is required");
+        }
         if (config.getPrompt() == null || config.getPrompt().getBuilder() == null) {
             throw new IllegalArgumentException("config.prompt.builder is required");
         }
@@ -337,11 +383,15 @@ public class AgentFactory implements InitializingBean {
      * LlmProvider: <name> v<version> (priority=<n>)
      * ...
      * MemorySource: <name> v<version> (priority=<n>)
+     * SessionStore: <name> v<version> (priority=<n>)
+     * Compactor: <name> v<version> (priority=<n>)     ← 🆕 Story #045
      * Turn=0 Session=<sessionId>
      * }</pre>
      *
      * <p>MemorySource is listed N times (once per registered Provider) so users
-     * can see priority order at a glance.
+     * can see priority order at a glance. SessionStore and Compactor
+     * (Story #014, Story #045) are null-guarded so the legacy 6-Router / 8-Router
+     * ctor paths produce the same output without crashing.
      *
      * @return newline-separated self-describe string, never null
      */
@@ -366,6 +416,21 @@ public class AgentFactory implements InitializingBean {
         if (runtimeSandboxRouter != null) {
             lines.addAll(runtimeSandboxRouter.describe().stream()
                 .map(s -> "RuntimeSandbox: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        }
+        // 🆕 Story #014 — surface the SessionStore slot in the self-describe output so
+        // users can see which memory/file backend is active. Null-guard for the legacy
+        // 6-Router ctor path; in production the sessionStoreRouter is always non-null.
+        if (sessionStoreRouter != null) {
+            lines.addAll(sessionStoreRouter.describe().stream()
+                .map(s -> "SessionStore: " + s.trim()).collect(java.util.stream.Collectors.toList()));
+        }
+        // 🆕 Story #045 — surface the Slot 6 Compactor router in the self-describe output so
+        // users can see which summarizer is active (e.g. truncating). Null-guard for the
+        // legacy 6-Router / 8-Router ctor paths; in production the compactorRouter is always
+        // non-null (Spring autowires it via the @Autowired 9-Router ctor).
+        if (compactorRouter != null) {
+            lines.addAll(compactorRouter.describe().stream()
+                .map(s -> "Compactor: " + s.trim()).collect(java.util.stream.Collectors.toList()));
         }
         // Append a placeholder session line so the contract output is complete
         // even when description() is called outside an Agent turn.
@@ -616,14 +681,28 @@ public class AgentFactory implements InitializingBean {
             ymlPath.getFileName(), llmProvider, llmModel, whitelist, permissionPolicy, toolAllowList, toolDenyList, toolAskList,
             maxConcurrentTurns, maxConcurrentQueueDepth);
 
+        // 🆕 Story #014 — session-store name (top-level, mirrors permission-policy style).
+        // Default "memory" preserves Story #001 zero-config back-compat; demo yml may
+        // opt into `session-store: file` to switch Slot 5 router target to FileSessionStore.
+        String sessionStore = stringOr(agent, "session-store", "memory");
+
+        // 🆕 Story #045 — compactor name (top-level, mirrors session-store style).
+        // Default "truncating" preserves Story #018 zero-config back-compat; demo yml may
+        // opt into `compactor: truncating` to switch Slot 6 router target explicitly. The
+        // LinearTurnEngineProvider.create(AgentConfig) reads this name to resolve the
+        // Compactor via CompactorRouter.resolve(name, cfg); NullCompactor is wired in
+        // when the router is absent (legacy 6/8-Router ctors) so the back-compat fixture
+        // chain keeps emitting zero compaction events.
+        String compactor = stringOr(agent, "compactor", "truncating");
+
         return new AgentConfig(
             flowEngine,
             llm,
             prompt,
             toolExecutor,
             sandbox,
-            null,   // compactor
-            null,   // sessionStore
+            compactor,                       // 🆕 Story #045 — Slot 6 Compactor name (resolved by LinearTurnEngineProvider)
+            sessionStore,    // 🆕 Story #014 — sessionStore
             null,   // delegate
             null,   // mcp
             null,   // skills

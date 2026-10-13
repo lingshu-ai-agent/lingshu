@@ -42,6 +42,12 @@ public final class AgentConfigDefaults {
     /** Anthropic LlmProvider (Story #001 default; OpenAI/Gemini/DeepSeek alternatives in Story #003). */
     public static final String LLM_PROVIDER_ANTHROPIC = "anthropic";
 
+    /** Slot 6 Compactor (Story #018 default; only {@code TruncatingCompactorProvider} ships in core). */
+    public static final String COMPACTOR_TRUNCATING = "truncating";
+
+    /** Slot 5 SessionStore (Story #014 default; alternative: {@code "file"}). */
+    public static final String SESSION_STORE_MEMORY = "memory";
+
     private AgentConfigDefaults() {}
 
     /**
@@ -67,8 +73,8 @@ public final class AgentConfigDefaults {
                 java.nio.file.Paths.get(System.getProperty("user.dir")),
                 Collections.<String>emptyList(),
                 Collections.<String>emptyList()),
-            DEFAULT_NAME,
-            DEFAULT_NAME,
+            COMPACTOR_TRUNCATING,    // compactor (Story #018 — TruncatingCompactorProvider.name())
+            SESSION_STORE_MEMORY,    // sessionStore (Story #014 — InMemorySessionStoreProvider.name())
             null,    // delegate
             null,    // mcp
             null,    // skills
@@ -97,8 +103,8 @@ public final class AgentConfigDefaults {
         m.put("flowEngine", FLOW_ENGINE_LINEAR);
         m.put("llm.provider", LLM_PROVIDER_ANTHROPIC);
         m.put("toolExecutor", DEFAULT_NAME);
-        m.put("compactor", DEFAULT_NAME);
-        m.put("sessionStore", DEFAULT_NAME);
+        m.put("compactor", COMPACTOR_TRUNCATING);
+        m.put("sessionStore", SESSION_STORE_MEMORY);
         m.put("a2aTransport", DEFAULT_NAME);
         m.put("prompt.builder", DEFAULT_NAME);
         m.put("sandbox.policy", DEFAULT_NAME);
