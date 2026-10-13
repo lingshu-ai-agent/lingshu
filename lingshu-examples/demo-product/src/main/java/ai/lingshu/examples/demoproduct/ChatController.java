@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -89,22 +90,73 @@ public class ChatController {
     private final AgentEventMapper mapper;
     /** 🆕 Story #030 — Spring-injected approval registry; non-null when demo-product runs. */
     private final ApprovalRegistry approvals;
+    /**
+     * 🆕 Story #014 + #045 follow-up — Environment injected so {@link #createSession()}
+     * can read {@code agent.session-store} and {@code agent.compactor.name} from
+     * {@code application.yml} and override the {@link AgentConfigDefaults#defaults()}
+     * hardcoded {@code "memory"} / {@code "truncating"} sentinels. Without this hook
+     * the {@code session-store: file} and {@code compactor.name: truncating} yml keys
+     * are silently ignored — every session would boot the in-memory store and the
+     * TruncatingCompactor regardless of what the user configured. Mirrors the
+     * {@code readSandbox} / {@code readTools} pattern in {@code DemoProductApplication}.
+     */
+    private final Environment env;
     private final ObjectMapper json = new ObjectMapper();
 
     public ChatController(AgentFactory agentFactory,
                           SessionRegistry sessions,
                           AgentEventMapper mapper,
-                          ApprovalRegistry approvals) {
+                          ApprovalRegistry approvals,
+                          Environment env) {
         this.agentFactory = agentFactory;
         this.sessions = sessions;
         this.mapper = mapper;
         this.approvals = approvals;
+        this.env = env;
     }
 
     @PostMapping("/api/sessions")
     public Map<String, String> createSession() {
         String id = sessions.create(() -> {
-            AgentConfig cfg = AgentConfigDefaults.defaults();
+            // 🆕 Story #014 + #045 follow-up — start from AgentConfigDefaults defaults()
+            // (zero-config safe: every field populated), then override the two Slot names
+            // that come from yml so the user's `session-store: file` and `compactor.name: <x>`
+            // actually take effect. We reconstruct a new AgentConfig via the @AllArgsConstructor
+            // @Value Lombok re-generated 28-arg ctor because AgentConfig is immutable.
+            AgentConfig base = AgentConfigDefaults.defaults();
+            String sessionStore = env.getProperty("agent.session-store", base.getSessionStore());
+            // The yml block is `agent.compactor.name: <x>` (nested, not flat) — read the
+            // `.name` child key with a fall-back to the AgentConfigDefaults hardcoded name.
+            String compactorName = env.getProperty("agent.compactor.name", base.getCompactor());
+            AgentConfig cfg = new AgentConfig(
+                base.getFlowEngine(),
+                base.getLlm(),
+                base.getPrompt(),
+                base.getToolExecutor(),
+                base.getSandbox(),
+                compactorName,                  // 🆕 Story #045 — Slot 6 name from yml
+                sessionStore,                   // 🆕 Story #014 — Slot 5 name from yml
+                base.getDelegate(),
+                base.getMcp(),
+                base.getSkills(),
+                base.getToolParallelism(),
+                base.getToolTimeoutSeconds(),
+                base.getApprovalTimeoutSeconds(),
+                base.getTurnTimeoutSeconds(),
+                base.getLlmTimeoutSeconds(),
+                base.getReactMaxSteps(),
+                base.getIdentity(),
+                base.getInstructions(),
+                base.getMemory(),
+                base.getA2aTransport(),
+                base.getTenants(),
+                base.getA2a(),
+                base.getCompactorConfig(),
+                base.getTools(),
+                base.getPermissionPolicy(),
+                base.getMaxConcurrentTurns(),
+                base.getMaxConcurrentQueueDepth()
+            );
             return agentFactory.create(cfg);
         });
         return Map.of("sessionId", id);

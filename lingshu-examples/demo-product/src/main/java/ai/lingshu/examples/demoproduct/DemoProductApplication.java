@@ -98,6 +98,20 @@ public class DemoProductApplication {
         // dsh §5623-5627). Mirrors readRemoteAgents pattern.
         AgentConfig.Sandbox sandbox = readSandbox(env);
 
+        // 🆕 Story #014 + #045 follow-up — read Slot 5 SessionStore and Slot 6 Compactor
+        // names from yml so the demo's `session-store: file` and `compactor.name: <x>`
+        // actually override AgentConfigDefaults's hardcoded `memory` / `truncating`
+        // sentinels. Same pattern as readPermissionPolicy / readTools below.
+        String sessionStoreName = env.getProperty("agent.session-store", defaults.getSessionStore());
+        // The yml block is `agent.compactor.name: <x>` (nested, not flat) — read the
+        // `.name` child key with a fall-back to the defaults value.
+        String compactorName = env.getProperty("agent.compactor.name", defaults.getCompactor());
+        if (!sessionStoreName.equals(defaults.getSessionStore())
+            || !compactorName.equals(defaults.getCompactor())) {
+            LOG.info("agentConfig: sessionStore/compactor bound from YAML — sessionStore={} compactor={}",
+                sessionStoreName, compactorName);
+        }
+
         // 🆕 Story #025b — read A2aTransport name from YAML.
         // AgentConfigDefaults returns a2aTransport="default" but the
         // A2aTransportRouter providers are registered under versioned names
@@ -157,7 +171,8 @@ public class DemoProductApplication {
         if (mcpProps.getServers().isEmpty()) {
             LOG.info("agentConfig: no MCP servers in YAML, using defaults (McpTransport will idle)");
             // Even with no MCP servers, still propagate remoteAgents + sandbox + tools.
-            return mergeConfig(defaults, null, a2a, remoteAgents, a2aTransportName, sandbox, permissionPolicyName, tools);
+            return mergeConfig(defaults, null, a2a, remoteAgents, a2aTransportName, sandbox,
+                permissionPolicyName, tools, sessionStoreName, compactorName);
         }
 
         AgentConfig.Mcp mcp = new AgentConfig.Mcp(mcpProps.toAgentConfigServerConfigs());
@@ -167,7 +182,8 @@ public class DemoProductApplication {
         LOG.info("agentConfig: PermissionPolicy name from YAML — {}", permissionPolicyName);
         LOG.info("agentConfig: tools.allow-list size={} deny-list size={}",
             tools.getAllowList().size(), tools.getDenyList().size());
-        return mergeConfig(defaults, mcp, a2a, remoteAgents, a2aTransportName, sandbox, permissionPolicyName, tools);
+        return mergeConfig(defaults, mcp, a2a, remoteAgents, a2aTransportName, sandbox,
+            permissionPolicyName, tools, sessionStoreName, compactorName);
     }
 
     /**
@@ -289,28 +305,31 @@ public class DemoProductApplication {
     }
 
     /**
-     * Assemble the full 25-field {@link AgentConfig}, overriding only the
-     * fields that need values from YAML. 18 fields stay untouched; only
+     * Assemble the full 28-field {@link AgentConfig}, overriding only the
+     * fields that need values from YAML. 17 fields stay untouched; only
      * {@code mcp} (Story #025), {@code a2a.remoteAgents} (Story #025b),
      * {@code a2aTransport} (Story #025b), {@code sandbox} (Story #025
-     * follow-up), {@code permissionPolicy} (Story #029), and
-     * {@code tools.allow-list / deny-list} (Story #031) come from the
-     * environment.
+     * follow-up), {@code permissionPolicy} (Story #029),
+     * {@code tools.allow-list / deny-list} (Story #031),
+     * {@code sessionStore} (Story #014 follow-up), and
+     * {@code compactor} (Story #045 follow-up) come from the environment.
      */
     private static AgentConfig mergeConfig(AgentConfig defaults, AgentConfig.Mcp mcp,
                                            AgentConfig.A2a a2a, List<AgentRef> remoteAgents,
                                            String a2aTransportName,
                                            AgentConfig.Sandbox sandbox,
                                            String permissionPolicyName,
-                                           AgentConfig.ToolsConfig tools) {  // 🆕 Story #031
+                                           AgentConfig.ToolsConfig tools,  // 🆕 Story #031
+                                           String sessionStoreName,        // 🆕 Story #014 follow-up
+                                           String compactorName) {         // 🆕 Story #045 follow-up
         return new AgentConfig(
             defaults.getFlowEngine(),
             defaults.getLlm(),
             defaults.getPrompt(),
             defaults.getToolExecutor(),
             sandbox,                                    // 🆕 Story #025 follow-up — populated from YAML
-            defaults.getCompactor(),
-            defaults.getSessionStore(),
+            compactorName,                              // 🆕 Story #045 follow-up — populated from YAML
+            sessionStoreName,                           // 🆕 Story #014 follow-up — populated from YAML
             defaults.getDelegate(),
             mcp,                                       // may be null
             defaults.getSkills(),
