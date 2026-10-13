@@ -131,7 +131,12 @@ public class ClasspathSkillSource implements SkillSource {
      * {@code classpath:skills/agent-builtin/commit/SKILL.md} the name is {@code "commit"}.
      */
     private static String deriveName(Resource r) {
-        String desc = r.getDescription();
+        // Normalize separators: on Windows, wildcard-matched resources are
+        // FileSystemResource whose description uses backslashes
+        // ("file [D:\...\skills\agent\SKILL.md]") — without this, lastIndexOf('/')
+        // misses and the skill name degenerates to the literal "SKILL.md",
+        // which then breaks the Anthropic tool-name wire rule (^[a-zA-Z0-9_-]+$).
+        String desc = r.getDescription().replace('\\', '/');
         // Resource description for classpath:scan entries looks like
         // "URL [jar:file:.../skills/agent-builtin/commit/SKILL.md]" or
         // "class path resource [skills/agent-builtin/commit/SKILL.md]".
