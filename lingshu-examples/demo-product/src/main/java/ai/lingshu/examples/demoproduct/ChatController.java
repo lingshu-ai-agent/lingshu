@@ -17,7 +17,6 @@ package ai.lingshu.examples.demoproduct;
 
 import ai.lingshu.core.decision.Decision;
 import ai.lingshu.core.event.AgentEvent;
-import ai.lingshu.core.impl.config.AgentConfigDefaults;
 import ai.lingshu.core.impl.runtime.AgentFactory;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.reload.YamlWatcher;
@@ -32,7 +31,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
-import org.springframework.core.env.Environment;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -91,73 +89,41 @@ public class ChatController {
     /** 🆕 Story #030 — Spring-injected approval registry; non-null when demo-product runs. */
     private final ApprovalRegistry approvals;
     /**
-     * 🆕 Story #014 + #045 follow-up — Environment injected so {@link #createSession()}
-     * can read {@code agent.session-store} and {@code agent.compactor.name} from
-     * {@code application.yml} and override the {@link AgentConfigDefaults#defaults()}
-     * hardcoded {@code "memory"} / {@code "truncating"} sentinels. Without this hook
-     * the {@code session-store: file} and {@code compactor.name: truncating} yml keys
-     * are silently ignored — every session would boot the in-memory store and the
-     * TruncatingCompactor regardless of what the user configured. Mirrors the
-     * {@code readSandbox} / {@code readTools} pattern in {@code DemoProductApplication}.
+     * 🆕 Story #047 — Single source of truth for the per-session {@link AgentConfig}.
+     * Inject the {@code agentConfig(Environment)} @Bean from {@code DemoProductApplication}
+     * so every session reuses the same yml-bound template (mcp.servers, a2a.remote-agents,
+     * sandbox, permission-policy, tools.allow-list/deny-list/ask-list, session-store,
+     * compactor, a2a-transport, ...). Previously this controller hand-rolled a 28-arg
+     * {@code AgentConfig} ctor that only overrode 2 Slot names (5 session-store + 6
+     * compactor) — so {@code agent.permission-policy: ask} and {@code tools.ask-list: [...]}
+     * were silently ignored at session-create time even after Story #029 / #030 / #031
+     * landed. {@link AgentConfig} is Lombok {@code @Value} (immutable, no setters) so
+     * sharing the same instance across sessions is safe — see dsh §4.1 + §7.1 invariants.
      */
-    private final Environment env;
+    private final AgentConfig agentConfigTemplate;
     private final ObjectMapper json = new ObjectMapper();
 
     public ChatController(AgentFactory agentFactory,
                           SessionRegistry sessions,
                           AgentEventMapper mapper,
                           ApprovalRegistry approvals,
-                          Environment env) {
+                          AgentConfig agentConfigTemplate) {
         this.agentFactory = agentFactory;
         this.sessions = sessions;
         this.mapper = mapper;
         this.approvals = approvals;
-        this.env = env;
+        this.agentConfigTemplate = agentConfigTemplate;
     }
 
     @PostMapping("/api/sessions")
     public Map<String, String> createSession() {
         String id = sessions.create(() -> {
-            // 🆕 Story #014 + #045 follow-up — start from AgentConfigDefaults defaults()
-            // (zero-config safe: every field populated), then override the two Slot names
-            // that come from yml so the user's `session-store: file` and `compactor.name: <x>`
-            // actually take effect. We reconstruct a new AgentConfig via the @AllArgsConstructor
-            // @Value Lombok re-generated 28-arg ctor because AgentConfig is immutable.
-            AgentConfig base = AgentConfigDefaults.defaults();
-            String sessionStore = env.getProperty("agent.session-store", base.getSessionStore());
-            // The yml block is `agent.compactor.name: <x>` (nested, not flat) — read the
-            // `.name` child key with a fall-back to the AgentConfigDefaults hardcoded name.
-            String compactorName = env.getProperty("agent.compactor.name", base.getCompactor());
-            AgentConfig cfg = new AgentConfig(
-                base.getFlowEngine(),
-                base.getLlm(),
-                base.getPrompt(),
-                base.getToolExecutor(),
-                base.getSandbox(),
-                compactorName,                  // 🆕 Story #045 — Slot 6 name from yml
-                sessionStore,                   // 🆕 Story #014 — Slot 5 name from yml
-                base.getDelegate(),
-                base.getMcp(),
-                base.getSkills(),
-                base.getToolParallelism(),
-                base.getToolTimeoutSeconds(),
-                base.getApprovalTimeoutSeconds(),
-                base.getTurnTimeoutSeconds(),
-                base.getLlmTimeoutSeconds(),
-                base.getReactMaxSteps(),
-                base.getIdentity(),
-                base.getInstructions(),
-                base.getMemory(),
-                base.getA2aTransport(),
-                base.getTenants(),
-                base.getA2a(),
-                base.getCompactorConfig(),
-                base.getTools(),
-                base.getPermissionPolicy(),
-                base.getMaxConcurrentTurns(),
-                base.getMaxConcurrentQueueDepth()
-            );
-            return agentFactory.create(cfg);
+            // 🆕 Story #047 — reuse the Spring-managed AgentConfig template built by
+            // DemoProductApplication#agentConfig(Environment). All yml-bound fields
+            // (permission-policy / tools.ask-list / session-store / compactor / a2a
+            // / sandbox / mcp) flow through transparently — no more hand-rolled
+            // 28-arg ctor that silently dropped 26 fields.
+            return agentFactory.create(agentConfigTemplate);
         });
         return Map.of("sessionId", id);
     }

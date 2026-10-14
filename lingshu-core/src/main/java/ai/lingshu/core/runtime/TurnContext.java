@@ -72,7 +72,36 @@ public interface TurnContext {
      */
     void appendAssistant(String text, List<ToolCall> toolCalls, Usage usage);
 
-    /** Append a tool result message to history. */
+    /**
+     * 🆕 Story #048 — Append (or <em>upsert</em>) a tool result message to history.
+     *
+     * <p>Implementation contract: {@code DefaultTurnContext.appendToolResult} now
+     * performs <b>upsert-by-toolUseId</b> rather than plain append. The history tail
+     * is scanned (from end back to the most recent {@link ai.lingshu.core.message.Message.Assistant})
+     * for a {@link ai.lingshu.core.message.Message.ToolResult} carrying the same
+     * {@code toolUseId} as {@code result}:
+     * <ul>
+     *   <li>If a matching {@code ToolResult} is found within that window, it is
+     *       <b>replaced in place</b>. This prevents duplicate {@code tool_result}
+     *       blocks from accumulating when {@code LinearTurnEngine.dispatchWithPolicy}
+     *       commits a sentinel <em>before</em> blocking on the approval gate and
+     *       then the resolved decision (Allow / Deny / {@code LINGS-P02} timeout)
+     *       commits a real result against the same {@code toolUseId}. Without this
+     *       dedup, the second turn's Anthropic HTTP request would carry an
+     *       unmatched {@code tool_use} block → HTTP 400.</li>
+     *   <li>Otherwise, the {@code ToolResult} is appended at the end of history.</li>
+     * </ul>
+     *
+     * <p>The scan is bounded by the most-recent {@code Message.Assistant} so older
+     * turns carrying the same {@code toolUseId} (uniqueness not guaranteed across
+     * turns) are left untouched. All scan-and-mutate work runs under
+     * {@code DefaultSession.appendLock()} — the same monitor that guards
+     * {@code DefaultSession.append(Message)} / {@code DefaultSession.compact(List)} —
+     * so the upsert cannot race with a concurrent plain append or a compactor swap.
+     *
+     * <p>SPI surface itself is unchanged: callers still invoke
+     * {@code appendToolResult(ToolResult)} with the same one-argument signature.
+     */
     void appendToolResult(ToolResult result);
 
     /**

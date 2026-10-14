@@ -201,7 +201,7 @@ class LinearTurnEngineProviderCompactionTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null, router);
 
         assertThat(provider.create(defaultConfig())).isInstanceOf(LinearTurnEngine.class);
@@ -225,7 +225,7 @@ class LinearTurnEngineProviderCompactionTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null /* approvalRegistry */);
 
         FlowEngine engine = provider.create(defaultConfig());
@@ -250,7 +250,7 @@ class LinearTurnEngineProviderCompactionTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null, router);
 
         FlowEngine engine = provider.create(defaultConfigWithCompactor("truncating"));
@@ -272,7 +272,7 @@ class LinearTurnEngineProviderCompactionTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null, null /* compactorRouter */);
 
         // If NullCompactor weren't used, this would throw — but it must complete cleanly.

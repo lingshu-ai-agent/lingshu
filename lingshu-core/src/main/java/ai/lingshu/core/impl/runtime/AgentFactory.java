@@ -277,7 +277,12 @@ public class AgentFactory implements InitializingBean {
         // Resolve Slots (each Router logs which Provider was chosen)
         LlmProvider llmProvider = llmRouter.resolve(config.getLlm().getProvider(), config);
         ToolExecutor toolExecutor = toolRouter.resolve(config.getToolExecutor(), config);
-        PermissionPolicy permissionPolicy = policyRouter.resolve(config.getSandbox().getPolicy(), config);
+        // 🆕 Story #047 — Slot 4 PermissionPolicy name comes from the top-level
+        // `agent.permission-policy` camelCase YAML key (defaults to "default" = AllowAllPermissionPolicy).
+        // Previously this line read `config.getSandbox().getPolicy()` (Slot 3 sub-slot), which
+        // silently forced every config to the "default" provider and ignored yml `permission-policy: ask`,
+        // leaving AskUserPermissionPolicy unreachable. Mirrors L295 (`config.getSessionStore()` for Slot 5).
+        PermissionPolicy permissionPolicy = policyRouter.resolve(config.getPermissionPolicy(), config);
         PromptBuilder promptBuilder = promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config);
         FlowEngine engine = flowRouter.resolve(config.getFlowEngine(), config);
         // 🆕 Story #028 — resolve Sandbox runtime (Slot 3 sub-slot via the 7th implicit Router).

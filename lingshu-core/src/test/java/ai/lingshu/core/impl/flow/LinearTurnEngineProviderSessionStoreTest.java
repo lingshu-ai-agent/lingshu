@@ -199,7 +199,7 @@ class LinearTurnEngineProviderSessionStoreTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null, null /* compactorRouter */, router);
 
         FlowEngine engine = provider.create(defaultConfigWithSessionStore("file"));
@@ -239,7 +239,7 @@ class LinearTurnEngineProviderSessionStoreTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null /* approvalRegistry */);
 
         FlowEngine engine = provider.create(defaultConfigWithSessionStore("file"));
@@ -260,7 +260,7 @@ class LinearTurnEngineProviderSessionStoreTest {
             new Routers.PromptBuilderRouter(Collections.singletonList(promptProvider("default", 0))),
             new Routers.LlmProviderRouter(Collections.singletonList(llmProvider("anthropic", 10))),
             new Routers.ToolExecutorRouter(Collections.singletonList(toolProvider("default", 0))),
-            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("allow-all", 0))),
+            new Routers.PermissionPolicyRouter(Collections.singletonList(policyProvider("default", 0))),
             pool, null /* approvalRegistry */, null /* compactorRouter */);
 
         FlowEngine engine = provider.create(defaultConfigWithSessionStore("file"));
