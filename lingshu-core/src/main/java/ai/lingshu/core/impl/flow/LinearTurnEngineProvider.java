@@ -178,7 +178,7 @@ public class LinearTurnEngineProvider implements Providers.FlowEngineProvider {
             promptBuilderRouter.resolve(config.getPrompt().getBuilder(), config),
             llmProviderRouter.resolve(config.getLlm().getProvider(), config),
             toolExecutorRouter.resolve(config.getToolExecutor(), config),
-            permissionPolicyRouter.resolve(config.getSandbox().getPolicy(), config),
+            permissionPolicyRouter.resolve(config.getPermissionPolicy(), config),
             agentToolPool,
             approvalRegistry,
             compactor,

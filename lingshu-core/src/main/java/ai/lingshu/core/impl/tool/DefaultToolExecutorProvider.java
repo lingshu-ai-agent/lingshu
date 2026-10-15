@@ -33,6 +33,15 @@ import org.springframework.stereotype.Component;
  * registry out of the executor itself into a dedicated {@code @Component}
  * singleton so {@code LocalToolsAutoConfiguration} can wire Tools via the SPI
  * boundary (no longer needs to depend on the concrete {@code DefaultToolExecutor}).
+ *
+ * <p><b>Bug F fix (Story #047 follow-up)</b>: previously this resolver call read
+ * {@code config.getSandbox().getPolicy()} (Slot 3 sub-slot, default
+ * {@code "default"}) instead of the top-level Slot 4
+ * {@code config.getPermissionPolicy()} field. Same typo pattern as Bug A
+ * (AgentFactory) and Bug E (LinearTurnEngineProvider) — see
+ * `LinearTurnEngineProvider.regression_providerReadsTopLevelPermissionPolicy_notSandboxSubField`
+ * for the matching regression test that would have caught this. Fixed: pass
+ * {@code config.getPermissionPolicy()} into the router.
  */
 @Component
 public class DefaultToolExecutorProvider implements Providers.ToolExecutorProvider {
@@ -57,7 +66,7 @@ public class DefaultToolExecutorProvider implements Providers.ToolExecutorProvid
 
     @Override
     public ToolExecutor create(AgentConfig config) {
-        PermissionPolicy policy = permissionPolicyRouter.resolve(config.getSandbox().getPolicy(), config);
+        PermissionPolicy policy = permissionPolicyRouter.resolve(config.getPermissionPolicy(), config);
         return new DefaultToolExecutor(policy, toolRegistry);
     }
 }

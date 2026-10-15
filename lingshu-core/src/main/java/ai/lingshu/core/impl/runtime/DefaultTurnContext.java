@@ -32,7 +32,7 @@ import java.util.List;
 
 /**
  * Minimal {@link TurnContext} implementation (Story #001 default, Story #005 cancellation,
- * Story #028 sandbox-aware).
+ * Story #028 sandbox-aware, Story #048 upsert-by-toolUseId).
  *
  * <p>Holds the {@code done} flag and delegates history mutations to the session.
  * Stories #004 (tools) and #010 (OTel) extend this with cancellation tokens and
@@ -58,6 +58,28 @@ import java.util.List;
  *       minimal; {@code LinearTurnEngine.dispatchWithPolicy} casts to this class to read
  *       the sandbox and pass it to {@code DefaultToolExecutionContext}</li>
  * </ul>
+ *
+ * <p><b>🆕 Story #048</b> changes {@link #appendToolResult(ToolResult)} semantics from
+ * <em>plain append</em> to <em>upsert-by-toolUseId</em>:
+ * <ul>
+ *   <li>Scan history tail from end back to the most recent {@link Message.Assistant}.</li>
+ *   <li>If a {@link Message.ToolResult} with the same {@code toolUseId} already exists in
+ *       that window, replace it in place — preventing duplicate {@code tool_result} blocks
+ *       when {@code LinearTurnEngine.dispatchWithPolicy} commits a sentinel
+ *       <em>before</em> blocking on the approval gate and then the resolved decision
+ *       (Allow / Deny / timeout) commits a real result against the same {@code toolUseId}.</li>
+ *   <li>Otherwise append a new {@link Message.ToolResult} at the end of history.</li>
+ *   <li>The scan is bounded by the most-recent {@link Message.Assistant} so that older
+ *       turns carrying the same {@code toolUseId} (uniqueness not guaranteed across turns)
+ *       are left untouched.</li>
+ * </ul>
+ *
+ * <p>All work is performed under {@link DefaultSession#appendLock()} — the very same
+ * monitor that guards {@link DefaultSession#append(Message)},
+ * {@link DefaultSession#compact(List)} and {@link DefaultSession#history()} — so the
+ * upsert cannot race with a concurrent append or compactor swap. The {@link TurnContext}
+ * SPI surface itself is unchanged: callers still invoke
+ * {@code appendToolResult(ToolResult)} with the same one-argument signature.
  */
 public class DefaultTurnContext implements TurnContext {
 
@@ -198,12 +220,46 @@ public class DefaultTurnContext implements TurnContext {
         }
     }
 
+    /**
+     * 🆕 Story #048 — upsert-by-toolUseId semantics.
+     *
+     * <p>Scan the history tail (from end back to the most recent
+     * {@link Message.Assistant}). If a {@link Message.ToolResult} with the same
+     * {@code toolUseId} is found, replace it in place; otherwise append a new
+     * {@link Message.ToolResult} at the end of history.
+     *
+     * <p>The scan is bounded by the most-recent {@link Message.Assistant} so older
+     * turns carrying the same {@code toolUseId} (uniqueness not guaranteed across
+     * turns) are left untouched. The whole scan-and-mutate runs under
+     * {@link DefaultSession#appendLock()} — the same monitor that guards
+     * {@link DefaultSession#append(Message)} / {@link DefaultSession#compact(List)} —
+     * so the upsert cannot race with a concurrent plain append or a compactor swap.
+     */
     @Override
     public void appendToolResult(ToolResult result) {
         if (session instanceof DefaultSession) {
+            DefaultSession ds = (DefaultSession) session;
             Message.ToolResult tr = new Message.ToolResult(result.getToolUseId(),
                 result.getContent(), result.isError());
-            ((DefaultSession) session).append(tr);
+            synchronized (ds.appendLock()) {
+                List<Message> hist = ds.historyMut();
+                int lastAssistantIdx = -1;
+                for (int i = hist.size() - 1; i >= 0; i--) {
+                    if (hist.get(i) instanceof Message.Assistant) {
+                        lastAssistantIdx = i;
+                        break;
+                    }
+                }
+                for (int i = hist.size() - 1; i > lastAssistantIdx; i--) {
+                    Message m = hist.get(i);
+                    if (m instanceof Message.ToolResult
+                        && ((Message.ToolResult) m).getToolUseId().equals(tr.getToolUseId())) {
+                        hist.set(i, tr);
+                        return;
+                    }
+                }
+                hist.add(tr);
+            }
         }
     }
 

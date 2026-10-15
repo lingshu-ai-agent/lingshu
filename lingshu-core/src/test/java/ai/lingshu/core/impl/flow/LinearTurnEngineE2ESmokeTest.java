@@ -148,13 +148,19 @@ class LinearTurnEngineE2ESmokeTest {
     })
     static class TestConfig {
 
-        /** Stub router so DefaultToolExecutorProvider can resolve sandbox.policy="allow-all". */
+        /** Stub router so DefaultToolExecutorProvider can resolve top-level Slot 4
+         *  permissionPolicy field. Pre-Bug-E fix (Story #047 follow-up), this stub
+         *  registered {@code "allow-all"} to match the old wrong read of
+         *  {@code sandbox.policy} from the Slot 3 sub-slot. Post-fix, the provider
+         *  correctly reads {@code cfg.getPermissionPolicy()} which the production
+         *  AgentConfig defaults to {@code "default"} (see
+         *  {@link ai.lingshu.core.impl.permission.AllowAllPermissionPolicyProvider#name()}). */
         @Bean
         ai.lingshu.core.impl.router.Routers.PermissionPolicyRouter permissionPolicyRouter() {
             return new ai.lingshu.core.impl.router.Routers.PermissionPolicyRouter(
                 Collections.<ai.lingshu.core.spi.Providers.PermissionPolicyProvider>singletonList(
                     new ai.lingshu.core.spi.Providers.PermissionPolicyProvider() {
-                        @Override public String name() { return "allow-all"; }
+                        @Override public String name() { return "default"; }
                         @Override public int priority() { return 0; }
                         @Override public String version() { return "1.0.0"; }
                         @Override public ai.lingshu.core.slot.PermissionPolicy create(

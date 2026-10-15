@@ -82,6 +82,21 @@ import java.util.concurrent.TimeoutException;
  * 且最后一次响应仍含 tool calls 时,发射 {@link AgentEvent.MaxStepsExceeded} 结构化事件,
  * 紧接着 {@link AgentEvent.TurnCompleted} 正常 {@code END_TURN} 终止。其他 4 条终止路径
  * (break 无 tool calls / ctx.done() / cancellation / exception)均**不**发 {@code MaxStepsExceeded}。
+ *
+ * <p>Story #048 — AskUser hang safety (sentinel + upsert). When the permission
+ * policy returns {@link Decision.AskUser}, the {@code dispatchWithPolicy}
+ * AskUser branch commits a sentinel {@code tool_result} to history
+ * <em>before</em> blocking on the approval gate (see the inline comment at L619
+ * above). The sentinel carries {@code toolUseId=call.getId()},
+ * {@code status=SUCCESS}, {@code isError=false}, and the
+ * {@code [PENDING_APPROVAL]} marker as content. When the human's decision
+ * (Allow / Deny / {@code [LINGS-P02]} timeout) finally commits the real result,
+ * {@link ai.lingshu.core.impl.runtime.DefaultTurnContext#appendToolResult}
+ * performs <b>upsert-by-toolUseId</b> (Story #048 Phase 1) so the history tail
+ * ends up with a single well-formed {@code assistant(tool_use[id=X]) +
+ * tool_result(id=X)} pair. Without this, the next turn's Anthropic POST would
+ * 400 with "tool_use ids were found without tool_result blocks" if the frontend
+ * never rendered the Allow/Deny buttons.
  */
 public class LinearTurnEngine implements FlowEngine {
 
@@ -628,6 +643,28 @@ public class LinearTurnEngine implements FlowEngine {
             // The ApprovalGate SPI is now usable from inside a Tool — see
             // specs/019-built-in-tools/plan.md L498 for the planned Bash "rm -rf"
             // confirm use case.
+            //
+            // 🆕 Story #048 — sentinel commit BEFORE blocking on ask gate. Prevents
+            // Anthropic HTTP 400 "tool_use ids were found without tool_result blocks"
+            // when the frontend never renders the Allow/Deny buttons. Without the
+            // sentinel, history at end of turn would carry [assistant(tool_use[id=X])]
+            // with no matching tool_result — every subsequent turn's Anthropic POST
+            // would 400. The sentinel is later upserted in place by
+            // DefaultTurnContext.appendToolResult (upsert-by-toolUseId, see Story #048
+            // Phase 1) when the real Allow/Deny/LINGS-P02 result commits. Field
+            // contract (spec §3.3): toolUseId=call.getId(), status=SUCCESS,
+            // isError=false, content="[PENDING_APPROVAL] Awaiting user decision for
+            // tool: " + call.getName(). isError=false is intentional: "pending" is
+            // not an error, and Anthropic's protocol layer treats isError=true as a
+            // tool failure (different semantic from "awaiting response").
+            ToolResult sentinel = ToolResult.builder()
+                .status(ToolResult.Status.SUCCESS)
+                .toolUseId(call.getId())
+                .isError(false)
+                .content("[PENDING_APPROVAL] Awaiting user decision for tool: " + call.getName())
+                .build();
+            ctx.appendToolResult(sentinel);
+
             Decision resolved = toolCtx.approval().ask((Decision.AskUser) d);
 
             // Apply the human's response. Allow → proceed (DefaultToolExecutor's

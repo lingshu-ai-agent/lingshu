@@ -40,6 +40,14 @@ import java.util.UUID;
  *   <li>{@link #history()} — defensive immutable snapshot</li>
  *   <li>{@link #fork(String)} — copy-on-write of current history</li>
  * </ul>
+ *
+ * <p>🆕 Story #048 — {@link #appendLock()} exposes the internal monitor
+ * (the {@code history} list instance) so same-package collaborators such as
+ * {@code DefaultTurnContext.appendToolResult} can perform the
+ * <em>upsert-by-toolUseId</em> operation under the very same lock that guards
+ * {@link #append(Message)} / {@link #compact(List)} / {@link #fork(String)}.
+ * No other class should rely on this monitor — the {@link Session} SPI itself
+ * stays mutex-free for outside callers.
  */
 public class DefaultSession implements Session {
 
@@ -83,6 +91,39 @@ public class DefaultSession implements Session {
         synchronized (history) {
             return Collections.unmodifiableList(new ArrayList<>(history));
         }
+    }
+
+    /**
+     * 🆕 Story #048 — impl-only accessor that exposes the internal monitor used by
+     * {@link #append(Message)}, {@link #compact(List)} and {@link #fork(String)}.
+     *
+     * <p>Same-package collaborators (e.g. {@code DefaultTurnContext.appendToolResult})
+     * synchronize on this object to perform the upsert-by-toolUseId operation under the
+     * very same lock — preventing an interleaved {@code append} from racing with an
+     * in-place replace. The returned {@code Object} identity MUST be treated as
+     * opaque; callers should compare with {@code ==} only, never assume a particular
+     * concrete type.
+     *
+     * <p>This method is deliberately non-{@code final} on the SPI surface —
+     * {@link Session} does not declare it. Only {@code DefaultSession} (impl) exposes it.
+     */
+    public Object appendLock() {
+        return history;
+    }
+
+    /**
+     * 🆕 Story #048 — impl-only accessor returning the <em>raw, mutable</em>
+     * backing list. MUST be called only while the caller holds the monitor
+     * returned by {@link #appendLock()} — see usage in
+     * {@code DefaultTurnContext.appendToolResult} (Story #048 upsert-by-toolUseId).
+     *
+     * <p>The returned list is the same instance used internally by
+     * {@link #append(Message)} / {@link #compact(List)} / {@link #history()} so
+     * operations performed under {@code appendLock()} are race-free with all
+     * other Session mutators. Mutation outside the lock is undefined behaviour.
+     */
+    List<Message> historyMut() {
+        return history;
     }
 
     /** Append a message to history; synchronized to prevent race with compactor / concurrent tools. */

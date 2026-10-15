@@ -373,13 +373,22 @@ public class DemoProductApplication {
             fallback.getAllowList());
         List<String> denyList = readToolsList(env, "agent.tools.deny-list",
             fallback.getDenyList());
+        // 🆕 Story #047 — read agent.tools.ask-list from YAML so the demo yml's
+        // `tools.ask-list: [bash_safe, write_file]` actually flows into
+        // AskUserPermissionPolicy's path 2 (ask-list check). Previously hardcoded
+        // to an empty list which silently neutralised yml `permission-policy: ask`
+        // for every demo-product session. Mirrors allow/deny-list pattern above.
+        List<String> askList = readToolsList(env, "agent.tools.ask-list",
+            fallback.getAskList());
         if (env.containsProperty("agent.tools.allow-list")
-            || env.containsProperty("agent.tools.deny-list")) {
-            LOG.info("agentConfig: tools allow/deny-list bound from YAML — "
-                + "allow(size={}) deny(size={})", allowList.size(), denyList.size());
+            || env.containsProperty("agent.tools.deny-list")
+            || env.containsProperty("agent.tools.ask-list")) {
+            LOG.info("agentConfig: tools allow/deny/ask-list bound from YAML — "
+                + "allow(size={}) deny(size={}) ask(size={})",
+                allowList.size(), denyList.size(), askList.size());
         }
         return new AgentConfig.ToolsConfig(
-            fallback.isEnabled(), allowList, denyList, java.util.Collections.<String>emptyList(),
+            fallback.isEnabled(), allowList, denyList, askList,
             fallback.getMaxReadBytes(), fallback.getMaxWriteBytes());
     }
 
