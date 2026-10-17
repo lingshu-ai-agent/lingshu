@@ -168,7 +168,8 @@ class DefaultPromptBuilderTest {
         vars.put("name", "Alice");
         vars.put("lang", "zh");
         AgentConfig.Instructions ins = new AgentConfig.Instructions(
-            null, "Hi {{name}}, speak {{lang}}.", "mustache", vars);
+            null, "Hi {{name}}, speak {{lang}}.", "mustache", vars,
+            false);  // 🆕 v1.5.63 Story #051 — antiVerifyLoop opt-in default
         config = buildConfig(AgentConfig.Identity.defaults(), ins, AgentConfig.Memory.defaults());
         when(ctx.config()).thenReturn(config);
         when(ctx.userInput()).thenReturn("hi");
@@ -187,7 +188,8 @@ class DefaultPromptBuilderTest {
         Map<String, String> vars = new HashMap<>();
         vars.put("name", "Alice");
         AgentConfig.Instructions ins = new AgentConfig.Instructions(
-            null, "Hi {{name}}, unknown={{unknown}}.", "mustache", vars);
+            null, "Hi {{name}}, unknown={{unknown}}.", "mustache", vars,
+            false);  // 🆕 v1.5.63 Story #051 — antiVerifyLoop opt-in default
         config = buildConfig(AgentConfig.Identity.defaults(), ins, AgentConfig.Memory.defaults());
         when(ctx.config()).thenReturn(config);
         when(ctx.userInput()).thenReturn("hi");
@@ -205,7 +207,8 @@ class DefaultPromptBuilderTest {
         Map<String, String> vars = new HashMap<>();
         vars.put("name", "Alice");
         AgentConfig.Instructions ins = new AgentConfig.Instructions(
-            null, "Hi {{name}}.", "none", vars);
+            null, "Hi {{name}}.", "none", vars,
+            false);  // 🆕 v1.5.63 Story #051 — antiVerifyLoop opt-in default
         config = buildConfig(AgentConfig.Identity.defaults(), ins, AgentConfig.Memory.defaults());
         when(ctx.config()).thenReturn(config);
         when(ctx.userInput()).thenReturn("hi");

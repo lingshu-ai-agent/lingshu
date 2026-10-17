@@ -45,7 +45,9 @@ import org.reactivestreams.Subscriber;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -143,6 +145,17 @@ public class LinearTurnEngine implements FlowEngine {
      * {@code TurnCompleted} event has already been emitted to the subscriber.
      */
     private final SessionStore sessionStore;
+    /**
+     * 🆕 Story #050 — per-toolUseId deny-once guard for the AskUser branch
+     * (Bug-2). Mutable (NOT final) because it's reset at every
+     * {@link #runTurn} start, mirroring Story #008's per-turn reset semantics
+     * for the ReAct step counter. The set records every {@code toolUseId}
+     * for which the human (or {@code [LINGS-P02]} timeout) returned a Deny;
+     * any subsequent re-request for the same id short-circuits to a
+     * deterministic error {@link ToolResult} instead of opening another
+     * approval gate round-trip — that's the loop-prevention mechanism.
+     */
+    private final Set<String> attemptedDeny = new HashSet<>();
 
     public LinearTurnEngine(PromptBuilder promptBuilder, LlmProvider llmProvider,
                             ToolExecutor toolExecutor, PermissionPolicy permissionPolicy,
@@ -232,6 +245,13 @@ public class LinearTurnEngine implements FlowEngine {
         // 自然 bound 结束(无 break / cancellation / done / exception 触发)时,标记守卫触发。
         // L177 之后根据 maxStepsHit + last.getToolCalls() 联合判定发 MaxStepsExceeded。
         boolean maxStepsHit = false;
+        // 🆕 Story #050 — per-turn reset of the ask-loop deny-once guard set. Mirrors
+        // the Story #008 reset pattern: every fresh turn gets a fresh allow-state,
+        // so re-asking after a deny within the same turn loops once (the first deny
+        // is recorded, the second short-circuits), but a fresh human turn starts
+        // with a clean slate. Without this reset the set would leak across turns
+        // and block legitimate re-asks in subsequent turns.
+        attemptedDeny.clear();
 
         // 🆕 Story #006 (FR-011) — runtime guard: if yml declares tenants, every turn
         // MUST run inside TenantContext.runAs(...). Without this guard, a caller that
@@ -633,6 +653,27 @@ public class LinearTurnEngine implements FlowEngine {
                 .build();
         }
         if (d instanceof Decision.AskUser) {
+            // 🆕 Story #050 — per-toolUseId deny-once guard. If we've recorded a prior
+            // deny (or [LINGS-P02] timeout) for this exact toolUseId within the same
+            // turn, short-circuit with a deterministic Deny result. Without this guard
+            // the LLM can re-request approval with a fresh approvalId every iteration
+            // (Anthropic issues a new id on each message_start), and a human who
+            // already denied once would be re-prompted indefinitely → the engine never
+            // reaches TurnCompleted because each ask-mode loop spawns a new approval
+            // round-trip. The set is reset at the head of every runTurn() — see
+            // attemptedDeny.clear() in runTurn.
+            String toolUseId = call.getId();
+            if (attemptedDeny.contains(toolUseId)) {
+                LOG.warn("ask-loop guard: toolUseId={} for {} already denied this turn — short-circuiting to Deny",
+                    toolUseId, call.getName());
+                return ToolResult.builder()
+                    .status(ToolResult.Status.ERROR)
+                    .toolUseId(toolUseId)
+                    .content("[LINGS-P02] tool previously denied for " + call.getName()
+                        + " (re-approval denied to avoid infinite ask-loop)")
+                    .isError(true)
+                    .build();
+            }
             // 🆕 Story #041 — delegate to DefaultToolExecutionContext.approval()
             // (formerly inline L467-578, extracted to DefaultApprovalGate). Behaviour
             // matches the prior inline path exactly (verified by AC-041-09/10/11):
@@ -678,6 +719,11 @@ public class LinearTurnEngine implements FlowEngine {
                 return toolExecutor.dispatch(call, toolCtx);
             }
             if (resolved instanceof Decision.Deny) {
+                // 🆕 Story #050 — record deny so any re-ask for the same toolUseId
+                // (with a fresh approvalId) short-circuits above. Covers both
+                // human-deny and [LINGS-P02] timeout (DefaultApprovalGate.ask()
+                // returns Decision.Deny for both paths — see Story #041).
+                attemptedDeny.add(call.getId());
                 return ToolResult.builder()
                     .status(ToolResult.Status.ERROR)
                     .toolUseId(call.getId())
@@ -686,6 +732,9 @@ public class LinearTurnEngine implements FlowEngine {
                     .build();
             }
             // resolved instanceof Decision.AskUser — recursion limited (dsh §9.3 max 3).
+            // 🆕 Story #050 — also record this id so the LLM can't keep re-asking
+            // via AskUser→AskUser recursion in pathological SPI impls.
+            attemptedDeny.add(call.getId());
             return ToolResult.builder()
                 .status(ToolResult.Status.ERROR)
                 .toolUseId(call.getId())

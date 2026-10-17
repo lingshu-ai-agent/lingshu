@@ -80,6 +80,29 @@ public class DefaultPromptBuilder implements PromptBuilder {
     /** Separator inserted between non-null {@code [PROJECT MEMORY]} blocks. */
     private static final String MEMORY_SEPARATOR = "\n\n── separator ──\n\n";
 
+    /**
+     * 🆕 v1.5.63 Story #051 — Anti-verification-loop clause (opt-in).
+     *
+     * <p>Appended to the {@code [INSTRUCTIONS]} segment when
+     * {@link AgentConfig.Instructions#isAntiVerifyLoop()} is {@code true}. The
+     * clause is a prompt-engineering mitigation for LLM semantic behavior where
+     * the model writes to a file → reads to verify → re-writes → re-reads in a
+     * loop, even when the tool succeeded (user-observed SSE trace, 2026-10-16).
+     *
+     * <p><b>Why prompt-clause vs engine-guard</b>: a runtime guard that
+     * deduplicates {@code (toolName, primaryResource)} would also kill
+     * legitimate {@code append} / {@code edit-by-position} / multi-file batch
+     * writes (false-positive risk). The clause is opt-in ({@code false} by
+     * default in {@link AgentConfig.Instructions#empty()}) and zero-cost when
+     * disabled.
+     */
+    static final String ANTI_VERIFY_LOOP_CLAUSE =
+        "## 反验证循环守则(Anti-Verification-Loop)\n\n"
+        + "工具调用返回成功的结果,表示该调用已生效。不要对同一目标资源反复触发验证性的只读调用"
+        + "(如 read_file → list_dir → read_file 循环验证同一文件内容)。\n"
+        + "当写操作成功后,信任结果并推进任务,而不是反复读取/列举同一路径来确认它是否真的写对了。\n"
+        + "如需确认结果,可在同一次响应内合并多个工具调用,而不是分多轮重复触发相同目标的相同只读工具。";
+
     private final List<MemorySource> memorySources;
     /** 🆕 Story #024 — may be {@code null} for tests / back-compat (treated as empty). */
     private final ToolRegistry toolRegistry;
@@ -144,6 +167,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 if (sys.length() > 0) sys.append("\n\n");
                 sys.append(insText);
             }
+        }
+        // 🆕 v1.5.63 Story #051 — Anti-verification-loop clause (opt-in).
+        // Appended after [INSTRUCTIONS] body and before [PROJECT MEMORY].
+        // Guarded by `sys.length() > 0` so the 5-segment order stays intact
+        // even when [ROLE]+[INSTRUCTIONS] are both empty (clause still lands
+        // as the only content of the [INSTRUCTIONS] slot, never bleeds into
+        // other segments).
+        if (ins.isAntiVerifyLoop() && sys.length() > 0) {
+            sys.append("\n\n").append(ANTI_VERIFY_LOOP_CLAUSE);
         }
 
         // ── [PROJECT MEMORY] ────────────────────────────────────────

@@ -46,8 +46,16 @@ import java.util.Map;
  * <table border="1" summary="SSE event handling">
  *   <tr><th>SSE event</th><th>Action</th></tr>
  *   <tr><td>{@code message_start}</td>
- *       <td>Emit {@link AgentEvent.ReasoningStarted}(1, 50); init {@link #usage}
- *           from {@code message.usage.input_tokens} + {@code output_tokens}.</td></tr>
+ *       <td>Emit {@link AgentEvent.LlmStreamStarted}({@code message.id}, 0)
+ *           — the new stream header carrying the provider-side message id
+ *           (NOT a ReAct step counter; that's emitted separately by the
+ *           engine loop). Init {@link #usage} from {@code message.usage.input_tokens} +
+ *           {@code output_tokens}. Story #050 fix: prior to this the parser
+ *           emitted {@code ReasoningStarted(1, 50)} on every {@code message_start},
+ *           causing the UI {@code step} counter to reset from {@code step=N} back to
+ *           {@code step=1} every turn iteration. The {@code maxOutputTokens=0}
+ *           sentinel means "not in the SSE stream" — Anthropic puts {@code max_tokens}
+ *           in the request, not the response; UI consumers should treat 0 as "unknown".</td></tr>
  *   <tr><td>{@code content_block_start} (type=text)</td>
  *       <td>Register a new entry in {@link #textBlocks}.</td></tr>
  *   <tr><td>{@code content_block_start} (type=tool_use)</td>
@@ -199,13 +207,22 @@ public class AnthropicStreamParser {
         JsonNode data = event.getData();
 
         if ("message_start".equals(type)) {
-            // Payload: {"message":{"usage":{"input_tokens":N,"output_tokens":N},...},"type":"message_start"}
+            // Payload: {"message":{"id":"msg_xxx","usage":{"input_tokens":N,"output_tokens":N},...},"type":"message_start"}
             JsonNode usageNode = data.path("message").path("usage");
             usage = new Usage(
                 usageNode.path("input_tokens").asInt(0),
                 usageNode.path("output_tokens").asInt(0));
+            // 🆕 Story #050 — emit LlmStreamStarted carrying the provider-side
+            // message id (NOT a ReAct step counter; the engine emits ReasoningStarted
+            // exactly once per ReAct step at LinearTurnEngine.runTurn L271).
+            // maxOutputTokens=0 sentinel: Anthropic puts max_tokens in the request,
+            // not the response SSE stream — UI consumers should treat 0 as "unknown".
+            // Bug-1 fix: prior to this the parser emitted ReasoningStarted(1, 50) on
+            // every message_start, resetting the UI step counter from N back to 1 each
+            // turn iteration (saw step=22 → step=1 → step=24 jumps).
             if (sink != null) {
-                sink.onNext(new AgentEvent.ReasoningStarted(1, 50));
+                String messageId = data.path("message").path("id").asText("");
+                sink.onNext(new AgentEvent.LlmStreamStarted(messageId, 0));
             }
         } else if ("content_block_start".equals(type)) {
             int index = data.path("index").asInt(-1);

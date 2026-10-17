@@ -111,6 +111,15 @@ public class AgentEventMapper {
             out.put("type", "reasoning.start");
             out.put("step", e.getStep());
             out.put("maxSteps", e.getMaxSteps());
+        } else if (event instanceof AgentEvent.LlmStreamStarted) {
+            // 🆕 Story #050 — distinct from reasoning.start. Emitted once per LLM
+            // message_start (Anthropic message_id / OpenAI response id). NOT a
+            // ReAct step counter; UI uses this for stream header (e.g. message
+            // bubble id) without coupling to step.
+            AgentEvent.LlmStreamStarted e = (AgentEvent.LlmStreamStarted) event;
+            out.put("type", "llm.stream.started");
+            out.put("streamId", e.getStreamId());
+            out.put("maxOutputTokens", e.getMaxOutputTokens());
         } else if (event instanceof AgentEvent.ObservationAppended) {
             AgentEvent.ObservationAppended e = (AgentEvent.ObservationAppended) event;
             out.put("type", "observation");

@@ -136,6 +136,29 @@ public abstract class AgentEvent {
         private final int maxSteps;
     }
 
+    /**
+     * 🆕 Story #050 — LLM stream started. Carries the provider-side stream id
+     * (Anthropic {@code message_id}, OpenAI response id, ...) and the
+     * configured max-output-tokens so the SSE UI can render a coherent header
+     * at the start of each LLM stream <b>without coupling to the ReAct step
+     * counter</b> (which is a separate event).
+     *
+     * <p><b>Bug-1 root cause fixed in Story #050</b>: the parser used to emit
+     * {@link ReasoningStarted} with hard-coded {@code (1, 50)} on every LLM
+     * {@code message_start}, which reset the UI {@code step} counter to 1 on
+     * every turn iteration (saw {@code step=22 → step=1 → step=24} jumps).
+     * ReAct step counter is now emitted exactly once per ReAct step from
+     * {@code LinearTurnEngine.runTurn}, decoupled from provider stream events.
+     */
+    @Getter
+    @RequiredArgsConstructor
+    public static class LlmStreamStarted extends AgentEvent {
+        /** Provider-side stream id (Anthropic {@code message_id} / OpenAI response id). */
+        private final String streamId;
+        /** Provider-configured max output tokens for this stream. */
+        private final int maxOutputTokens;
+    }
+
     @Getter
     @RequiredArgsConstructor
     public static class ObservationAppended extends AgentEvent {

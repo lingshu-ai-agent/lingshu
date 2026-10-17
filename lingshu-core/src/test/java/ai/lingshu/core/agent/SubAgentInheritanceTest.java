@@ -57,7 +57,8 @@ class SubAgentInheritanceTest {
 
     private static AgentConfig.Instructions makeInstructions() {
         return new AgentConfig.Instructions(Paths.get("/tmp/instructions.md"),
-            null, "none", Collections.<String, String>emptyMap());
+            null, "none", Collections.<String, String>emptyMap(),
+            false);  // 🆕 v1.5.63 Story #051 — antiVerifyLoop opt-in default
     }
 
     private static AgentConfig.Memory makeMemory() {
@@ -210,7 +211,8 @@ class SubAgentInheritanceTest {
         AgentConfig parent = makeParentWithIdentity();
         Instructions childInst = new Instructions(
             Paths.get("/child/instructions.md"), null, "mustache",
-            Collections.singletonMap("var", "child"));
+            Collections.singletonMap("var", "child"),
+            false);  // 🆕 v1.5.63 Story #051 — antiVerifyLoop opt-in default
         AgentConfig child = makeChildWith(null, childInst, null);
 
         AgentConfig merged = SubAgentInheritance.inheritFromParent(parent, child, SubAgentType.EXPLORE);

@@ -140,22 +140,29 @@ class AnthropicStreamParserTest {
         return new AnthropicStreamEvent("message_stop", root);
     }
 
-    // ── AC-NN-2: message_start emits ReasoningStarted + init usage ──────
+    // ── AC-NN-2 + AC-050-01/03: message_start emits LlmStreamStarted (NOT ReasoningStarted) + init usage ───
+    // 🆕 Story #050 — Bug-1 fix: prior to this the parser emitted ReasoningStarted(1, 50) on every
+    // message_start, which reset the UI step counter on every turn iteration. Now it emits
+    // LlmStreamStarted(streamId, maxOutputTokens=0) — the provider-side stream header (NOT a
+    // ReAct step counter; the engine emits ReasoningStarted exactly once per ReAct step at
+    // LinearTurnEngine.runTurn).
 
     @Test
-    @DisplayName("AC-NN-2: messageStartEmitsReasoningStartedAndInitUsage")
-    void messageStartEmitsReasoningStartedAndInitUsage() {
+    @DisplayName("AC-NN-2 + AC-050-01/03: messageStartEmitsLlmStreamStartedAndInitUsage")
+    void messageStartEmitsLlmStreamStartedAndInitUsage() {
         AnthropicStreamParser parser = new AnthropicStreamParser();
         CapturingSubscriber sink = new CapturingSubscriber();
 
         parser.feed(buildMessageStartEvent(42), sink);
 
-        // ReasoningStarted(step=1, maxSteps=50) emitted exactly once.
+        // LlmStreamStarted(streamId=msg_test, maxOutputTokens=0) emitted exactly once.
+        // maxOutputTokens=0 sentinel = "not in SSE stream" (Anthropic puts max_tokens in the
+        // request, not the response) — UI consumers should treat 0 as "unknown".
         assertThat(sink.events()).hasSize(1);
         AgentEvent ev0 = sink.events().get(0);
-        assertThat(ev0).isInstanceOf(AgentEvent.ReasoningStarted.class);
-        assertThat(((AgentEvent.ReasoningStarted) ev0).getStep()).isEqualTo(1);
-        assertThat(((AgentEvent.ReasoningStarted) ev0).getMaxSteps()).isEqualTo(50);
+        assertThat(ev0).isInstanceOf(AgentEvent.LlmStreamStarted.class);
+        assertThat(((AgentEvent.LlmStreamStarted) ev0).getStreamId()).isEqualTo("msg_test");
+        assertThat(((AgentEvent.LlmStreamStarted) ev0).getMaxOutputTokens()).isEqualTo(0);
 
         // Usage initialised from message_start.message.usage.
         assertThat(parser.getUsage().getInputTokens()).isEqualTo(42);

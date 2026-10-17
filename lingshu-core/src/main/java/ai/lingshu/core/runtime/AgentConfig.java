@@ -377,9 +377,11 @@ public class AgentConfig {
         String inline;
         String templateEngine;
         Map<String, String> variables;
+        boolean antiVerifyLoop;   // 🆕 v1.5.63 Story #051 — LLM verification-loop prompt guard
 
         public static Instructions empty() {
-            return new Instructions(null, null, "none", Collections.emptyMap());
+            return new Instructions(null, null, "none", Collections.emptyMap(), false);
+            //                                                                         ^^^^^ 🆕
         }
     }
 

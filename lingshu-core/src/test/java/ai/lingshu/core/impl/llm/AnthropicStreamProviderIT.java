@@ -161,17 +161,32 @@ class AnthropicStreamProviderIT {
         assertThat(resp.getUsage().getOutputTokens()).isEqualTo(7);
 
         // ── Verify the sink received incremental AgentEvents ──
-        // Expect: ReasoningStarted + ToolStarted (from the SSE stream above).
+        // Expect: LlmStreamStarted + ToolStarted (from the SSE stream above).
         // No TextDelta because the response had only tool_use, no text.
-        long reasoningCount = sink.events().stream()
-            .filter(e -> e instanceof AgentEvent.ReasoningStarted).count();
+        // 🆕 Story #050 — Bug-1 fix: prior to this the parser emitted ReasoningStarted(1, 50)
+        // on every message_start, resetting the UI step counter. Now message_start emits
+        // LlmStreamStarted (the provider-side stream header), NOT a ReAct step counter
+        // (LinearTurnEngine emits ReasoningStarted exactly once per ReAct step).
+        long llmStreamStartedCount = sink.events().stream()
+            .filter(e -> e instanceof AgentEvent.LlmStreamStarted).count();
         long toolStartedCount = sink.events().stream()
             .filter(e -> e instanceof AgentEvent.ToolStarted).count();
         long textDeltaCount = sink.events().stream()
             .filter(e -> e instanceof AgentEvent.TextDelta).count();
-        assertThat(reasoningCount).isEqualTo(1);
+        assertThat(llmStreamStartedCount).isEqualTo(1);
         assertThat(toolStartedCount).isEqualTo(1);
         assertThat(textDeltaCount).isEqualTo(0);
+
+        // 🆕 Story #050 — verify the LlmStreamStarted carries the Anthropic message_id
+        AgentEvent.LlmStreamStarted lss = (AgentEvent.LlmStreamStarted) sink.events().stream()
+            .filter(e -> e instanceof AgentEvent.LlmStreamStarted).findFirst()
+            .orElseThrow(new java.util.function.Supplier<RuntimeException>() {
+                @Override public RuntimeException get() {
+                    return new RuntimeException("expected LlmStreamStarted in sink");
+                }
+            });
+        assertThat(lss.getStreamId()).isEqualTo("msg_test");
+        assertThat(lss.getMaxOutputTokens()).isEqualTo(0);
 
         AgentEvent.ToolStarted ts = (AgentEvent.ToolStarted) sink.events().stream()
             .filter(e -> e instanceof AgentEvent.ToolStarted).findFirst()
