@@ -249,7 +249,8 @@ public final class DelegateTool implements Tool {
         Path systemPromptFile = tc.getSystemPromptFile();
         if (systemPromptFile != null) {
             instructions = new AgentConfig.Instructions(
-                systemPromptFile, null, "none", Collections.<String, String>emptyMap());
+                systemPromptFile, null, "none", Collections.<String, String>emptyMap(),
+                false);  // 🆕 v1.5.63 Story #051 — antiVerifyLoop opt-in default
         }
         return new AgentConfig(
             /* flowEngine      */ null,

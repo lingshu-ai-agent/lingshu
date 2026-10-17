@@ -46,6 +46,15 @@ agent:
     file: ./prompts/system-product.md
     template-engine: mustache
     variables: {}
+    # 🆕 v1.5.63 Story #051 — anti-verify-loop prompt clause (opt-in).
+    # When `true`, DefaultPromptBuilder appends ANTI_VERIFY_LOOP_CLAUSE to the
+    # [INSTRUCTIONS] segment telling the LLM to trust tool success and not
+    # repeat read_file/list_dir against the same path. Off by default — enable
+    # here if a model exhibits "write → verify → rewrite → verify" loops
+    # (user-observed SSE trace, 2026-10-16). Stack on top of any inline
+    # INSTRUCTIONS text (not exclusive).
+    #
+    # anti-verify-loop: false
 
   memory:
     claude-md:
@@ -281,7 +290,7 @@ agent:
     keep-recent-turns: 3
 
   # ── Loop tuning ────────────────────────────────────────────────────────
-  react-max-steps: 8
+  react-max-steps: 30
   tool-parallelism: 4
   turn-timeout-seconds: 120
   llm-timeout-seconds: 30

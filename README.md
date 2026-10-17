@@ -5,7 +5,7 @@
   <p><strong>The Pivot of Agent Orchestration</strong></p>
 
   > **🎉 v0.1.0 — First Stable Release (2026-10-07)** — **52 Stories merged** / **821 tests pass** / **435 source files** / **14 stable SPIs** (`@PublicApi(STABLE)`, 9 Slot + 3 Helper + 2 supporting) / **33 R-13 0-binary-delta PASSes** / **0 new Maven dependencies** during the 0.1.0 cycle / Apache-2.0 / JDK 8 source + JDK 17+ runtime. → See **[CHANGELOG.md](./CHANGELOG.md)** + **[RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md)** for full release notes.
-  > **Recent Story updates** (most recent first, see **[UPDATEINFO.md](./UPDATEINFO.md)** for full details):#050 · #049 · #048 · #047 · #046 · #045 · #014 · #044 · #043 · #042 · #041 · #037 · #030 · #034 · #033 · #031 · #029 · v1.5.46 refactor · #026 · #025 follow-up.
+  > **Recent Story updates** (most recent first, see **[UPDATEINFO.md](./UPDATEINFO.md)** for full details):#051 · #050 · #049 · #048 · #047 · #046 · #045 · #014 · #044 · #043 · #042 · #041 · #037 · #030 · #034 · #033 · #031 · #029 · v1.5.46 refactor · #026 · #025 follow-up.
 
 
   <p>
