@@ -109,6 +109,49 @@ public final class LlmErrorCodes {
      */
     public static final String LINGS_L03 = "LINGS-L03";
 
+    /**
+     * 🆕 Story #052 — parallel tool dispatch protocol safety sentinel
+     * ({@code PARALLEL_DISPATCH_RACE})。
+     *
+     * <p>抛出位置:
+     * {@link ai.lingshu.core.impl.flow.LinearTurnEngine#dispatchParallel} 主循环
+     * 边界 sentinel —— 当 {@code waitForTool} 返回 {@code null} 或 {@code toolUseId}
+     * 与预期的 {@code calls.get(i).getId()} 不匹配时,兜底替换为 sentinel
+     * {@link ai.lingshu.core.message.ToolResult#error},其 {@code content} 前缀嵌
+     * {@code [LINGS-L04]} 让下游 LLM 看到这是 protocol mismatch 兜底,而非
+     * user-initiated cancel。
+     *
+     * <p>触发条件(dispatchParallel 主循环边界兜底,不属协议层错):
+     * <ul>
+     *   <li>下游 {@code ToolExecutor} SPI 实现在 race condition 下返回了
+     *       {@code null} ToolResult(programmer error 应纠正);</li>
+     *   <li>下游实现返回了 {@code toolUseId} 不匹配当前 expected ID 的
+     *       ToolResult(暗示 dispatch 内部 serialization 漏掉了 i → toolUseId
+     *       绑定);</li>
+     *   <li>两种情况均会破坏 Anthropic 协议层硬约束 —— 每个 {@code tool_use}
+     *       block 必须配对同 ID {@code tool_result} block —— 下轮
+     *       Anthropic POST 会 {@code 400 Bad Request}
+     *       <i>"tool_use ids were found without tool_result blocks"</i>。本
+     *       sentinel 保证 history 永远协议一致,根因(下游 SPI 实现 bug)留在日志
+     *       待 Story 实施者诊断。</li>
+     * </ul>
+     *
+     * <p>与 {@link #LINGS_L01} / {@link #LINGS_L02} 区别:后者属 Anthropic
+     * 协议层错(LLM 响应或构建请求缺必填字段),由
+     * {@link AnthropicLlmProvider#parseResponse} /
+     * {@link AnthropicLlmProvider#buildRequestBody} 直接抛
+     * {@link LingsLlmProviderException};本码属 engine 内部 invariant 兜底,
+     * engine 层不抛异常,只在 {@code ToolResult.content} 嵌入前缀给 LLM 看。
+     *
+     * <p>编号约束:dsh §15 域字母表 {@code L = LlmProvider} 段,L01 / L02 由
+     * #027a 实装,L03 由 #027b 预留作 graceful shutdown;L04 由 Story #052 实装
+     * 作并行调度 boundary sentinel;L05+ 顺延待后续 Story。
+     *
+     * <p>完整语义见 dsh §15.6 第 4 行
+     * {@code LINGS-L04 PARALLEL_DISPATCH_RACE}。
+     */
+    public static final String LINGS_L04 = "LINGS-L04";
+
     private LlmErrorCodes() {
         // utility class — instantiation is a programming error
         throw new AssertionError("LlmErrorCodes must not be instantiated");

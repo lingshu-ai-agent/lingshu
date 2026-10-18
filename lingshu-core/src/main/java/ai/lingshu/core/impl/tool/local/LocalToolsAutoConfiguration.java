@@ -101,6 +101,24 @@ public class LocalToolsAutoConfiguration implements InitializingBean {
     public static final String PROP_ENABLED = "agent.tools.enabled";
 
     /**
+     * Property key prefix for per-tool toggle. The full key is
+     * {@code agent.tools.<toolName>} where {@code toolName} is the {@link Tool#name()}
+     * lowercased (so {@code agent.tools.bash} controls the built-in {@code "Bash"} tool,
+     * {@code agent.tools.read} controls {@code "Read"}, etc.). Set any sub-key to
+     * {@code false} in {@code application.yml} to skip registration of that specific
+     * Tool while leaving the others wired normally — useful for demos that bring their
+     * own {@code @Component} implementations of the same capability (e.g. demo-product's
+     * {@code bash_safe} that supersedes the built-in {@code Bash}).
+     *
+     * <p>🆕 Bug fix 2026-10-17 — previously only the top-level
+     * {@link #PROP_ENABLED} gate was honored, so {@code agent.tools.bash: false} in a
+     * user {@code application.yml} was silently ignored and the built-in {@code Bash}
+     * got registered alongside the user's {@code bash_safe}, defeating the user's
+     * intent to keep only one bash path active.
+     */
+    public static final String PROP_PER_TOOL_PREFIX = "agent.tools.";
+
+    /**
      * Back-compat alias for {@link LocalToolPropertiesConfiguration#LOCAL_TOOL_PROPS_BEAN}.
      * Kept so any user code referencing {@code LocalToolsAutoConfiguration.LOCAL_TOOL_PROPS_BEAN}
      * continues to compile — the {@code @Bean} itself is now declared in
@@ -183,9 +201,25 @@ public class LocalToolsAutoConfiguration implements InitializingBean {
 
         // 2. Register every Tool bean (readTool/writeTool/editTool/bashTool) by its
         //    Tool.name() — duplicates are logged-and-skipped by DefaultToolRegistry.
+        //
+        //    🆕 Bug fix 2026-10-17 — honor the per-tool `agent.tools.<name>: false`
+        //    toggle in application.yml. The key uses the Tool.name() lowercased so
+        //    `agent.tools.bash: false` disables the built-in "Bash" tool while leaving
+        //    Read / Write / Edit unaffected. Previously only the top-level
+        //    `agent.tools.enabled` gate was honored, so per-tool flags were silently
+        //    ignored and the built-in Bash got registered alongside a user's
+        //    demo-level bash_safe (which is the demo-product configuration).
         int registered = 0;
         for (Map.Entry<String, Tool> e : tools.entrySet()) {
             Tool tool = e.getValue();
+            String perToolKey = PROP_PER_TOOL_PREFIX + tool.name().toLowerCase();
+            boolean toolEnabled = environment.getProperty(
+                perToolKey, Boolean.class, Boolean.TRUE);
+            if (!toolEnabled) {
+                LOG.info("LocalTool disabled via {}={} — {} NOT registered",
+                    perToolKey, toolEnabled, tool.name());
+                continue;
+            }
             toolRegistry.register(tool);
             registered++;
             LOG.debug("Registered local tool: beanName={} toolName={} class={}",
