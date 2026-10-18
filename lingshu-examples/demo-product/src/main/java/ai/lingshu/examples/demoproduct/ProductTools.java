@@ -34,6 +34,7 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Demo-product local Tools (Story #025) — 4 {@code @Component implements Tool}:
@@ -209,14 +210,48 @@ public final class ProductTools {
 
     @Component("bash_safe")
     public static class BashSafeTool implements Tool {
+        // Read-mostly whitelist. mkdir/touch are weak writes (limited blast radius).
+        // No rm/chmod/sudo/curl/mv/cp/sh/etc. — anything that touches the host
+        // beyond the working directory or runs an external script interpreter is
+        // out of scope for this sandboxed demo.
         private static final List<String> WHITELIST = Collections.unmodifiableList(
             java.util.Arrays.asList("ls", "cat", "echo", "head", "tail", "wc",
-                                    "date", "uname", "whoami", "pwd", "which"));
+                                    "date", "uname", "whoami", "pwd", "which",
+                                    "mkdir", "touch", "find", "grep", "diff",
+                                    "file", "sort", "uniq", "basename", "dirname",
+                                    "realpath"));
+
+        /**
+         * Shell metacharacters that {@code ProcessBuilder(List<String>)} does <b>not</b>
+         * interpret. If the model emits e.g. {@code echo 'X' > /tmp/poem.txt}, the shell
+         * redirect is treated as literal tokens and the file is never created — but
+         * {@code echo} itself returns success, so the LLM thinks the file was written.
+         *
+         * <p>🆕 Bug fix 2026-10-17: detect these characters in the args payload and
+         * append a warning to the {@link ToolResult} so the model sees a definitive
+         * hint that this sandbox does not shell-interpret. The execution itself still
+         * succeeds (we cannot safely redirect on the model's behalf), but the model
+         * now sees a clear "you must call write_file instead" message next turn.
+         *
+         * <p>Regex covers the common shell metachars (excluding simple shell-quote
+         * chars which we leave alone — the model may legitimately need to pass
+         * quoted strings).
+         */
+        private static final Pattern SHELL_METACHARS = Pattern.compile(
+            "[<>|&;$`\\\\]|\\*\\*|\\|\\|");
+        private static final String SHELL_METACHAR_WARNING =
+            "\n[lingshu-sandbox] NOTICE: bash_safe uses ProcessBuilder(List<String>) "
+            + "which does NOT shell-interpret. Characters like '>', '<', '|', '&', ';', "
+            + "'$', backtick, or '**' were passed as literal tokens — redirections "
+            + "and pipes did NOT execute. To create/modify files use write_file; "
+            + "to capture output use cmd-level tools or invoke a single command.";
 
         @Override public String name() { return "bash_safe"; }
         @Override public String description() {
-            return "Run a whitelisted read-only shell command. "
-                 + "Allowed: " + String.join(", ", WHITELIST) + ". No rm/chmod/sudo/curl.";
+            return "Run a whitelisted read-mostly shell command. "
+                 + "Allowed: " + String.join(", ", WHITELIST) + ". "
+                 + "No rm/chmod/sudo/curl/mv/cp/sh — anything that mutates the "
+                 + "host beyond the working directory is blocked.";
         }
 
         @Override
@@ -241,7 +276,7 @@ public final class ProductTools {
 
         @Override
         public ToolResult execute(ToolCall call, ToolExecutionContext ctx) {
-            String cmd = call.getInput().get("cmd").asText();
+            String cmd = call.getInput().get("cmd").asText().trim();
             if (!WHITELIST.contains(cmd)) {
                 return ToolResult.builder().status(ToolResult.Status.ERROR)
                     .toolUseId(call.getId())
@@ -249,9 +284,21 @@ public final class ProductTools {
                         + ". allowed: " + String.join(",", WHITELIST))
                     .isError(true).build();
             }
-            String args = call.getInput().has("args") ? call.getInput().get("args").asText() : "";
+            String argsRaw = call.getInput().has("args") ? call.getInput().get("args").asText() : "";
+            // Proper tokenization: trim cmd (handles LLM-passed trailing space in
+            // the cmd field) + split args by whitespace + use ProcessBuilder(List).
+            // Avoids the legacy bug where "cmd + " " + args" handed a single
+            // string like "pwd " to ProcessBuilder, which execvp'd "pwd " literally
+            // (no binary named "pwd " exists in PATH).
+            List<String> fullCmd = new java.util.ArrayList<>();
+            fullCmd.add(cmd);
+            String argsTrimmed = argsRaw.trim();
+            if (!argsTrimmed.isEmpty()) {
+                String[] tokens = argsTrimmed.split("\\s+");
+                Collections.addAll(fullCmd, tokens);
+            }
             try {
-                ProcessBuilder pb = new ProcessBuilder(cmd + " " + args).redirectErrorStream(true);
+                ProcessBuilder pb = new ProcessBuilder(fullCmd).redirectErrorStream(true);
                 Process p = pb.start();
                 byte[] out;
                 try (java.io.InputStream is = p.getInputStream()) {
@@ -260,6 +307,14 @@ public final class ProductTools {
                 int code = p.waitFor();
                 String s = new String(out, StandardCharsets.UTF_8)
                     + (code == 0 ? "" : "\n[exit " + code + "]");
+                // 🆕 Bug fix 2026-10-17 — append shell-metachar warning when the args
+                // payload contains redirection / pipe / glob / subshell characters.
+                // ProcessBuilder does NOT shell-interpret, so 'echo X > /tmp/Y' is
+                // silently a no-op file-write; the LLM needs an explicit hint that
+                // this happened so the next turn uses write_file instead.
+                if (SHELL_METACHARS.matcher(argsTrimmed).find()) {
+                    s = s + SHELL_METACHAR_WARNING;
+                }
                 return ToolResult.builder().status(code == 0 ? ToolResult.Status.SUCCESS : ToolResult.Status.ERROR)
                     .toolUseId(call.getId()).content(s).isError(code != 0).build();
             } catch (Exception e) {

@@ -33,6 +33,7 @@ import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutionContext;
 import ai.lingshu.core.impl.compaction.NullCompactor;
+import ai.lingshu.core.impl.llm.LlmErrorCodes;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
 import ai.lingshu.core.impl.sessionstore.NullSessionStore;
@@ -47,6 +48,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -99,6 +101,33 @@ import java.util.concurrent.TimeoutException;
  * tool_result(id=X)} pair. Without this, the next turn's Anthropic POST would
  * 400 with "tool_use ids were found without tool_result blocks" if the frontend
  * never rendered the Allow/Deny buttons.
+ *
+ * <p><b>🆕 Story #052 — boundary sentinel protocol safety.</b>
+ * {@link #dispatchParallel} main loop now enforces an Anthropic protocol
+ * invariant: every {@code results[i]} returned must be non-null with
+ * {@code getToolUseId() == calls.get(i).getId()}. Concretely, after
+ * {@link #waitForTool} returns, the loop checks (1) {@code r == null} (race /
+ * SPI bug) and (2) {@code !Objects.equals(expectedId, r.getToolUseId())} (i →
+ * toolUseId binding leaked) and substitutes a sentinel
+ * {@code ToolResult.error("[LINGS-L04] ...")} via the new {@link
+ * #dispatchCancelledResult} private static helper. The sentinel content uses a
+ * distinct {@code [LINGS-L04]} prefix (mirror of Story #048's
+ * {@code [PENDING_APPROVAL]} + {@code LINGS-P02} pattern) so downstream LLMs
+ * see this as a protocol-mismatch fallback rather than a user-initiated cancel.
+ * The three inline {@code ToolResult.builder()...} blocks at the cancel /
+ * catch / cancel-by-shutdown sites have been collapsed onto
+ * {@code dispatchCancelledResult} for parity. The {@link #waitForTool}
+ * implementation is unchanged (Story #049 reverse-AC guard); only its Javadoc
+ * contract was hardened to make the {@code non-null + toolUseId matches} rule
+ * explicit so future SPI implementers cannot violate it without breaking tests.
+ *
+ * <p><b>Story #046 — session save-after-turn.</b> The 8-arg primary constructor
+ * accepts a {@link SessionStore}; after each turn boundary (normal-end,
+ * cancel-loop-head, maxSteps guard, outer {@code catch (Throwable)}, and the
+ * {@code waitForLlm} cancel tail branch — 5 hooks total) a {@link
+ * #trySave(TurnContext)} private guard swallows {@link RuntimeException} so an
+ * I/O failure on a completed turn never crashes the engine. See
+ * {@code LinearTurnEngineSessionStoreTest} for the full coverage matrix.
  */
 public class LinearTurnEngine implements FlowEngine {
 
@@ -340,7 +369,28 @@ public class LinearTurnEngine implements FlowEngine {
                 // echo back the `tool_use`/`tool_result` pairing that Anthropic requires
                 // (see dsh §6.5 (1.5) protocol gap), and Tool-use turns replay as text-only
                 // after the first ReAct step, breaking the round-trip.
-                ctx.appendAssistant(resp.getText(), resp.getToolCalls(), resp.getUsage());
+                //
+                // 🆕 Bug fix 2026-10-17 — MAX_TOKENS empty-text sanitization.
+                // Anthropic protocol hard invariant: every `messages[]` entry MUST have
+                // non-empty content. When the model hits max-tokens mid-stream without
+                // emitting any text (rare but reproducible with very long tool-call-only
+                // turns), `resp.getText()` is empty/whitespace. Forwarding that as-is to
+                // history causes the next turn's POST to fail HTTP 400:
+                //   `messages.X: all messages must have non-empty content`
+                // and the entire session cascade-breaks. Sanitize at the boundary:
+                // if stopReason == MAX_TOKENS and text is blank, substitute a short
+                // sentinel so Anthropic accepts the message AND the model sees a clear
+                // hint on the next round to shorten the request.
+                String persistText = resp.getText();
+                if (resp.getStopReason() == StopReason.MAX_TOKENS
+                    && (persistText == null || persistText.trim().isEmpty())) {
+                    persistText = "[LLM_OUTPUT_TRUNCATED — response hit max-tokens limit; "
+                        + "consider sending a shorter request next turn]";
+                    LOG.warn("MAX_TOKENS produced empty Assistant text — substituting "
+                        + "sentinel marker to satisfy Anthropic protocol invariant "
+                        + "messages.X: all messages must have non-empty content");
+                }
+                ctx.appendAssistant(persistText, resp.getToolCalls(), resp.getUsage());
                 totalUsage = totalUsage.plus(resp.getUsage());
                 last = resp;
 
@@ -515,33 +565,74 @@ public class LinearTurnEngine implements FlowEngine {
             // 🆕 Story #005 (FR-008) — poll cancellation before waiting on each future.
             // Honours the shared token: if Ctrl-C fires mid-batch, cancel the in-flight
             // future and substitute a CANCELLED ToolResult so the loop can exit cleanly.
+            //
+            // 🆕 Story #052 — hoist currentCall + expectedId to loop-local finals so the
+            // boundary sentinel below can substitute an error with the *correct* toolUseId
+            // even when the inner async task returns null or a wrong-id result. Without
+            // this hoist the sentinel would have to call calls.get(i).getId() inline,
+            // blocking the same null/wrong-id bug we'd otherwise be vulnerable to.
+            final ToolCall currentCall = calls.get(i);
+            final String expectedId = currentCall.getId();
             if (ctx.cancellation().isCancelled()) {
                 futures[i].cancel(true);
-                results[i] = ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(calls.get(i).getId())
-                    .content("cancelled before tool dispatch")
-                    .isError(true)
-                    .build();
+                results[i] = dispatchCancelledResult(expectedId, "cancelled before tool dispatch");
                 continue;
             }
             try {
                 // 🆕 Story #005 (FR-008) — polling wait: 200ms slices honour AC-04 budget
                 // even if the tool never returns. Without polling, the 5s default tool
                 // timeout would block the cancel-exit path beyond 200ms.
-                results[i] = waitForTool(futures[i], ctx, timeoutSec, calls.get(i).getId());
+                ToolResult r = waitForTool(futures[i], ctx, timeoutSec, expectedId);
+                // 🆕 Story #052 — boundary sentinel: substitute an ERROR ToolResult with
+                // the expected toolUseId when the inner async task returns null or a
+                // result whose toolUseId does not match the LLM-return order FR-003
+                // invariant. Without this, the next Anthropic POST 400s with
+                // "tool_use ids were found without tool_result blocks" because history
+                // ends up with an Assistant(tool_use) → ?? gap. Uses Objects.equals
+                // for null-safety (Plan D-5 / R-RAC-2).
+                if (r == null) {
+                    LOG.warn("dispatchParallel: waitForTool returned null for callId={} — substituting sentinel",
+                        expectedId);
+                    r = dispatchCancelledResult(expectedId,
+                        "[" + LlmErrorCodes.LINGS_L04 + "] tool dispatch returned null");
+                } else if (!Objects.equals(expectedId, r.getToolUseId())) {
+                    LOG.warn("dispatchParallel: toolUseId mismatch expected={} actual={} — substituting sentinel",
+                        expectedId, r.getToolUseId());
+                    r = dispatchCancelledResult(expectedId,
+                        "[" + LlmErrorCodes.LINGS_L04 + "] tool dispatch returned wrong toolUseId: "
+                            + r.getToolUseId());
+                }
+                results[i] = r;
             } catch (RuntimeException cancelHandled) {
                 // waitForTool returned a CANCELLED ToolResult or threw on interrupt
                 // — either way the result is already in the ToolResult.
-                results[i] = ToolResult.builder()
-                    .status(ToolResult.Status.ERROR)
-                    .toolUseId(calls.get(i).getId())
-                    .content("cancelled: " + cancelHandled.getMessage())
-                    .isError(true)
-                    .build();
+                results[i] = dispatchCancelledResult(expectedId,
+                    "cancelled: " + cancelHandled.getMessage());
             }
         }
         return results;
+    }
+
+    /**
+     * 🆕 Story #052 — boundary sentinel helper. Collapses the 3 inline
+     * {@code ToolResult.builder()} pattern that previously appeared at dispatchParallel's
+     * cancel-before-wait branch (L562-567), its RuntimeException catch block (L588-593),
+     * and the new r==null / wrong-toolUseId substitution sites. Implementation is identical
+     * — ERROR status + {@code isError=true} + the supplied content + the *expected* toolUseId
+     * (so history stays protocol-consistent regardless of which boundary fired).
+     *
+     * <p>Marked {@code static} because it touches no instance state — the result is
+     * fully determined by its arguments. Static-ness also makes it trivially callable
+     * from the r==null / wrong-toolUseId substitutions above which themselves are
+     * pure expressions.
+     */
+    private static ToolResult dispatchCancelledResult(String toolUseId, String content) {
+        return ToolResult.builder()
+            .status(ToolResult.Status.ERROR)
+            .toolUseId(toolUseId)
+            .content(content)
+            .isError(true)
+            .build();
     }
 
     /**
@@ -549,6 +640,16 @@ public class LinearTurnEngine implements FlowEngine {
      * the cancellation token. Returns either the tool's {@link ToolResult} or a
      * CANCELLED ToolResult (no exception escapes). Mirrors {@link #waitForLlm} but
      * uses the tool's own {@code timeoutSec} budget as the upper bound on slice count.
+     *
+     * <p><b>🆕 Story #052 — strengthened return contract:</b> implementations MUST return
+     * a non-null {@link ToolResult} whose {@code toolUseId} equals the supplied
+     * {@code toolUseId} argument. The downstream boundary sentinel at {@link #dispatchParallel}
+     * relies on this invariant to keep Anthropic protocol history consistent — if this
+     * contract is violated (e.g. a downstream {@code ToolExecutor} SPI implementation
+     * returns {@code null} or a result with a wrong id), the boundary sentinel substitutes
+     * an ERROR {@link ToolResult} with {@code [LINGS-L04]} prefix before committing to
+     * history. The implementation body below is unchanged from Story #049; only this
+     * Javadoc documents the protocol invariant that downstream SPIs must honour.
      */
     private ToolResult waitForTool(CompletableFuture<ToolResult> fut, TurnContext ctx,
                                    int timeoutSec, String toolUseId) {
