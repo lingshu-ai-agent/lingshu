@@ -378,10 +378,14 @@ public class AgentConfig {
         String templateEngine;
         Map<String, String> variables;
         boolean antiVerifyLoop;   // 🆕 v1.5.63 Story #051 — LLM verification-loop prompt guard
+                                  // (default flipped to true in v1.5.64 Story #053)
 
         public static Instructions empty() {
-            return new Instructions(null, null, "none", Collections.emptyMap(), false);
-            //                                                                         ^^^^^ 🆕
+            return new Instructions(null, null, "none", Collections.emptyMap(), true);
+            //                                                                        ^^^^^
+            // 🆕 v1.5.64 Story #053 — default-on. Opt-out via yml agent.instructions.anti-verify-loop: false
+            // (was false in Story #051 — opt-in default; flipped per 2026-10-18 user feedback
+            //  "system prompt 不够啊" — LLM 默认反复 verify 同文件; opt-in 默认 false 等于默认让用户踩坑)
         }
     }
 
