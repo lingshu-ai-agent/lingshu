@@ -718,7 +718,13 @@ public class AgentFactory implements InitializingBean {
             llmTimeoutSeconds,
             reactMaxSteps,
             AgentConfig.Identity.defaults(),
-            AgentConfig.Instructions.empty(),
+            // 🆕 v1.5.64 Story #053 — default-on. Opt-out via yml agent.instructions.anti-verify-loop: false
+            new AgentConfig.Instructions(
+                null,
+                null,
+                "none",
+                Collections.<String, String>emptyMap(),
+                booleanOr(agent.get("instructions"), "anti-verify-loop", true)),
             AgentConfig.Memory.defaults(),
             null,                       // a2aTransport (Story #009 — leave to A2aServerAutoConfig)
             null,                       // tenants (Story #006 — null = single-tenant mode)
