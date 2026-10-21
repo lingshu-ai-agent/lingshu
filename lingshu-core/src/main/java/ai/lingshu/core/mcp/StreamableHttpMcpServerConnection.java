@@ -44,24 +44,22 @@ import java.util.function.Consumer;
 /**
  * Streamable-HTTP MCP transport (Story #021c, dsh §6.5 (2.1)).
  *
- * <p><b>What</b> — Stateless HTTP POST request/response for
- * {@code initialize} / {@code notifications/initialized} /
- * {@code tools/list} / {@code tools/call}, with periodic
- * {@code GET /health} heartbeats and exponential-backoff reconnects.
- * No SSE long-lived stream — the HTTP layer itself is stateless, so
- * reconnect is just a fresh {@code initialize} cycle.
+ * <p><b>What</b> — MCP over the Streamable HTTP transport: <em>one</em> endpoint
+ * that serves POST (and optionally GET/DELETE), per the spec's
+ * "single HTTP endpoint path" rule. Every JSON-RPC message — {@code initialize},
+ * {@code notifications/initialized}, {@code tools/list}, {@code tools/call} — is
+ * POSTed to that same URL; the endpoint is never used as a directory prefix.
  *
- * <p><b>Differences from SSE</b>:
- * <ul>
- *   <li>No SSE reader thread — {@link #close()} does not interrupt any I/O thread.</li>
- *   <li>Heartbeat is the same {@code GET /health} but with no long-poll overhead.</li>
- *   <li>{@link #scheduleReconnect()} is identical to
- *       {@link StdioMcpServerConnection} because there is no extra resource
- *       to tear down between attempts.</li>
- * </ul>
+ * <p><b>Session</b> — the server may return an {@code Mcp-Session-Id} header on
+ * the {@code initialize} response; it is echoed on every later request. A 404
+ * means the session expired, so the client re-initializes and retries once.
  *
- * <p><b>Concurrency</b> — Mirrors {@link SseMcpServerConnection} without
- * the {@code sseReader} field.
+ * <p><b>Responses</b> — a POST may be answered with {@code application/json}
+ * (one message) or {@code text/event-stream} (one or more messages). Both are
+ * handled by {@link McpHttpSupport#postJsonRpcSpec}.
+ *
+ * <p><b>Heartbeat</b> — JSON-RPC {@code ping} (the spec's liveness probe), not a
+ * vendor-specific {@code GET /health}.
  *
  * <p><b>JDK 8 compatibility</b> — Uses {@link java.net.HttpURLConnection}
  * (JDK 1.1); no {@code java.net.http.HttpClient} (JDK 11+);
@@ -90,6 +88,12 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
 
     /** Story #033 — domain guard whitelist (immutable copy from cfg, see ctor). */
     private final List<String> domainWhitelist;
+
+    /** {@code Mcp-Session-Id} issued by the server, echoed on every later request. */
+    private volatile String sessionId;
+
+    /** Version negotiated in {@code InitializeResult.protocolVersion}. */
+    private volatile String protocolVersion;
 
     private ScheduledExecutorService hbExecutor;
     private volatile ScheduledFuture<?> hbFuture;
@@ -165,17 +169,17 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
             return McpCallResult.error("MCP streamable HTTP server requires non-empty url");
         }
-        String url = cfg.getUrl() + (cfg.getUrl().endsWith("/") ? "" : "/") + "tools/call";
+        // Single MCP endpoint: tools/call goes to cfg.getUrl() itself, never to
+        // a "/tools/call" sub-path.
+        String endpoint = cfg.getUrl();
         ObjectNode params = mapper.createObjectNode();
         params.put("name", toolName);
         params.set("arguments", input == null ? mapper.createObjectNode() : input);
-        long id = nextRequestId.incrementAndGet();
-        ObjectNode envelope = McpHttpSupport.wrapJsonRpc(id, "tools/call", params);
         try {
             // Story #033 — Path B + Mitigation 1: check-only domain guard before any
             // outbound HTTP. Same [LINGS-S01] semantics as WebFetchTool (Story #032).
-            McpHttpSupport.checkOrThrow(url, domainWhitelist);
-            JsonNode resp = McpHttpSupport.postJsonRpc(url, envelope, hbTimeoutMs);
+            McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
+            JsonNode resp = request(endpoint, "tools/call", params);
             return McpHttpSupport.parseCallResult(resp);
         } catch (AccessDeniedException e) {
             return McpCallResult.error("[LINGS-S01] " + e.getMessage());
@@ -234,27 +238,16 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
             throw new IOException("MCP streamable HTTP server requires non-empty url");
         }
-        String base = cfg.getUrl();
-        String sep = base.endsWith("/") ? "" : "/";
-
-        long initId = nextRequestId.incrementAndGet();
-        JsonNode initParams = McpHttpSupport.buildInitializeParams();
-        ObjectNode initEnv = McpHttpSupport.wrapJsonRpc(initId, "initialize", initParams);
+        final String endpoint = cfg.getUrl();
         // Story #033 — check-only domain guard before each outbound HTTP call.
-        McpHttpSupport.checkOrThrow(base + sep + "initialize", domainWhitelist);
-        McpHttpSupport.postJsonRpc(base + sep + "initialize", initEnv, hbTimeoutMs);
+        McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
 
-        long notifId = nextRequestId.incrementAndGet();
-        ObjectNode notifEnv = McpHttpSupport.wrapJsonRpc(notifId,
-            "notifications/initialized", mapper.createObjectNode());
-        McpHttpSupport.checkOrThrow(base + sep + "notifications/initialized", domainWhitelist);
-        McpHttpSupport.postNotification(base + sep + "notifications/initialized", notifEnv, hbTimeoutMs);
+        // A reconnect always negotiates a brand-new session.
+        sessionId = null;
+        protocolVersion = null;
+        initialize(endpoint);
 
-        long listId = nextRequestId.incrementAndGet();
-        ObjectNode listEnv = McpHttpSupport.wrapJsonRpc(listId,
-            "tools/list", mapper.createObjectNode());
-        McpHttpSupport.checkOrThrow(base + sep + "tools/list", domainWhitelist);
-        JsonNode listResp = McpHttpSupport.postJsonRpc(base + sep + "tools/list", listEnv, hbTimeoutMs);
+        JsonNode listResp = request(endpoint, "tools/list", mapper.createObjectNode());
         List<McpToolDescriptor> tools = McpHttpSupport.parseToolList(listResp);
         synchronized (cachedTools) {
             cachedTools.clear();
@@ -265,6 +258,91 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         lastBeat.set(System.currentTimeMillis());
         transition(ConnectionState.CONNECTED);
         startHeartbeat();
+    }
+
+    /**
+     * {@code initialize} + {@code notifications/initialized}.
+     *
+     * <p>Only {@code initialize} is a request (has an id); the follow-up
+     * initialized message is a <em>notification</em> and must not carry one.
+     * The server's {@code protocolVersion} and {@code Mcp-Session-Id} are
+     * recorded for every later request.
+     */
+    private void initialize(String endpoint) {
+        long initId = nextRequestId.incrementAndGet();
+        ObjectNode initEnv = McpHttpSupport.wrapJsonRpc(initId, "initialize",
+            McpHttpSupport.buildInitializeParams());
+        McpHttpSupport.HttpRpcResponse initResp = McpHttpSupport.postJsonRpcSpec(
+            endpoint, initEnv, hbTimeoutMs, null, null, initId);
+        if (initResp.getSessionId() != null && !initResp.getSessionId().isEmpty()) {
+            sessionId = initResp.getSessionId();
+        }
+        JsonNode result = unwrap(initResp.getBody(), "initialize");
+        String negotiated = result.path("protocolVersion").asText("");
+        protocolVersion = negotiated.isEmpty()
+            ? McpHttpSupport.PROTOCOL_VERSION : negotiated;
+        LOG.info("[MCP:{}] streamable HTTP negotiated protocol version {}{}",
+            cfg.getName(), protocolVersion,
+            sessionId == null ? " (stateless)" : " (session " + sessionId + ")");
+
+        ObjectNode notifEnv = McpHttpSupport.wrapNotification(
+            "notifications/initialized", null);
+        McpHttpSupport.postJsonRpcSpec(endpoint, notifEnv, hbTimeoutMs,
+            sessionId, protocolVersion, null);
+    }
+
+    /**
+     * POST one JSON-RPC request to the single MCP endpoint and return the full
+     * response envelope.
+     *
+     * <p>On {@code 404} with a live session id the server has forgotten the
+     * session (spec: clients MUST start a new one), so we re-initialize and
+     * retry exactly once.
+     */
+    private JsonNode request(String endpoint, String method, JsonNode params) {
+        long id = nextRequestId.incrementAndGet();
+        ObjectNode envelope = McpHttpSupport.wrapJsonRpc(id, method, params);
+        try {
+            return post(endpoint, envelope, id);
+        } catch (McpHttpSupport.McpHttpStatusException e) {
+            if (e.getStatus() == 404 && sessionId != null) {
+                LOG.info("MCP server {} session expired (404) on {}, re-initializing",
+                    cfg.getName(), method);
+                sessionId = null;
+                protocolVersion = null;
+                initialize(endpoint);
+                return post(endpoint, envelope, id);
+            }
+            throw e;
+        }
+    }
+
+    private JsonNode post(String endpoint, ObjectNode envelope, long id) {
+        McpHttpSupport.HttpRpcResponse resp = McpHttpSupport.postJsonRpcSpec(
+            endpoint, envelope, hbTimeoutMs, sessionId, protocolVersion, id);
+        if (resp.getSessionId() != null && !resp.getSessionId().isEmpty()) {
+            sessionId = resp.getSessionId();
+        }
+        return resp.getBody();
+    }
+
+    /** Unwrap {@code result}, turning a JSON-RPC {@code error} into an exception. */
+    private JsonNode unwrap(JsonNode body, String method) {
+        if (body == null || body.size() == 0) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                method + ": empty response body");
+        }
+        JsonNode error = body.get("error");
+        if (error != null && !error.isNull()) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                method + " failed: " + error);
+        }
+        JsonNode result = body.get("result");
+        if (result == null || result.isNull()) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                method + ": response has no result");
+        }
+        return result;
     }
 
     // ── Internal — heartbeat ────────────────────────────────────────────
@@ -281,6 +359,10 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
                 }
             };
             hbExecutor = Executors.newSingleThreadScheduledExecutor(tf);
+        }
+        ScheduledFuture<?> old = hbFuture;
+        if (old != null) {
+            old.cancel(false);
         }
         hbFuture = hbExecutor.scheduleWithFixedDelay(new Runnable() {
             @Override
@@ -309,28 +391,24 @@ public class StreamableHttpMcpServerConnection implements McpServerConnection {
         if (closing.get() || state.get() != ConnectionState.CONNECTED) {
             return;
         }
-        if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
+        String endpoint = cfg.getUrl();
+        if (endpoint == null || endpoint.isEmpty()) {
             handleDisconnect("url empty");
             return;
         }
         try {
-            String healthUrl = cfg.getUrl() + (cfg.getUrl().endsWith("/") ? "" : "/") + "health";
-            // Story #033 — check-only domain guard for health probe (Story #032
-            // parity). AccessDeniedException bubbles up to handleDisconnect via
-            // the outer catch (Throwable t) below — non-whitelisted host = drop
-            // connection (same as LINGS-M03 timeout).
-            McpHttpSupport.checkOrThrow(healthUrl, domainWhitelist);
-            String body = McpHttpSupport.getJson(healthUrl, hbTimeoutMs);
-            if (body == null) {
-                handleDisconnect("health null");
-                return;
-            }
+            // Story #033 — check-only domain guard for the liveness probe.
+            McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
+            // Spec liveness probe: JSON-RPC ping, not a vendor /health endpoint.
+            unwrap(request(endpoint, "ping", mapper.createObjectNode()), "ping");
             lastBeat.set(System.currentTimeMillis());
             reconnectAttempts.set(0);
+        } catch (AccessDeniedException e) {
+            handleDisconnect("ping " + e.getMessage());
         } catch (McpTransportException e) {
-            handleDisconnect("health " + e.getCode() + ": " + e.getMessage());
+            handleDisconnect("ping " + e.getCode() + ": " + e.getMessage());
         } catch (Throwable t) {
-            handleDisconnect("health error: " + t.getMessage());
+            handleDisconnect("ping error: " + t.getMessage());
         }
     }
 

@@ -245,6 +245,39 @@ public class AgentConfig {
         long heartbeatTimeoutMs;
         /** 🆕 Story #021a — exponential backoff cap (ms); default {@code 60000}. */
         long reconnectCapMs;
+        /** 🆕 出站域名白名单(仅 HTTP 传输 SSE / STREAMABLE_HTTP 生效);{@code null} 或空表示拒绝所有出站主机。 */
+        List<String> domainWhitelist;
+
+        /**
+         * 全参构造器(10 参)。{@code @Value} 在类中已存在显式构造器时不再生成
+         * 全参构造器,故此处手写。
+         */
+        public ServerConfig(String name, String command, List<String> args, Map<String, String> env,
+                            McpTransportType transport, String url, long heartbeatIntervalMs,
+                            long heartbeatTimeoutMs, long reconnectCapMs, List<String> domainWhitelist) {
+            this.name = name;
+            this.command = command;
+            this.args = args;
+            this.env = env;
+            this.transport = transport;
+            this.url = url;
+            this.heartbeatIntervalMs = heartbeatIntervalMs;
+            this.heartbeatTimeoutMs = heartbeatTimeoutMs;
+            this.reconnectCapMs = reconnectCapMs;
+            this.domainWhitelist = domainWhitelist;
+        }
+
+        /**
+         * 9 参便利构造器(Story #021a 既有形态,不含域名白名单)。
+         * {@code AgentConfigMcpBackwardCompatTest} 把"旧字段形态仍是合法输入"当作契约,
+         * 故保留该重载;{@code domainWhitelist} 置为 {@code null}。
+         */
+        public ServerConfig(String name, String command, List<String> args, Map<String, String> env,
+                            McpTransportType transport, String url,
+                            long heartbeatIntervalMs, long heartbeatTimeoutMs, long reconnectCapMs) {
+            this(name, command, args, env, transport, url,
+                heartbeatIntervalMs, heartbeatTimeoutMs, reconnectCapMs, null);
+        }
     }
 
     @Value

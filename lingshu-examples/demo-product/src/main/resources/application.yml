@@ -201,30 +201,39 @@ agent:
         transport: stdio
         command: python3
         args:
-          - src/main/resources/mcp-servers/echo-stdio.py
+          - d:\lingshu\lingshu-examples\demo-product\src\main\resources\mcp-servers\echo-stdio.py
         # env: {}        # uncomment + customize env if your server needs it
         heartbeat-interval-ms: 30000
         heartbeat-timeout-ms: 10000
         reconnect-cap-ms: 60000
 
-      # ── 2. SSE — replace URL with a real SSE MCP server ────────────────
-      # McpServerConnectionFactory dispatches to SseMcpServerConnection on
-      # transport=sse. Connection lifecycle: GET /sse stays open; heartbeat
-      # = GET /health; reconnect rebuilds HttpClient + re-handshakes.
-      - name: reference-sse
+      # ── 2. SSE — 官方参考服务器 `server-everything`(HTTP+SSE 传输)─────
+      # 启动:  npx -y @modelcontextprotocol/server-everything sse
+      # 默认监听 :3001。客户端用 `url` 拼出长连接 GET /sse,然后按服务端下发的
+      # `event: endpoint` 拿到 POST URI 再发 initialize / tools/list,响应从流上
+      # 按 JSON-RPC id 匹配。`url` 写 base 即可(带不带 /sse 都能识别)。
+      - name: everything-sse
         transport: sse
-        url: http://localhost:9999/sse
+        url: http://localhost:3001
+        domain-whitelist:
+          - localhost
+          - 127.0.0.1
         heartbeat-interval-ms: 30000
         heartbeat-timeout-ms: 10000
         reconnect-cap-ms: 60000
 
-      # ── 3. STREAMABLE_HTTP — replace URL with a real HTTP MCP server ───
-      # McpServerConnectionFactory dispatches to StreamableHttpMcpServerConnection
-      # on transport=streamable_http. Each request is a fresh POST; no long-lived
-      # connection.
-      - name: reference-streamable
+      # ── 3. STREAMABLE_HTTP — 官方参考服务器 `server-everything` ────────
+      # 启动(与 SSE 并存,用 PORT 覆盖到 3002):
+      #   set PORT=3002 & npx -y @modelcontextprotocol/server-everything streamableHttp
+      # 规范要求单一 MCP endpoint:所有 JSON-RPC 消息都 POST 到 /mcp 本身,
+      # 服务端返回 Mcp-Session-Id,后续请求回传该头;响应可能是 application/json
+      # 或 text/event-stream,客户端两种都解析。心跳用 JSON-RPC ping。
+      - name: everything-streamable
         transport: streamable_http
-        url: http://localhost:9998/mcp
+        url: http://localhost:3002/mcp
+        domain-whitelist:
+          - localhost
+          - 127.0.0.1
         heartbeat-interval-ms: 30000
         heartbeat-timeout-ms: 10000
         reconnect-cap-ms: 60000
