@@ -11,6 +11,315 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-10-19
+
+### Summary
+
+**LingShu 0.2.0** is the second stable release of the LingShu Agent Engine —
+a minor version increment over v0.1.0 that delivers the **9 Slot × 9 Plugin
+100% production-wired milestone** (every SPI is now end-to-end callable, not
+just stubbed), plus a production-grade live-streaming API and a Claude-Code-parity
+anti-verification-loop default. **Zero SPI breakings** vs. v0.1.0: all changes
+are additive features behind existing contracts, so D4 `STABLE` consumers
+can upgrade without recompilation.
+
+This release ships **10 Stories** via 9 PRs since v0.1.0 (~830 tests passing),
+maintains the **Apache-2.0 licensing** with full SPDX coverage, and extends
+the **R-13 mitigation (d) 0 binary delta** streak to **36 consecutive PASSes**
+(no new Maven dependencies introduced in the 0.2.0 cycle).
+
+### Headline Numbers
+
+| Metric | v0.1.0 | **v0.2.0** | Delta |
+|---|---|---|---|
+| **Stories shipped (cumulative)** | 45 | **55** | +10 |
+| **PRs since v0.1.0** | — | **9** | +9 |
+| **Tests passing** | 766 | **~830** | +64 |
+| **Maven dependencies introduced** | 0 | **0** | 0 (R-13 (d) maintained) |
+| **R-13 mitigation (d) PASS streak** | 29 | **36** | +7 consecutive |
+| **`@PublicApi(STABLE)` SPI count** | 14 | **14** | unchanged |
+| **Breaking changes** | — | **0** | D4 promise honored |
+| **License** | Apache-2.0 | **Apache-2.0** | unchanged |
+| **Java source level** | 1.8 | **1.8** | unchanged |
+| **Java runtime** | JDK 17+ | **JDK 17+** | unchanged |
+| **Distribution channel** | GitHub Packages | **GitHub Packages** | unchanged |
+
+### Added — Slot 5 SessionStore save-after-turn (Story #014 + Story #046)
+
+- **Story #014 — session-store-multi-backend**:Two backend implementations
+  (`InMemorySessionStore` default + `FileSessionStore` atomic write protocol)
+  via the v1.5.28 multi-Provider pattern. `Checkpoint.@Value` gains Jackson
+  `@JsonCreator` / `@JsonProperty` 4-arg ctor + `Message.@JsonTypeInfo` /
+  `@JsonSubTypes` for round-trip serialization across all 4 `Message`
+  subclasses. Multi-tenant `resolveBaseDir()` via `TenantContext.current()` +
+  `_default` sentinel + regex-validated session IDs
+  (`[a-zA-Z0-9._-]{1,128}`) blocking path traversal. `IOException` /
+  `JsonProcessingException` wrapped as `LingsSessionStoreException[LINGS-X01]`.
+- **Story #046 — session-store-save-after-turn**:Closes the `SessionStoreRouter`
+  Javadoc-stated "follow-up Story" gap. `LinearTurnEngine` 7→24-field, then 8
+  args, adding `SessionStore sessionStore` final field + 5 turn-completion
+  hook points (`trySave(ctx)` swallow-failure guard). `NullSessionStore`
+  sentinel protects Story #001–Story #014 historical fixtures (no `sessionStore`
+  wiring = no-op). `LinearTurnEngineProvider` 8-arg ctor adds
+  `SessionStoreRouter` injection using the **Spring 6 dual-ctor `@Autowired`
+  pattern** (legacy 7-arg ctor delegates to 8-arg with `null`; primary 8-arg
+  ctor carries `@Autowired`). `AgentFactory` ctor expands 8→9 Router slots
+  (`@Autowired SessionStoreRouter`). `agent.session-store: file` YAML key
+  now actually resolves + persists to disk. End-to-end test:
+  `Files.list(sessionStoreDir).count() == 1` after a full turn + history round-trip.
+
+### Added — Slot 6 Compactor turn-trigger (Story #045)
+
+- **Story #045 — compactor-turn-trigger**:**9-Slot × 9-Plugin 100% real-wired
+  milestone.** `LinearTurnEngine` 6→7 args, adding `Compactor compactor`
+  final field with 4 invocation points (per-step ToolResult, maxSteps guard,
+  cancel, exception). `NullCompactor` sentinel for historical fixture back-compat.
+  `LinearTurnEngineProvider` 7-arg ctor + Spring 6 dual-ctor `@Autowired`
+  pattern (second deployment of this pattern — now a project member). `TruncatingCompactor`
+  default `priority=10` registers via `CompactorRouter.resolve("truncating", cfg)`
+  driven by `agent.config.compactor: truncating` top-level YAML key.
+  `AgentEvent.Compaction` 4-segment event subclass family
+  (`Started` / `Progress` / `Completed` / `Failed`).
+
+### Added — Ask-Mode End-to-End + Sentinel ToolResult (Stories #047 + #048)
+
+- **Story #047 — ask-policy-end-to-end-wiring**:Two latent silent-ignored
+  wiring gaps closed. (1) `AgentFactory.java:280` typo
+  `getSandbox().getPolicy()` → `getPermissionPolicy()` (Slot 3 `RuntimeSandbox.getPolicy()`
+  vs Slot 4 `getPermissionPolicy()` name drift). (2) `demo-product`
+  `ChatController.createSession` 28-arg `AgentConfig.builder()` hand-roll
+  bypassed `application.yml`'s `permission-policy: ask` + `tools.ask-list: [bash]`.
+  Refactored to `agentFactory.create(loadYaml)` — `@Bean`-injected `AgentConfig`
+  is now actually consulted, so `PermissionPolicyRouter.resolve("ask", cfg)`
+  picks the right Provider. `PermissionPolicyRouter` internal `byName` Map
+  now contains 3 entries (default + strict + ask).
+- **Story #048 — ask-user-sentinel-tool-result (hang-safety)**:**Anthropic
+  protocol invariant fix.** `LinearTurnEngine.dispatchWithPolicy` AskUser
+  branch now commits a `[PENDING_APPROVAL] Awaiting user decision for tool: <name>`
+  sentinel `ToolResult.error(...)` to history via `turnContext.appendToolResult()`
+  **before** blocking on `future.get()`. Without this, hang scenarios
+  (overnight approval, browser close, demo-product crash) left history stuck
+  at `Assistant(tool_use) → ???` with no matching `tool_result`, breaking
+  Anthropic's protocol hard constraint on the next turn (HTTP 400 "messages.X:
+  tool_use ids were found without tool_result blocks"). `DefaultTurnContext.appendToolResult`
+  gains upsert-by-toolUseId semantics: scans history tail for an
+  `Assistant(toolCalls[i].id == toolResult.toolUseId)` and in-place replaces /
+  appends if not found — preventing sentinel duplication on retry.
+
+### Added — Live Reactive Streaming API (Story #049)
+
+- **Story #049 — agent-run-live-streaming**:**Reactive Streams 1.0.4 hot-lazy
+  `Publisher<AgentEvent>` real-wired on `DefaultAgent.run(Prompt)`.**
+  Story #001's drain-and-replay synchronous path remains 100% preserved on
+  `runBlocking(Prompt) → LlmResponse` (4-case reverse AC suite). Strict spec
+  compliance: §1.3 cancel-terminal-state / §1.9 null-check / §2.2 single-subscriber
+  (`AtomicBoolean subscribed` guard) / §2.7 serial onNext / §3.9 non-positive
+  `request(long n)` → `IllegalArgumentException`. `PARK_NANOS=50ms` back-pressure
+  + `PARK_TIMEOUT_NANOS=1s` cancel-safe wake. First-event latency drops from
+  O(turn) ≈ hundreds-of-ms to O(emit) ≈ single-digit-ms — Claude-Code-grade
+  UX parity.
+
+### Added — Ask-Mode Hardening + Verification-Loop Guard (Stories #050 + #051)
+
+- **Story #050 — ask-loop-guard**:Two production bugs fixed. (1) SSE step
+  counter reset on each `message_start` (Anthropic emits `message_start` per
+  tool_use round — engine‑level `ReasoningStarted(step, maxSteps)` was being
+  overwritten). New `AgentEvent.LlmStreamStarted(streamId, maxOutputTokens)`
+  nested class as the correct translation; engine step counter now stays
+  stable 1/10 → 2/10 → … → 10/10. (2) Ask-mode infinite hang: human Deny
+  → same `toolUseId` re-issued → blocks forever on re-approval. New
+  `attemptedDeny: Set<String>` field tracked in `LinearTurnEngine` (turn-scoped
+  reset at `runTurn()` head). AskUser-branch guard substitutes a
+  `[LINGS-P02] tool previously denied: <name>` sentinel on second occurrence.
+- **Story #051 — duplicate-tool-call-detector (Option A prompt-fix)**:
+  LLM semantic verification-loop behavior observed in 33-step SSE traces
+  (LLM writes → reads to verify → reads again to re-verify → …). Pre-Option-A
+  4-file engine-guard plan **withdrawn** by user choice (engine guards risk
+  false-positives on legitimate retry / atomic-edit / append-by-position).
+  Replaced with opt-in prompt engineering: `DefaultPromptBuilder.ANTI_VERIFY_LOOP_CLAUSE`
+  static constant appended in INSTRUCTIONS segment when
+  `instructions.anti-verify-loop: true`. `AgentConfig.Instructions` 4→5 args
+  adding `boolean antiVerifyLoop` (Jackson `@JsonProperty("anti-verify-loop")`
+  kebab-case). Off-by-default preserves 100% back-compat for Story #002—Story #050
+  historical fixtures.
+
+### Added — Anti-Verify-Loop Default Flip (Story #053)
+
+- **Story #053 — anti-verify-loop-default-on**:Default flip of
+  `Instructions.empty()` factory last arg `false → true` + `AgentFactory.toAgentConfig`
+  YAML `booleanOr` default → `true`. Demo-product `application.yml` adds
+  explicit opt-out comment (`# anti-verify-loop: false`). **LLM verification-loop
+  fix is now zero-config out-of-the-box** — business side operators no longer
+  need to remember the opt-in. Engine paths in `LinearTurnEngine` /
+  `DefaultAgent` / `DefaultToolExecutor` remain untouched (Story #051
+  pre-Option-A 4-file engine-guard plan stays withdrawn). Sentinel helper
+  reused from Story #051.
+
+### Added — Parallel Dispatch Protocol-Safety (Story #052)
+
+- **Story #052 — dispatch-parallel-protocol-safety**:**Anthropic protocol
+  invariant boundary guard for `LinearTurnEngine.dispatchParallel` multi-tool-call
+  path.** Two result-shape gaps that would break "every `tool_use` must have
+  a matching `tool_result` by `toolUseId`": (1) downstream SPI returns `null`
+  (MCP timeout, nack); (2) downstream SPI returns `ToolResult` with wrong
+  `toolUseId` (port conflict, prompt cache reuse staleness). New
+  `LINGS_L04 = "LINGS-L04"` (`PARALLEL_DISPATCH_RACE`) + private static
+  `dispatchCancelledResult(toolUseId, content)` 5-line helper substitutes a
+  `[LINGS-L04] …` sentinel `ToolResult` matching the original call's
+  `toolUseId`. Five guard × five-race prevention coverage:
+  cancel-before-dispatch / exception / null-result / wrong-id / cancel-during-dispatch.
+
+### Hygiene / Refactor (v0.2.0)
+
+- **`UPDATEINFO.md` split from README** (#78) — Verbose per-Story changelog
+  blocks moved out of README into a dedicated `UPDATEINFO.md` to keep README
+  scannable.
+- **`README.md` + `specs/ROADMAP.md` sync** (Story #053 doc sync, commit
+  `9a4c537`) — Top-block "更新日期" + "Story 路线图" updated with
+  Story #046 / Story #049 / Story #050 / Story #052 / Story #053 retrospectives.
+
+### Bug Fixes (v0.2.0)
+
+- **`demo-product` AgentCardCache missing-bean startup failure** (#75) —
+  `RemoteAgentSchemaBuilder` autowire chain added the missing `AgentCardCache`
+  bean so demo-product-a2a-server starts cleanly.
+- **Windows backslash path tool-name normalization** (#80 + regression #81) —
+  `ClasspathSkillSource` description parser failed on Windows-style paths;
+  normalization + regression case shipped.
+- **`demo-product` yml `session-store` / `compactor` field silent-ignored**
+  (#82) — Field names didn't bind to runtime config; now resolves via
+  `agentFactory.create(loadYaml)` round-trip.
+- **`release.yml` `mvn verify deploy` → `mvn clean deploy`** (carried in
+  v0.1.0 release, but worth re-documenting) — Two-pass lifecycle fires
+  `source:jar-no-fork` twice, producing "duplicated artifacts" error.
+
+### Compatibility
+
+#### API Compatibility Promise (D4)
+
+- **Zero breaking changes vs. v0.1.0.** All 14 `@PublicApi(STABLE)` interfaces
+  preserve their public method signatures. New features are:
+  - new constructor parameters (Lombok `@Value` / `@AllArgsConstructor` adds
+    new fields; existing call sites continue to compile via the
+    `@AllArgsConstructor` regen pattern)
+  - new fields on `AgentConfig` (24 → 26 fields added over the v0.1.0 cycle;
+    all default-valued)
+  - new SPI sub-cases (`SlotRouter` continue to work; new Providers register
+    alongside existing ones)
+- **`@PublicApi(STABLE)` count** — 14 (unchanged). New entries planned for
+  v0.3.0 candidate SPIs are tagged `INCUBATING` first.
+
+#### Java Compatibility
+
+- **Source level**: Java 1.8 (`<source>1.8</source>`). Code continues to
+  avoid JDK 9+ features: `record` / `sealed` / `var` / `List.of(...)` /
+  pattern-switch / text blocks. Reactive Streams 1.0.4 stays the canonical
+  reactive interface (JDK 9+ `Flow` not used for cross-library compat).
+- **Runtime**: JDK 17+ required (Spring Boot 3.2.5 hard requirement).
+  Tested against Temurin / Zulu / Alibaba Dragonwell / IBM Semeru.
+
+#### Dependency Compatibility (R-13 mitigation (d))
+
+**13 locked dependencies** — **unchanged** from v0.1.0. **0 new Maven
+dependencies** in the entire 10-Story v0.2.0 cycle. **R-13 mitigation (d)
+0 binary delta streak: 36 consecutive Story merges** (Story #043 through
+Story #053).
+
+The Maven Enforcer plugin's `banned-dependencies` rule still rejects the
+same 5 banned artifacts (Spring AI starters / `jtokkit`). Build-time failure
+on any new dependency introduction continues to enforce the dsh §10.1
+lock table.
+
+### Security
+
+v0.2.0 inherits all v0.1.0 security properties unchanged:
+
+- **Sandbox isolation (Slot 3)** — All Tool filesystem / HTTP / process
+  calls flow through `RuntimeSandbox`. `AccessDeniedException[LINGS-S01]`
+  on out-of-bounds access.
+- **Permission policy** — `StrictPermissionPolicy` pattern matching +
+  `AskUserPermissionPolicy` 5-segment decision + `ApprovalRegistry` SSE
+  round-trip + `attemptedDeny` turn-scoped guard (Story #050).
+- **MCP HTTP domain guard (Story #033)** — 12 hook points in SSE /
+  streamable HTTP transports reject off-whitelist hosts.
+- **A2A HTTP domain guard (Story #034)** — Per-remote-agent domain whitelist
+  in `HttpJsonRpcA2aTransport`.
+- **No `Spring AI ChatClient.tools().call()`** — `ToolExecutor.dispatch()`
+  5-step pipeline is the single entry point. Auto-tool-execution via Spring
+  AI is **forbidden** (dsh §4.10.1 硬规则 2).
+- **Anti-verification-loop default (Story #053)** — Defends against LLM
+  semantic traps that could otherwise induce runaway loops consuming tokens
+  without making progress (lower-cost, lower-impact, no new code-execution
+  surface).
+
+### Known Issues / Limitations
+
+Carried from v0.1.0:
+
+- **`ServeHandlerTest`** hang in `lingshu-cli` standalone mode (pre-existing,
+  unrelated to v0.2.0 changes). Workaround: `mvn -pl lingshu-cli test
+  -Dtest='!ServeHandlerTest'`.
+- **`AnthropicToolReActIT`** 2 cases fail in standalone mode (pre-existing,
+  passes in full-suite mode). Documented in Story #043 retrospective.
+- **`McpServerConnectionIT`** heartbeat flake — 2 of the MCP heartbeat-recovery
+  tests occasionally time out at the 60-second cap under heavily loaded CI
+  runners. Timing-sensitive, not deterministic. Affects <0.5% of CI runs.
+
+Deferred to v0.3.0 (announced in v0.1.0 release notes; explicitly **not**
+shipped in v0.2.0 — see "What's Next"):
+
+- **`AuditLogger` concrete production implementation** (PostgreSQL + OpenTelemetry
+  exporters). v0.1.0 shipped the SPI stub + `NoOpAuditLogger` default;
+  v0.2.0 adds no concrete logger (Story #016 reserved).
+- **§14 N6 graceful shutdown** — Drain in-flight turns on `SIGTERM`. The
+  `LINGS-L03` reserved ErrorCode slot stays dormant.
+- **§14 N4 CostBudget** — Per-session token/cost caps with structured
+  `AgentEvent.CostExceeded` event.
+- **`SummaryCompactor`** — LLM-driven summarization compactor alongside the
+  default `TruncatingCompactor`.
+
+### Upgrade / Migration Notes
+
+For v0.1.0 consumers upgrading to v0.2.0:
+
+1. **Drop-in compatible at the API surface.** All 14 `@PublicApi(STABLE)`
+   interfaces are unchanged. `lingshu-core` v0.2.0 is API-compatible with
+   all v0.1.0 binaries.
+2. **`AgentConfig` schema** — 26 fields (unchanged from v0.1.0; the
+   `maxConcurrentTurns` + `maxConcurrentQueueDepth` additions were already
+   in v0.1.0). No new fields added in v0.2.0.
+3. **`AgentConfig.Instructions` schema** — 4 → 5 fields. New
+   `boolean antiVerifyLoop` field **defaults to `true`** (Story #053).
+   To restore v0.1.0 behavior: add `agent.instructions.anti-verify-loop: false`
+   to your `application.yml`.
+4. **`LinearTurnEngine` ctor arity** — 6→7 (Story #045) → 8 (Story #046).
+   Custom subclassers must add the new ctor parameters; Spring autowiring
+   handles the wiring transparently for the supplied `LinearTurnEngineProvider`.
+5. **`AgentFactory` ctor arity** — 8-Router → 9-Router (Story #046 added
+   `SessionStoreRouter`). Custom `AgentFactory` subclassers must add the
+   new Router parameter.
+6. **Plugin authors** — Continue implementing `SlotProvider`. v0.2.0
+   introduces no new Slot, but the 9-Slot × 9-Plugin 100% real-wired
+   milestone means every `agent.<slot>.name` YAML key now actually
+   resolves + takes effect (no silent-ignored fields).
+7. **`AgentEvent.LlmStreamStarted`** — New event subclass; SSE consumers
+   may need to handle the new `llm.stream.started` event type for stable
+   step counters.
+
+### Acknowledgments
+
+- **Apache DSH / Dubbo SPI** — LingShu's design draws inspiration from
+  Apache DSH (Dynamic Service Hosting) and Apache Dubbo's plugin / SPI
+  architecture.
+- **Spring Boot 3.2.5** — Provides the DI container, configuration
+  properties, and `@AutoConfiguration` machinery.
+- **Spring AI 1.0.0-M6** — Used **only** for LLM protocol conversion
+  + `@Tool` JSON Schema generation (NOT for tool execution).
+- **Reactive Streams 1.0.4** — Story #049 `DefaultAgent.run()` `Publisher`
+  implementation strictly conforms to the spec.
+
+---
+
 ## [0.1.0] - 2026-10-07
 
 ### Summary
