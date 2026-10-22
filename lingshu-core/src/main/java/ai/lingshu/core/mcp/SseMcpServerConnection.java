@@ -26,16 +26,19 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -48,35 +51,25 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
- * SSE (Server-Sent Events) MCP transport (Story #021c, dsh §6.5 (2.1) L4821-4835).
+ * HTTP+SSE MCP transport (Story #021c, dsh §6.5 (2.1) L4821-4835).
  *
- * <p><b>What</b> — Talks JSON-RPC over an HTTP POST request/response
- * cycle (initialize / tools/list / tools/call) and holds a long-lived
- * {@code GET} connection that delivers server-pushed SSE events
- * ({@code notifications/tools/list_changed}, etc.). Heartbeats are
- * {@code GET /health}; reconnects are exponential-backoff and infinite.
- *
- * <p><b>Three differences from stdio</b> (dsh L4821-4835):
+ * <p><b>Protocol shape</b> — the deprecated-but-supported HTTP+SSE transport
+ * defines exactly two endpoints:
  * <ol>
- *   <li>Heartbeat is {@code GET /health} (not {@code Process.isAlive()}).</li>
- *   <li>Reconnect rebuilds the {@code HttpURLConnection} (not the subprocess).</li>
- *   <li>Long-lived {@code GET} SSE stream runs on a dedicated daemon
- *       {@link Thread} (not on {@link ScheduledExecutorService} which is
- *       wrong for blocking I/O).</li>
+ *   <li>{@code GET} on the SSE URL — a long-lived stream. The server's
+ *       <em>first</em> event is {@code event: endpoint}, whose {@code data} is
+ *       the URI (usually relative) that client messages must be POSTed to.</li>
+ *   <li>{@code POST} on that announced URI — the only way to send anything.</li>
  * </ol>
+ * Responses do <b>not</b> come back in the POST body: the POST is acknowledged
+ * (202) and the JSON-RPC answer is pushed as {@code event: message} on the
+ * stream, correlated by request id. {@link #request} implements exactly that.
  *
- * <p><b>Concurrency</b> — Mirrors {@link StdioMcpServerConnection}:
- * <ul>
- *   <li>{@link #state} — {@link AtomicReference}, transitions are CAS'd</li>
- *   <li>{@link #lastBeat} — {@link AtomicLong}</li>
- *   <li>{@link #reconnectAttempts} — {@link AtomicInteger}</li>
- *   <li>{@link #listeners} — {@link CopyOnWriteArrayList}</li>
- *   <li>{@link #closing} — {@link AtomicBoolean}, guards close()</li>
- *   <li>{@link #sseReader} — {@code volatile Thread}, dedicated SSE reader</li>
- * </ul>
+ * <p><b>Heartbeat</b> — JSON-RPC {@code ping} over the announced POST URI (the
+ * spec's liveness probe), not a vendor {@code GET /health}.
  *
  * <p><b>Reconnect backoff</b> — 1s → 2s → 4s → 8s → 16s → 32s → 60s (cap),
- * then infinite retries. Reset to 1s on a successful heartbeat.
+ * then infinite retries. Reset on a successful heartbeat.
  *
  * <p><b>JDK 8 compatibility</b> — Uses {@link HttpURLConnection} (JDK 1.1
  * builtin); no {@code java.net.http.HttpClient} (JDK 11+); no
@@ -110,10 +103,32 @@ public class SseMcpServerConnection implements McpServerConnection {
     /** Story #033 — domain guard whitelist (immutable copy from cfg, see ctor). */
     private final List<String> domainWhitelist;
 
+    /** Absolute POST URI announced by the server's {@code endpoint} event. */
+    private volatile String postEndpoint;
+
+    /** Live SSE connection — disconnected to unblock a blocked {@code readLine}. */
+    private volatile HttpURLConnection sseConn;
+
+    /** Released when the {@code endpoint} event arrives (one per connect attempt). */
+    private volatile CountDownLatch endpointLatch = new CountDownLatch(1);
+
+    /** In-flight requests awaiting their answer on the SSE stream, keyed by JSON-RPC id. */
+    private final Map<Long, Pending> pending = new ConcurrentHashMap<>();
+
+    /** Version negotiated in {@code InitializeResult.protocolVersion}. */
+    private volatile String protocolVersion;
+
     private ScheduledExecutorService hbExecutor;
     private volatile ScheduledFuture<?> hbFuture;
     private volatile ScheduledFuture<?> reconnectFuture;
     private volatile Thread sseReader;
+
+    /** One request waiting for its {@code event: message} on the stream. */
+    private static final class Pending {
+
+        private final CountDownLatch latch = new CountDownLatch(1);
+        private volatile JsonNode response;
+    }
 
     /** Convenience ctor — uses all defaults from {@link McpServerConfig}. */
     public SseMcpServerConnection(McpServerConfig cfg) {
@@ -190,17 +205,19 @@ public class SseMcpServerConnection implements McpServerConnection {
         if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
             return McpCallResult.error("MCP SSE server requires non-empty url");
         }
-        String url = cfg.getUrl() + (cfg.getUrl().endsWith("/") ? "" : "/") + "tools/call";
+        String endpoint = postEndpoint;
+        if (endpoint == null || endpoint.isEmpty()) {
+            return McpCallResult.error(
+                "MCP SSE server has not announced its POST endpoint yet");
+        }
         ObjectNode params = mapper.createObjectNode();
         params.put("name", toolName);
         params.set("arguments", input == null ? mapper.createObjectNode() : input);
-        long id = nextRequestId.incrementAndGet();
-        ObjectNode envelope = McpHttpSupport.wrapJsonRpc(id, "tools/call", params);
         try {
             // Story #033 — Path B + Mitigation 1: check-only domain guard before any
             // outbound HTTP. Same [LINGS-S01] semantics as WebFetchTool (Story #032).
-            McpHttpSupport.checkOrThrow(url, domainWhitelist);
-            JsonNode resp = McpHttpSupport.postJsonRpc(url, envelope, hbTimeoutMs);
+            McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
+            JsonNode resp = request("tools/call", params);
             return McpHttpSupport.parseCallResult(resp);
         } catch (AccessDeniedException e) {
             return McpCallResult.error("[LINGS-S01] " + e.getMessage());
@@ -240,6 +257,10 @@ public class SseMcpServerConnection implements McpServerConnection {
             doConnect();
         } catch (Throwable t) {
             LOG.warn("MCP server {} start failed: {}", cfg.getName(), t.getMessage());
+            // A failed handshake may have left the SSE stream open (e.g.
+            // initialize timed out) — drop it before backing off.
+            interruptSseReader();
+            failAllPending("connection attempt failed");
             transition(ConnectionState.RECONNECTING);
             scheduleReconnect();
         }
@@ -262,54 +283,44 @@ public class SseMcpServerConnection implements McpServerConnection {
         if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
             throw new IOException("MCP SSE server requires non-empty url");
         }
-        String base = cfg.getUrl();
-        String sep = base.endsWith("/") ? "" : "/";
+        final String sseUrl = resolveSseUrl(cfg.getUrl());
+        // Story #033 — check-only domain guard before the long-lived GET.
+        McpHttpSupport.checkOrThrow(sseUrl, domainWhitelist);
 
-        // 1) initialize
-        // Story #033 — check-only domain guard before each outbound HTTP call.
-        McpHttpSupport.checkOrThrow(base + sep + "initialize", domainWhitelist);
-        long initId = nextRequestId.incrementAndGet();
-        JsonNode initParams = McpHttpSupport.buildInitializeParams();
-        ObjectNode initEnv = McpHttpSupport.wrapJsonRpc(initId, "initialize", initParams);
-        McpHttpSupport.postJsonRpc(base + sep + "initialize", initEnv, hbTimeoutMs);
+        // 1) Open the stream and block until the server announces its POST URI.
+        //    Per spec this "endpoint" event is the operational contract: there is
+        //    no fixed "/message" or per-method path to hard-code.
+        postEndpoint = null;
+        endpointLatch = new CountDownLatch(1);
+        startSseReader(sseUrl);
+        if (!await(endpointLatch, hbTimeoutMs)) {
+            throw new IOException("no 'endpoint' event from SSE server within "
+                + hbTimeoutMs + "ms");
+        }
+        String endpoint = postEndpoint;
+        if (endpoint == null || endpoint.isEmpty()) {
+            throw new IOException("SSE 'endpoint' event carried no URI");
+        }
+        McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
 
-        // 2) notifications/initialized (notification, no id, no response expected)
-        McpHttpSupport.checkOrThrow(base + sep + "notifications/initialized", domainWhitelist);
-        long notifId = nextRequestId.incrementAndGet();
-        ObjectNode notifEnv = McpHttpSupport.wrapJsonRpc(notifId,
-            "notifications/initialized", mapper.createObjectNode());
-        McpHttpSupport.postNotification(base + sep + "notifications/initialized", notifEnv, hbTimeoutMs);
+        // 2) initialize — first request on the announced URI.
+        JsonNode initResp = request("initialize", McpHttpSupport.buildInitializeParams());
+        JsonNode initResult = unwrap(initResp, "initialize");
+        String negotiated = initResult.path("protocolVersion").asText("");
+        protocolVersion = negotiated.isEmpty()
+            ? McpHttpSupport.PROTOCOL_VERSION : negotiated;
+        LOG.info("[MCP:{}] SSE negotiated protocol version {}",
+            cfg.getName(), protocolVersion);
 
-        // 3) tools/list
-        McpHttpSupport.checkOrThrow(base + sep + "tools/list", domainWhitelist);
-        long listId = nextRequestId.incrementAndGet();
-        ObjectNode listEnv = McpHttpSupport.wrapJsonRpc(listId,
-            "tools/list", mapper.createObjectNode());
-        JsonNode listResp = McpHttpSupport.postJsonRpc(base + sep + "tools/list", listEnv, hbTimeoutMs);
+        // 3) notifications/initialized — a NOTIFICATION: no id, no response.
+        send(McpHttpSupport.wrapNotification("notifications/initialized", null));
+
+        // 4) tools/list
+        JsonNode listResp = request("tools/list", mapper.createObjectNode());
         List<McpToolDescriptor> tools = McpHttpSupport.parseToolList(listResp);
         synchronized (cachedTools) {
             cachedTools.clear();
             cachedTools.addAll(tools);
-        }
-
-        // 4) start SSE reader thread (daemon) — long-blocking I/O, not on hbExecutor
-        Thread t = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                readSseLoop();
-            }
-        }, String.format(SSE_THREAD_NAME, cfg.getName()));
-        t.setDaemon(true);
-        sseReader = t;
-        t.start();
-
-        // Give the SSE reader a moment to open the long-lived GET before we
-        // declare CONNECTED, so any URL typo / missing /sse handler surfaces
-        // as a state failure rather than as a half-broken connection.
-        try {
-            Thread.sleep(50L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
 
         // 5) state CONNECTED + reset attempts + start heartbeat
@@ -317,6 +328,89 @@ public class SseMcpServerConnection implements McpServerConnection {
         lastBeat.set(System.currentTimeMillis());
         transition(ConnectionState.CONNECTED);
         startHeartbeat();
+    }
+
+    /**
+     * POST a JSON-RPC request and wait for its answer <em>on the SSE stream</em>.
+     *
+     * <p>The POST itself only acknowledges (202 Accepted); the real response is
+     * pushed back as {@code event: message} and matched here by request id.
+     */
+    private JsonNode request(String method, JsonNode params) throws IOException {
+        long id = nextRequestId.incrementAndGet();
+        ObjectNode envelope = McpHttpSupport.wrapJsonRpc(id, method, params);
+        Pending slot = new Pending();
+        pending.put(id, slot);
+        try {
+            send(envelope);
+            if (!await(slot.latch, hbTimeoutMs)) {
+                throw new IOException(method + " timed out after " + hbTimeoutMs + "ms");
+            }
+        } finally {
+            pending.remove(id);
+        }
+        return slot.response;
+    }
+
+    /** POST one JSON-RPC message to the announced URI, discarding the POST body. */
+    private void send(JsonNode envelope) throws IOException {
+        String endpoint = postEndpoint;
+        if (endpoint == null || endpoint.isEmpty()) {
+            throw new IOException("MCP SSE POST endpoint not announced yet");
+        }
+        McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
+        McpHttpSupport.postNotification(endpoint, envelope, hbTimeoutMs);
+    }
+
+    private boolean await(CountDownLatch latch, long timeoutMs) {
+        try {
+            return latch.await(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /** Unwrap {@code result}, turning a JSON-RPC {@code error} into an exception. */
+    private JsonNode unwrap(JsonNode body, String method) {
+        if (body == null || body.size() == 0) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                method + ": empty response body");
+        }
+        JsonNode error = body.get("error");
+        if (error != null && !error.isNull()) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                method + " failed: " + error);
+        }
+        JsonNode result = body.get("result");
+        if (result == null || result.isNull()) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                method + ": response has no result");
+        }
+        return result;
+    }
+
+    /**
+     * SSE URL for the long-lived GET. The configured {@code url} may already be
+     * the stream path ({@code .../sse}) or a bare base; both are accepted.
+     */
+    static String resolveSseUrl(String url) {
+        if (url.endsWith("/sse")) {
+            return url;
+        }
+        return url.endsWith("/") ? url + "sse" : url + "/sse";
+    }
+
+    /**
+     * Resolve the {@code endpoint} event URI. The spec says it may be relative,
+     * in which case it is resolved against the SSE URL's origin/path.
+     */
+    private String resolveEndpoint(String announced) {
+        try {
+            return new URL(new URL(resolveSseUrl(cfg.getUrl())), announced).toString();
+        } catch (MalformedURLException e) {
+            return announced;
+        }
     }
 
     // ── Internal — heartbeat ────────────────────────────────────────────
@@ -333,6 +427,10 @@ public class SseMcpServerConnection implements McpServerConnection {
                 }
             };
             hbExecutor = Executors.newSingleThreadScheduledExecutor(tf);
+        }
+        ScheduledFuture<?> old = hbFuture;
+        if (old != null) {
+            old.cancel(false);
         }
         hbFuture = hbExecutor.scheduleWithFixedDelay(new Runnable() {
             @Override
@@ -360,28 +458,25 @@ public class SseMcpServerConnection implements McpServerConnection {
         if (closing.get() || state.get() != ConnectionState.CONNECTED) {
             return;
         }
-        if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
-            handleDisconnect("url empty");
+        String endpoint = postEndpoint;
+        if (endpoint == null || endpoint.isEmpty()) {
+            handleDisconnect("no POST endpoint");
             return;
         }
         try {
-            String healthUrl = cfg.getUrl() + (cfg.getUrl().endsWith("/") ? "" : "/") + "health";
-            // Story #033 — check-only domain guard for health probe (Story #032
-            // parity). AccessDeniedException bubbles up to handleDisconnect via
-            // the outer catch (Throwable t) below — non-whitelisted host = drop
-            // connection (same as LINGS-M03 timeout).
-            McpHttpSupport.checkOrThrow(healthUrl, domainWhitelist);
-            String body = McpHttpSupport.getJson(healthUrl, hbTimeoutMs);
-            if (body == null) {
-                handleDisconnect("health null");
-                return;
-            }
+            // Story #033 — check-only domain guard for the liveness probe.
+            McpHttpSupport.checkOrThrow(endpoint, domainWhitelist);
+            // Spec liveness probe: JSON-RPC ping over the announced POST URI,
+            // answered on the SSE stream — not a vendor /health endpoint.
+            unwrap(request("ping", mapper.createObjectNode()), "ping");
             lastBeat.set(System.currentTimeMillis());
             reconnectAttempts.set(0);
+        } catch (AccessDeniedException e) {
+            handleDisconnect("ping " + e.getMessage());
         } catch (McpTransportException e) {
-            handleDisconnect("health " + e.getCode() + ": " + e.getMessage());
+            handleDisconnect("ping " + e.getCode() + ": " + e.getMessage());
         } catch (Throwable t) {
-            handleDisconnect("health error: " + t.getMessage());
+            handleDisconnect("ping error: " + t.getMessage());
         }
     }
 
@@ -449,9 +544,27 @@ public class SseMcpServerConnection implements McpServerConnection {
 
     private void interruptSseReader() {
         Thread t = sseReader;
-        if (t != null && t.isAlive()) {
+        if (t != null) {
             t.interrupt();
         }
+        // Interrupting a thread blocked in readLine() does not unblock the
+        // socket; closing the connection does.
+        HttpURLConnection conn = sseConn;
+        if (conn != null) {
+            conn.disconnect();
+        }
+    }
+
+    private void startSseReader(final String sseUrl) {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                readSseLoop(sseUrl);
+            }
+        }, String.format(SSE_THREAD_NAME, cfg.getName()));
+        t.setDaemon(true);
+        sseReader = t;
+        t.start();
     }
 
     /**
@@ -472,90 +585,157 @@ public class SseMcpServerConnection implements McpServerConnection {
 
     // ── Internal — SSE parser ───────────────────────────────────────────
 
-    private void readSseLoop() {
-        while (!closing.get()) {
-            HttpURLConnection conn = null;
+    private void readSseLoop(String sseUrl) {
+        HttpURLConnection conn = null;
+        try {
+            conn = openSseStream(sseUrl);
+            sseConn = conn;
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new IOException("SSE upgrade returned HTTP " + code);
+            }
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+            String line;
+            String event = null;
+            StringBuilder data = new StringBuilder();
+            while ((line = reader.readLine()) != null && !closing.get()) {
+                if (line.isEmpty()) {
+                    // Frame boundary — dispatch if we accumulated any data.
+                    if (data.length() > 0) {
+                        dispatchSseEvent(event, data.toString());
+                        data.setLength(0);
+                    }
+                    event = null;
+                    continue;
+                }
+                if (line.startsWith("event:")) {
+                    event = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                    if (data.length() > 0) {
+                        data.append('\n');
+                    }
+                    data.append(line.substring(5).trim());
+                }
+                // ":..." comments and "retry:..." are ignored (own backoff).
+            }
             try {
-                conn = openSseStream();
-                int code = conn.getResponseCode();
-                if (code < 200 || code >= 300) {
-                    InputStream es = conn.getErrorStream();
-                    if (es != null) {
-                        try {
-                            es.close();
-                        } catch (IOException ignored) {
-                            // best-effort
-                        }
-                    }
-                    throw new IOException("SSE upgrade returned HTTP " + code);
-                }
-                InputStream raw = conn.getInputStream();
-                BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(raw, StandardCharsets.UTF_8));
-                String line;
-                StringBuilder data = new StringBuilder();
-                while ((line = reader.readLine()) != null && !closing.get()) {
-                    if (line.isEmpty()) {
-                        // event boundary — dispatch accumulated data
-                        if (data.length() > 0) {
-                            handleSseEvent(data.toString());
-                            data.setLength(0);
-                        }
-                    } else if (line.startsWith("data:")) {
-                        String payload = line.substring(5).trim();
-                        if (data.length() > 0) {
-                            data.append('\n');
-                        }
-                        data.append(payload);
-                    }
-                    // ignore ":..." (comment), "event:..." (we only handle default),
-                    // "retry:..." (we use our own backoff)
-                }
-                // stream closed by server
-                try {
-                    reader.close();
-                } catch (IOException ignored) {
-                    // best-effort
-                }
-                if (!closing.get()) {
-                    LOG.warn("[MCP:{}] SSE stream closed by server", cfg.getName());
-                    handleDisconnect("SSE stream closed");
-                }
-            } catch (IOException e) {
-                if (!closing.get()) {
-                    LOG.warn("[MCP:{}] SSE stream broken: {}", cfg.getName(), e.toString());
-                    handleDisconnect("SSE stream broken: " + e.getMessage());
-                }
-            } finally {
-                if (conn != null) {
-                    conn.disconnect();
-                }
+                reader.close();
+            } catch (IOException ignored) {
+                // best-effort
             }
-            // If we are still connected and not closing, the stream broke — backoff.
-            if (!closing.get() && state.get() == ConnectionState.RECONNECTING) {
-                // scheduleReconnect was already called by handleDisconnect above;
-                // sleep a tiny bit before re-opening to avoid a tight CPU loop
-                // if scheduleReconnect was unable to (e.g. executor shutting down).
-                try {
-                    Thread.sleep(50L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
+            if (!closing.get()) {
+                LOG.info("[MCP:{}] SSE stream closed by server", cfg.getName());
+                handleDisconnect("SSE stream closed");
             }
+        } catch (AccessDeniedException e) {
+            if (!closing.get()) {
+                handleDisconnect("[LINGS-S01] " + e.getMessage());
+            }
+        } catch (IOException e) {
+            if (!closing.get()) {
+                LOG.info("[MCP:{}] SSE stream broken: {}", cfg.getName(), e.toString());
+                handleDisconnect("SSE stream broken: " + e.getMessage());
+            }
+        } finally {
+            sseConn = null;
+            if (conn != null) {
+                conn.disconnect();
+            }
+            // Unblock anyone still waiting: their answers can no longer arrive.
+            failAllPending("SSE stream ended");
         }
     }
 
-    private HttpURLConnection openSseStream() throws IOException {
-        if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
+    /**
+     * Handle one decoded SSE frame.
+     *
+     * <p>{@code endpoint} is the handshake (where to POST); {@code message}
+     * carries JSON-RPC traffic — either the answer to a pending request, or a
+     * server-initiated notification.
+     */
+    private void dispatchSseEvent(String event, String data) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+        if ("endpoint".equals(event)) {
+            String resolved = resolveEndpoint(data);
+            postEndpoint = resolved;
+            endpointLatch.countDown();
+            LOG.info("[MCP:{}] SSE endpoint announced: {}", cfg.getName(), resolved);
+            return;
+        }
+        if (event != null && !"message".equals(event)) {
+            return;
+        }
+        try {
+            JsonNode node = mapper.readTree(data);
+            if (node == null) {
+                return;
+            }
+            JsonNode idNode = node.get("id");
+            if (idNode != null && !idNode.isNull() && idNode.canConvertToLong()) {
+                Pending slot = pending.get(idNode.asLong());
+                if (slot != null) {
+                    slot.response = node;
+                    slot.latch.countDown();
+                    return;
+                }
+            }
+            handleServerMessage(node);
+        } catch (Exception e) {
+            LOG.warn("[MCP:{}] SSE event parse failed: {}", cfg.getName(), e.toString());
+        }
+    }
+
+    /** Server-initiated (no matching pending id): requests and notifications. */
+    private void handleServerMessage(JsonNode node) {
+        String method = node.path("method").asText("");
+        if ("notifications/tools/list_changed".equals(method)) {
+            // Never block the reader thread: its next job is to deliver the very
+            // answer this refresh waits for.
+            dispatchAsync(new Runnable() {
+                @Override
+                public void run() {
+                    relistTools();
+                }
+            });
+        }
+        // Other server messages are accepted silently (extensibility point);
+        // we advertise no capabilities, so none should arrive.
+    }
+
+    /** Run a task off the SSE reader thread (which must stay free to read). */
+    private void dispatchAsync(Runnable task) {
+        ScheduledExecutorService ex = hbExecutor;
+        if (ex != null && !ex.isShutdown()) {
+            ex.execute(task);
+            return;
+        }
+        Thread t = new Thread(task, String.format(SSE_THREAD_NAME, cfg.getName()) + "-notif");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void failAllPending(String reason) {
+        for (Map.Entry<Long, Pending> entry : pending.entrySet()) {
+            Pending slot = entry.getValue();
+            if (slot.response == null) {
+                ObjectNode failure = mapper.createObjectNode();
+                failure.put("message", reason);
+                ObjectNode envelope = mapper.createObjectNode();
+                envelope.set("error", failure);
+                slot.response = envelope;
+            }
+            slot.latch.countDown();
+        }
+    }
+
+    private HttpURLConnection openSseStream(String sseUrl) throws IOException {
+        if (sseUrl == null || sseUrl.isEmpty()) {
             throw new IOException("url must not be empty");
         }
-        String base = cfg.getUrl();
-        String sep = base.endsWith("/") ? "" : "/";
-        String sseUrl = base + sep + "sse";
         // Story #033 — check-only domain guard before raw HttpURLConnection opens.
-        // AccessDeniedException is unchecked (RuntimeException) — bubbles up to
-        // readSseLoop's catch (IOException e) which routes through handleDisconnect.
         McpHttpSupport.checkOrThrow(sseUrl, domainWhitelist);
         HttpURLConnection conn = (HttpURLConnection) new URL(sseUrl).openConnection();
         conn.setRequestMethod("GET");
@@ -568,53 +748,26 @@ public class SseMcpServerConnection implements McpServerConnection {
         return conn;
     }
 
-    private void handleSseEvent(String data) {
-        if (data == null || data.isEmpty()) {
-            return;
-        }
-        try {
-            JsonNode node = mapper.readTree(data);
-            if (node == null) {
-                return;
-            }
-            String method = node.path("method").asText("");
-            if ("notifications/tools/list_changed".equals(method)) {
-                relistTools();
-            }
-            // Other notifications are accepted silently (extensibility point).
-        } catch (Exception e) {
-            LOG.warn("[MCP:{}] SSE event parse failed: {}", cfg.getName(), e.toString());
-            // malformed event — continue reading the stream
-        }
-    }
-
     private void relistTools() {
-        if (cfg.getUrl() == null || cfg.getUrl().isEmpty()) {
-            return;
-        }
         if (state.get() != ConnectionState.CONNECTED) {
             return;
         }
-        String base = cfg.getUrl();
-        String sep = base.endsWith("/") ? "" : "/";
+        if (postEndpoint == null || postEndpoint.isEmpty()) {
+            return;
+        }
         try {
-            // Story #033 — check-only domain guard before listChanged refetch.
-            McpHttpSupport.checkOrThrow(base + sep + "tools/list", domainWhitelist);
-            long listId = nextRequestId.incrementAndGet();
-            ObjectNode listEnv = McpHttpSupport.wrapJsonRpc(listId,
-                "tools/list", mapper.createObjectNode());
-            JsonNode listResp = McpHttpSupport.postJsonRpc(base + sep + "tools/list",
-                listEnv, hbTimeoutMs);
+            JsonNode listResp = request("tools/list", mapper.createObjectNode());
             List<McpToolDescriptor> tools = McpHttpSupport.parseToolList(listResp);
             synchronized (cachedTools) {
                 cachedTools.clear();
                 cachedTools.addAll(tools);
             }
-            LOG.info("[MCP:{}] SSE tools/list_changed → {} tools cached", cfg.getName(), tools.size());
-            // notify listeners of CONNECTED state (idempotent) so they re-pull listTools()
+            LOG.info("[MCP:{}] tools/list_changed → {} tools cached",
+                cfg.getName(), tools.size());
+            // notify listeners of CONNECTED (idempotent) so they re-pull listTools()
             notifyListeners(ConnectionState.CONNECTED);
         } catch (Throwable t) {
-            LOG.warn("[MCP:{}] SSE relist tools failed: {}", cfg.getName(), t.toString());
+            LOG.warn("[MCP:{}] relist tools failed: {}", cfg.getName(), t.toString());
         }
     }
 
@@ -635,11 +788,5 @@ public class SseMcpServerConnection implements McpServerConnection {
                 LOG.warn("MCP SSE listener for {} threw: {}", cfg.getName(), t.getMessage());
             }
         }
-    }
-
-    // ── Jackson helpers (avoids importing ObjectNode name conflict) ─────
-
-    private com.fasterxml.jackson.databind.node.ObjectNode objNode() {
-        return mapper.createObjectNode();
     }
 }

@@ -74,6 +74,8 @@ public class McpServerProperties {
         private long heartbeatIntervalMs = 30_000L;
         private long heartbeatTimeoutMs = 10_000L;
         private long reconnectCapMs = 60_000L;
+        /** 出站域名白名单(仅 sse / streamable_http 生效);空表示拒绝所有出站主机。 */
+        private List<String> domainWhitelist;
 
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }
@@ -101,6 +103,9 @@ public class McpServerProperties {
 
         public long getReconnectCapMs() { return reconnectCapMs; }
         public void setReconnectCapMs(long v) { this.reconnectCapMs = v; }
+
+        public List<String> getDomainWhitelist() { return domainWhitelist; }
+        public void setDomainWhitelist(List<String> v) { this.domainWhitelist = v; }
     }
 
     /**
@@ -140,6 +145,7 @@ public class McpServerProperties {
             e.setArgs(readStringList(env, prefix + ".args"));
             e.setEnv(readStringMap(env, prefix + ".env"));
             e.setUrl(env.getProperty(prefix + ".url"));
+            e.setDomainWhitelist(readStringList(env, prefix + ".domain-whitelist"));
             e.setHeartbeatIntervalMs(env.getProperty(prefix + ".heartbeat-interval-ms", Long.class, 30_000L));
             e.setHeartbeatTimeoutMs(env.getProperty(prefix + ".heartbeat-timeout-ms", Long.class, 10_000L));
             e.setReconnectCapMs(env.getProperty(prefix + ".reconnect-cap-ms", Long.class, 60_000L));
@@ -226,6 +232,7 @@ public class McpServerProperties {
             .heartbeatIntervalMs(e.getHeartbeatIntervalMs() > 0 ? e.getHeartbeatIntervalMs() : 30_000L)
             .heartbeatTimeoutMs(e.getHeartbeatTimeoutMs() > 0 ? e.getHeartbeatTimeoutMs() : 10_000L)
             .reconnectCapMs(e.getReconnectCapMs() > 0 ? e.getReconnectCapMs() : 60_000L)
+            .domainWhitelist(e.getDomainWhitelist() != null ? e.getDomainWhitelist() : Collections.<String>emptyList())
             .build();
     }
 
@@ -239,7 +246,8 @@ public class McpServerProperties {
             e.getUrl(),
             e.getHeartbeatIntervalMs() > 0 ? e.getHeartbeatIntervalMs() : 30_000L,
             e.getHeartbeatTimeoutMs() > 0 ? e.getHeartbeatTimeoutMs() : 10_000L,
-            e.getReconnectCapMs() > 0 ? e.getReconnectCapMs() : 60_000L
+            e.getReconnectCapMs() > 0 ? e.getReconnectCapMs() : 60_000L,
+            e.getDomainWhitelist() != null ? e.getDomainWhitelist() : Collections.<String>emptyList()
         );
     }
 

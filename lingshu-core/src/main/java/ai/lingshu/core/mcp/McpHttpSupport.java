@@ -21,9 +21,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -42,8 +44,9 @@ import java.util.List;
  * otherwise-duplicated code lives here instead of in each transport class.
  *
  * <p><b>Why here</b> — Single source of truth for: HTTP timeout semantics,
- * 4xx/5xx → {@code LINGS-M03} mapping, JSON-RPC 2024-11-05 envelope shape
- * (initialize params, tools/list / tools/call response parsing).
+ * 4xx/5xx → {@code LINGS-M03} mapping, JSON-RPC 2.0 envelope shape for the
+ * negotiated protocol version (initialize params, tools/list / tools/call
+ * response parsing).
  *
  * <p><b>JDK 8 compatibility</b> — Uses {@link HttpURLConnection} (JDK 1.1
  * builtin) and Jackson which is already in the locked Maven dependency
@@ -76,8 +79,18 @@ public final class McpHttpSupport {
     /** Shared JSON mapper (Jackson is documented thread-safe after configuration). */
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** MCP initialize protocol version per the 2024-11-05 spec. */
-    static final String PROTOCOL_VERSION = "2024-11-05";
+    /**
+     * MCP protocol version requested in {@code initialize}. The server's answer
+     * (from {@code InitializeResult.protocolVersion}) is the negotiated version
+     * and must be echoed in the {@code MCP-Protocol-Version} header afterwards.
+     */
+    static final String PROTOCOL_VERSION = "2025-06-18";
+
+    /** Header carrying the negotiated protocol version on every post-initialize request. */
+    static final String HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version";
+
+    /** Header carrying the server-assigned session id (Streamable HTTP). */
+    static final String HEADER_SESSION_ID = "Mcp-Session-Id";
 
     private McpHttpSupport() {
         // utility class — never instantiated
@@ -146,62 +159,6 @@ public final class McpHttpSupport {
     }
 
     /**
-     * GET a URL and return the body as a UTF-8 string.
-     *
-     * @throws McpTransportException with {@code LINGS-M03} on any HTTP / IO failure
-     */
-    public static String getJson(String url, long timeoutMs) {
-        if (url == null || url.isEmpty()) {
-            throw new IllegalArgumentException("url must not be empty");
-        }
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setUseCaches(false);
-            int t = (int) Math.min(Math.max(timeoutMs, 1L), (long) Integer.MAX_VALUE);
-            conn.setConnectTimeout(t);
-            conn.setReadTimeout(t);
-            conn.setRequestProperty("Accept", "application/json");
-            int code = conn.getResponseCode();
-            InputStream is = (code >= 200 && code < 300)
-                ? conn.getInputStream()
-                : conn.getErrorStream();
-            byte[] raw = readAllBytes(is);
-            if (code < 200 || code >= 300) {
-                throw new McpTransportException(McpErrorCodes.LINGS_M03,
-                    "HTTP " + code + ": " + truncate(new String(raw, StandardCharsets.UTF_8), 200));
-            }
-            return new String(raw, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new McpTransportException(McpErrorCodes.LINGS_M03,
-                "HTTP IO: " + e.getMessage(), e);
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
-        }
-    }
-
-    /**
-     * GET a URL and return the body parsed as JSON.
-     *
-     * @throws McpTransportException with {@code LINGS-M03} on any HTTP / IO failure
-     */
-    public static JsonNode getJsonNode(String url, long timeoutMs) {
-        String body = getJson(url, timeoutMs);
-        if (body == null || body.isEmpty()) {
-            return MAPPER.createObjectNode();
-        }
-        try {
-            return MAPPER.readTree(body);
-        } catch (IOException e) {
-            throw new McpTransportException(McpErrorCodes.LINGS_M03,
-                "HTTP body parse: " + e.getMessage(), e);
-        }
-    }
-
-    /**
      * Build the JSON body for the MCP {@code initialize} request.
      * Matches {@link StdioMcpServerConnection} field shape exactly so that
      * servers cannot tell which transport sent the request.
@@ -213,11 +170,24 @@ public final class McpHttpSupport {
         info.put("name", "lingshu-agent");
         info.put("version", "0.1.0-SNAPSHOT");
         p.set("clientInfo", info);
-        ObjectNode caps = MAPPER.createObjectNode();
-        ObjectNode roots = MAPPER.createObjectNode();
-        caps.set("roots", roots);
-        p.set("capabilities", caps);
+        // Empty capabilities: we advertise nothing we do not implement. The old
+        // code declared "roots" while never serving roots/list, which is a lie
+        // that some servers act on (they send roots/list and we drop it).
+        p.set("capabilities", MAPPER.createObjectNode());
         return p;
+    }
+
+    /**
+     * Wrap a JSON-RPC <em>notification</em>: no {@code id}, no response expected.
+     */
+    public static ObjectNode wrapNotification(String method, JsonNode params) {
+        ObjectNode env = MAPPER.createObjectNode();
+        env.put("jsonrpc", "2.0");
+        env.put("method", method);
+        if (params != null) {
+            env.set("params", params);
+        }
+        return env;
     }
 
     /**
@@ -277,14 +247,45 @@ public final class McpHttpSupport {
             return McpCallResult.error("MCP server returned null result");
         }
         boolean isError = result.path("isError").asBoolean(false);
+        String content = extractContent(result.get("content"), result);
         if (isError) {
-            return McpCallResult.error(result.path("content").asText("MCP server reported error"));
+            return McpCallResult.error(content == null || content.isEmpty()
+                ? "MCP server reported error" : content);
         }
-        JsonNode contentNode = result.get("content");
-        String content = contentNode == null
-            ? result.toString()
-            : (contentNode.isTextual() ? contentNode.asText() : contentNode.toString());
         return McpCallResult.success(content);
+    }
+
+    /**
+     * Flatten a {@code CallToolResult.content} value into a plain string.
+     *
+     * <p>MCP types this as an array of ContentBlocks — typically
+     * {@code [{"type":"text","text":"..."}]} — so joining the {@code text}
+     * fields is the only reading a model can use. Non-text blocks
+     * ({@code image}, {@code resource}, …) and the legacy string form are
+     * passed through verbatim.
+     */
+    static String extractContent(JsonNode contentNode, JsonNode fallback) {
+        if (contentNode == null || contentNode.isNull()) {
+            return fallback == null ? "" : fallback.toString();
+        }
+        if (contentNode.isTextual()) {
+            return contentNode.asText();
+        }
+        if (!contentNode.isArray()) {
+            return contentNode.toString();
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode block : contentNode) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            if ("text".equals(block.path("type").asText(""))) {
+                sb.append(block.path("text").asText(""));
+            } else {
+                sb.append(block.toString());
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -336,6 +337,208 @@ public final class McpHttpSupport {
         }
     }
 
+    // ── Streamable HTTP / spec-compliant POST primitives ────────────────
+
+    /**
+     * Body + metadata of a spec-compliant MCP POST.
+     *
+     * <p>Streamable HTTP allows the server to answer a POST with either
+     * {@code application/json} (one JSON-RPC message) or
+     * {@code text/event-stream} (one or more messages). {@link #getBody()} is
+     * the JSON-RPC envelope in both cases — the SSE frames have already been
+     * unwrapped and the message matching the request id selected.
+     */
+    public static final class HttpRpcResponse {
+
+        private final int status;
+        private final String sessionId;
+        private final JsonNode body;
+
+        HttpRpcResponse(int status, String sessionId, JsonNode body) {
+            this.status = status;
+            this.sessionId = sessionId;
+            this.body = body;
+        }
+
+        /** HTTP status code (always 2xx — non-2xx raises). */
+        public int getStatus() {
+            return status;
+        }
+
+        /** {@code Mcp-Session-Id} response header, or {@code null} if absent. */
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        /** Parsed JSON-RPC envelope; an empty object if the server sent no body. */
+        public JsonNode getBody() {
+            return body;
+        }
+    }
+
+    /** {@link McpTransportException} that preserves the HTTP status code. */
+    public static final class McpHttpStatusException extends McpTransportException {
+
+        private static final long serialVersionUID = 1L;
+
+        private final int status;
+
+        McpHttpStatusException(int status, String code, String message) {
+            super(code, message);
+            this.status = status;
+        }
+
+        /** @return the HTTP status code (e.g. 404 for an expired session). */
+        public int getStatus() {
+            return status;
+        }
+    }
+
+    /**
+     * POST one JSON-RPC message to the MCP endpoint, per the Streamable HTTP
+     * transport rules.
+     *
+     * <p>Sets the headers the spec requires and the ones the server needs:
+     * <ul>
+     *   <li>{@code Content-Type: application/json}</li>
+     *   <li>{@code Accept: application/json, text/event-stream} — the server
+     *       MAY answer in either</li>
+     *   <li>{@code Mcp-Session-Id} — when the server issued one</li>
+     *   <li>{@code MCP-Protocol-Version} — after version negotiation</li>
+     * </ul>
+     *
+     * @param url             the single MCP endpoint (never a per-method path)
+     * @param body            JSON-RPC envelope
+     * @param timeoutMs       connect + read timeout
+     * @param sessionId       {@code Mcp-Session-Id} to send, or {@code null}
+     * @param protocolVersion negotiated version to send, or {@code null} (initialize)
+     * @param expectedId      id of the response to pick out of an SSE answer;
+     *                        {@code null} for notifications
+     * @throws McpHttpStatusException on non-2xx (keeps the status code)
+     */
+    public static HttpRpcResponse postJsonRpcSpec(String url, JsonNode body, long timeoutMs,
+                                                  String sessionId, String protocolVersion,
+                                                  Long expectedId) {
+        if (url == null || url.isEmpty()) {
+            throw new IllegalArgumentException("url must not be empty");
+        }
+        if (body == null) {
+            throw new IllegalArgumentException("body must not be null");
+        }
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setUseCaches(false);
+            int t = (int) Math.min(Math.max(timeoutMs, 1L), (long) Integer.MAX_VALUE);
+            conn.setConnectTimeout(t);
+            conn.setReadTimeout(t);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Accept", "application/json, text/event-stream");
+            if (sessionId != null && !sessionId.isEmpty()) {
+                conn.setRequestProperty(HEADER_SESSION_ID, sessionId);
+            }
+            if (protocolVersion != null && !protocolVersion.isEmpty()) {
+                conn.setRequestProperty(HEADER_PROTOCOL_VERSION, protocolVersion);
+            }
+            byte[] payload = MAPPER.writeValueAsBytes(body);
+            OutputStream os = conn.getOutputStream();
+            try {
+                os.write(payload);
+                os.flush();
+            } finally {
+                os.close();
+            }
+            int code = conn.getResponseCode();
+            String respSession = conn.getHeaderField(HEADER_SESSION_ID);
+            if (code < 200 || code >= 300) {
+                byte[] raw = readAllBytes(conn.getErrorStream());
+                throw new McpHttpStatusException(code, McpErrorCodes.LINGS_M03,
+                    "HTTP " + code + ": "
+                        + truncate(new String(raw, StandardCharsets.UTF_8), 200));
+            }
+            String contentType = conn.getContentType();
+            JsonNode parsed;
+            if (contentType != null
+                && contentType.toLowerCase().contains("text/event-stream")) {
+                parsed = readSseResponse(conn, expectedId);
+            } else {
+                byte[] raw = readAllBytes(conn.getInputStream());
+                parsed = raw.length == 0
+                    ? MAPPER.createObjectNode()
+                    : MAPPER.readTree(raw);
+            }
+            return new HttpRpcResponse(code, respSession, parsed);
+        } catch (IOException e) {
+            throw new McpTransportException(McpErrorCodes.LINGS_M03,
+                "HTTP IO: " + e.getMessage(), e);
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Read SSE frames from a POST response and return the JSON-RPC message that
+     * answers {@code expectedId}. Per the spec an SSE answer may carry several
+     * messages (notifications then the response), so frames are consumed until
+     * the matching id shows up.
+     */
+    private static JsonNode readSseResponse(HttpURLConnection conn, Long expectedId)
+        throws IOException {
+        BufferedReader reader = new BufferedReader(
+            new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+        try {
+            String event = null;
+            StringBuilder data = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    if (data.length() > 0) {
+                        String payload = data.toString();
+                        data.setLength(0);
+                        String currentEvent = event;
+                        event = null;
+                        if (currentEvent == null || "message".equals(currentEvent)) {
+                            try {
+                                JsonNode node = MAPPER.readTree(payload);
+                                if (expectedId == null) {
+                                    return node;
+                                }
+                                if (node.has("id")
+                                    && node.get("id").canConvertToLong()
+                                    && node.get("id").asLong() == expectedId.longValue()) {
+                                    return node;
+                                }
+                            } catch (IOException ignored) {
+                                // non-JSON frame — keep reading
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (line.startsWith("event:")) {
+                    event = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                    if (data.length() > 0) {
+                        data.append('\n');
+                    }
+                    data.append(line.substring(5).trim());
+                }
+            }
+        } finally {
+            try {
+                reader.close();
+            } catch (IOException ignored) {
+                // best-effort
+            }
+        }
+        throw new McpTransportException(McpErrorCodes.LINGS_M03,
+            "SSE response stream ended without a matching JSON-RPC response");
+    }
+
     // ── Story #033 — Domain guard hook (Path B + Mitigation 1) ──────────
 
     /**
@@ -346,7 +549,7 @@ public final class McpHttpSupport {
      *
      * <p><b>Caller contract</b> — invoke immediately before any MCP HTTP request
      * (raw {@link HttpURLConnection#openConnection()} or via
-     * {@link #postJsonRpc}/{@link #getJson}/{@link #postNotification}). Throws
+     * {@link #postJsonRpc}/{@link #postNotification}). Throws
      * {@link AccessDeniedException} carrying the {@code [LINGS-S01]} prefix if
      * the host is not whitelisted — same ErrorCode as
      * {@link WhitelistedHttpClient} (Story #028) and {@code WebFetchTool}

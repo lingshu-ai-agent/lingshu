@@ -40,8 +40,9 @@ import java.util.List;
  * 「唯一 Bean 名约定」,Story #021a 后的多 Provider 模式)。{@link McpTransportLifecycle}
  * 按 type 注入(非 by name),本 Bean 名仅供调试 / 显式查找。
  *
- * <p><b>关键不变项</b> — {@link AgentConfig.ServerConfig}(Story #021a 落地,扩 5 字段)
- * <b>0 改动</b>。
+ * <p><b>关键不变项</b> — {@link AgentConfig.ServerConfig} 保持 {@code @Value} 不可变语义
+ * 与 9 参构造器向后兼容;新增第 10 个字段 {@code domainWhitelist}(仅 HTTP 传输生效),
+ * 由本类透传到 {@link McpServerConfig#getDomainWhitelist()}。
  *
  * <p><b>JDK 8 兼容</b> — Plain Spring {@code @Configuration},无 default method / sealed。
  */
@@ -94,7 +95,10 @@ public class McpTransportAutoConfiguration {
             .env(sc.getEnv() != null
                 ? sc.getEnv()
                 : Collections.<String, String>emptyMap())
-            .url(sc.getUrl());
+            .url(sc.getUrl())
+            .domainWhitelist(sc.getDomainWhitelist() != null
+                ? sc.getDomainWhitelist()
+                : Collections.<String>emptyList());
         if (sc.getHeartbeatIntervalMs() > 0) {
             b.heartbeatIntervalMs(sc.getHeartbeatIntervalMs());
         }
