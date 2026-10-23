@@ -74,7 +74,7 @@ class McpHttpDomainGuardIT {
     @Test
     @DisplayName("SSE: whitelisted host (127.0.0.1) → 5-step handshake reaches CONNECTED")
     void sseWhitelisted_reachesConnected() throws Exception {
-        sseServer = McpHttpTestSupport.startSseServer();
+        sseServer = McpHttpTestSupport.startHttpServer();
         sseConn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -98,7 +98,7 @@ class McpHttpDomainGuardIT {
         // Server is real (so tools/list would succeed if the guard let us through),
         // but the whitelist excludes 127.0.0.1, so the doConnect() checkOrThrow fires
         // first. Connection can never leave RECONNECTING.
-        sseServer = McpHttpTestSupport.startSseServer();
+        sseServer = McpHttpTestSupport.startHttpServer();
         List<String> whitelist = Arrays.asList("api.allowed.example");
         sseConn = new SseMcpServerConnection(
             McpServerConfig.builder()
@@ -133,7 +133,7 @@ class McpHttpDomainGuardIT {
         // (called from start) throws an AccessDeniedException, captured by
         // start()'s catch (Throwable t) and converted to RECONNECTING. The
         // hook is observable via the absence of CONNECTED transition.
-        sseServer = McpHttpTestSupport.startSseServer();
+        sseServer = McpHttpTestSupport.startHttpServer();
         sseConn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")

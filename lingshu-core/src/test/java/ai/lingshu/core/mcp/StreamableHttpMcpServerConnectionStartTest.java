@@ -64,7 +64,7 @@ class StreamableHttpMcpServerConnectionStartTest {
             McpServerConfig.builder()
                 .name("remote")
                 .transport(McpTransportType.STREAMABLE_HTTP)
-                .url(server.baseUrl())
+                .url(server.mcpEndpoint())
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(1_000L)
@@ -84,7 +84,7 @@ class StreamableHttpMcpServerConnectionStartTest {
             McpServerConfig.builder()
                 .name("bad")
                 .transport(McpTransportType.STREAMABLE_HTTP)
-                .url("http://127.0.0.1:1/tools/call") // port 1 = unreachable
+                .url("http://127.0.0.1:1/mcp") // port 1 = unreachable
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(500L)
@@ -123,7 +123,7 @@ class StreamableHttpMcpServerConnectionStartTest {
             McpServerConfig.builder()
                 .name("remote")
                 .transport(McpTransportType.STREAMABLE_HTTP)
-                .url(server.baseUrl())
+                .url(server.mcpEndpoint())
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(2_000L)
                 .reconnectCapMs(1_000L)

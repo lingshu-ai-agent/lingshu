@@ -80,7 +80,7 @@ class SseMcpServerConnectionCloseAndCallTest {
     @Test
     @DisplayName("close twice is idempotent")
     void close_idempotent() throws Exception {
-        server = McpHttpTestSupport.startSseServer();
+        server = McpHttpTestSupport.startHttpServer();
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -124,7 +124,7 @@ class SseMcpServerConnectionCloseAndCallTest {
     @Test
     @DisplayName("callTool after disconnect → returns error result (does not throw)")
     void callTool_afterDisconnect_returnsError() throws Exception {
-        server = McpHttpTestSupport.startSseServer();
+        server = McpHttpTestSupport.startHttpServer();
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")

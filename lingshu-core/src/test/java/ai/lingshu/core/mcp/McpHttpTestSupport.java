@@ -15,6 +15,8 @@
  */
 package ai.lingshu.core.mcp;
 
+import ai.lingshu.core.mcp.fixture.TestMcpHttpServer;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
@@ -26,11 +28,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Helper to launch the {@code TestMcpHttpServer} / {@code TestMcpSseServer}
- * fixtures in-process as subprocesses (Story #021c).
+ * Helper to launch the {@code TestMcpHttpServer} fixture in a subprocess
+ * (Story #021c; single spec-shaped fixture since Story #054 T016).
  *
  * <p>The fixture prints {@code PORT=<n>} on stdout as its first line; we
  * read that line and return the {@code http://127.0.0.1:<n>} base URL.
+ *
+ * <p><b>Endpoint choice per transport</b> — the one fixture serves both:
+ * <ul>
+ *   <li>SSE → {@code cfg.getUrl()} = {@code baseUrl}; the transport appends
+ *       {@code /sse} itself ({@code SseMcpServerConnection.resolveSseUrl}).</li>
+ *   <li>Streamable HTTP → {@code cfg.getUrl()} = {@code baseUrl + "/mcp"} —
+ *       the single MCP endpoint, never a per-method path.</li>
+ * </ul>
+ *
+ * <p>Every switch in the fixture's system-property set is forwarded verbatim as
+ * {@code -D<key>=<value>} (see {@link #buildCommand}), so L3 real-socket runs and
+ * L1 in-process runs see identical behavior — no extra wiring needed.
  *
  * <p>JDK 8 compatibility — uses {@code ProcessBuilder} and
  * {@code BufferedReader.readLine()}; no {@code List.of} / {@code var}.
@@ -47,15 +61,6 @@ final class McpHttpTestSupport {
      */
     static ProcessHandle startHttpServer(Map<String, String> sysProps) throws Exception {
         Process p = new ProcessBuilder(buildCommand("ai.lingshu.core.mcp.fixture.TestMcpHttpServer", sysProps))
-            .redirectErrorStream(true)
-            .start();
-        String port = readFirstLine(p);
-        return new ProcessHandle(p, "http://127.0.0.1:" + port);
-    }
-
-    /** Start {@code TestMcpSseServer} (extended fixture with /sse endpoint). */
-    static ProcessHandle startSseServer(Map<String, String> sysProps) throws Exception {
-        Process p = new ProcessBuilder(buildCommand("ai.lingshu.core.mcp.fixture.TestMcpSseServer", sysProps))
             .redirectErrorStream(true)
             .start();
         String port = readFirstLine(p);
@@ -112,11 +117,6 @@ final class McpHttpTestSupport {
         return startHttpServer(new HashMap<String, String>());
     }
 
-    /** Convenience for empty sysProps. */
-    static ProcessHandle startSseServer() throws Exception {
-        return startSseServer(new HashMap<String, String>());
-    }
-
     /**
      * Bundle of {@link Process} + base URL so tests can {@code close()}
      * the subprocess in {@code @AfterEach}.
@@ -136,6 +136,28 @@ final class McpHttpTestSupport {
 
         public String baseUrl() {
             return baseUrl;
+        }
+
+        /**
+         * The Streamable HTTP single endpoint ({@code baseUrl + "/mcp"}).
+         * Streamable HTTP POSTs every JSON-RPC message — including
+         * {@code initialize} — here; the URL is never a path prefix (FR-017).
+         */
+        String mcpEndpoint() {
+            return baseUrl + "/mcp";
+        }
+
+        /**
+         * Snapshot of what the fixture actually received, in arrival order.
+         * Read from the fixture's {@code GET /__recorded} probe.
+         */
+        List<TestMcpHttpServer.RecordedRequest> recorded() throws Exception {
+            return TestMcpHttpServer.RequestRecorder.fetch(baseUrl);
+        }
+
+        /** Drop the fixture's recording. */
+        void clearRecorded() throws Exception {
+            TestMcpHttpServer.RequestRecorder.clear(baseUrl);
         }
 
         /** Best-effort destroy. */
