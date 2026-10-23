@@ -63,7 +63,7 @@ class SseMcpServerConnectionListenerTest {
         // Server pushes notifications/tools/list_changed every 100ms
         Map<String, String> sysProps = new HashMap<>();
         sysProps.put("pushIntervalMs", "100");
-        server = McpHttpTestSupport.startSseServer(sysProps);
+        server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -96,7 +96,7 @@ class SseMcpServerConnectionListenerTest {
         Map<String, String> sysProps = new HashMap<>();
         sysProps.put("pushIntervalMs", "100");
         sysProps.put("malformedRatio", "2");
-        server = McpHttpTestSupport.startSseServer(sysProps);
+        server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -125,7 +125,7 @@ class SseMcpServerConnectionListenerTest {
         Map<String, String> sysProps = new HashMap<>();
         sysProps.put("pushIntervalMs", "100");
         sysProps.put("closeSseAfter", "500");
-        server = McpHttpTestSupport.startSseServer(sysProps);
+        server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")

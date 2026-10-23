@@ -53,7 +53,7 @@ class SseMcpServerConnectionStartTest {
     @Test
     @DisplayName("start: fake SSE/HTTP server → 5-step handshake reaches CONNECTED")
     void start_fakeServer_5stepsReachesConnected() throws Exception {
-        server = McpHttpTestSupport.startSseServer();
+        server = McpHttpTestSupport.startHttpServer();
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -114,7 +114,7 @@ class SseMcpServerConnectionStartTest {
     @Test
     @DisplayName("start: second start() while CONNECTED is a no-op")
     void start_alreadyConnected_noop() throws Exception {
-        server = McpHttpTestSupport.startSseServer();
+        server = McpHttpTestSupport.startHttpServer();
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")

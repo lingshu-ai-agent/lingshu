@@ -39,6 +39,11 @@ import static org.awaitility.Awaitility.await;
  *   <li>EC-021c-4: a broken SSE stream triggers reconnect (covered here by
  *       using a server that closes the SSE stream mid-flight).</li>
  * </ol>
+ *
+ * <p><b>Convention (research.md 决策 2)</b> — cases that need shrunken time
+ * parameters construct the connection directly with the 4-arg injectable-time
+ * constructor. {@code McpServerConnectionFactory.create(cfg)} only ever uses the
+ * 1-arg constructor and cannot see these values.
  */
 @DisplayName("Story #021c — SseMcpServerConnection reconnect")
 class SseMcpServerConnectionReconnectTest {
@@ -84,13 +89,18 @@ class SseMcpServerConnectionReconnectTest {
     @Test
     @DisplayName("reconnect: unbounded retries — bad server stays in RECONNECTING")
     void reconnect_unbounded() throws Exception {
-        server = McpHttpTestSupport.startSseServer(); // starts then we close to "kill" it
-        server.close(); // forcibly close — port becomes unreachable
+        // Start the fixture, remember its real port, then kill it — that port is
+        // now deterministically closed. (The old `pickLikelyClosedPort()` stub
+        // hard-returned 1, so the test never exercised a port that had actually
+        // been in use; Story #054 T019.)
+        server = McpHttpTestSupport.startHttpServer();
+        String deadUrl = server.baseUrl();
+        server.close();
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("dying")
                 .transport(McpTransportType.SSE)
-                .url("http://127.0.0.1:" + pickLikelyClosedPort() + "/sse")
+                .url(deadUrl)
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(2_000L) // reasonable cap so backoff doesn't sleep too long
@@ -100,16 +110,13 @@ class SseMcpServerConnectionReconnectTest {
         // First attempt fails immediately, then RECONNECTING with backoff retries.
         await().atMost(Duration.ofSeconds(3))
             .until(() -> conn.state() == ConnectionState.RECONNECTING);
-        // Wait through multiple backoff cycles (cap 2s); state must still be RECONNECTING.
-        Thread.sleep(8_000L);
-        assertThat(conn.state()).isEqualTo(ConnectionState.RECONNECTING);
+        // Span at least two backoff cycles (first hop is 1s, cap 2s) without the
+        // connection ever leaving RECONNECTING. `during(...)` replaces the old
+        // 8-second blind sleep (Story #054 T020: never sleep to await a state).
+        await().atMost(Duration.ofSeconds(4))
+            .during(Duration.ofMillis(2_000))
+            .until(() -> conn.state() == ConnectionState.RECONNECTING);
         assertThat(conn.name()).isEqualTo("dying");
-    }
-
-    private static int pickLikelyClosedPort() {
-        // Use the ephemeral port we just got from `server` if available — but we already
-        // closed it. Easiest: pick 1 (port 1 = unreachable on most systems).
-        return 1;
     }
 
     @Test
@@ -120,7 +127,7 @@ class SseMcpServerConnectionReconnectTest {
         java.util.Map<String, String> sysProps = new java.util.HashMap<>();
         sysProps.put("closeSseAfter", "500");
         sysProps.put("pushIntervalMs", "100");
-        server = McpHttpTestSupport.startSseServer(sysProps);
+        server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")

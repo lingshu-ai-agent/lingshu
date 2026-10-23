@@ -32,6 +32,11 @@ import static org.awaitility.Awaitility.await;
  *
  * <p>Three cases verifying the exponential-backoff formula, unbounded retries
  * against an unreachable server, and recovery after a transient failure.
+ *
+ * <p><b>Convention (research.md 决策 2)</b> — cases that need shrunken time
+ * parameters construct the connection directly with the 4-arg injectable-time
+ * constructor. {@code McpServerConnectionFactory.create(cfg)} only ever uses the
+ * 1-arg constructor and cannot see these values.
  */
 @DisplayName("Story #021c — StreamableHttpMcpServerConnection reconnect")
 class StreamableHttpMcpServerConnectionReconnectTest {
@@ -56,7 +61,7 @@ class StreamableHttpMcpServerConnectionReconnectTest {
             McpServerConfig.builder()
                 .name("dummy")
                 .transport(McpTransportType.STREAMABLE_HTTP)
-                .url("http://127.0.0.1:1/initialize") // unreachable
+                .url("http://127.0.0.1:1/mcp") // unreachable
                 .heartbeatIntervalMs(30_000L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(60_000L)
@@ -80,7 +85,7 @@ class StreamableHttpMcpServerConnectionReconnectTest {
             McpServerConfig.builder()
                 .name("dying")
                 .transport(McpTransportType.STREAMABLE_HTTP)
-                .url("http://127.0.0.1:1/initialize")
+                .url("http://127.0.0.1:1/mcp")
                 .heartbeatIntervalMs(500L)
                 .heartbeatTimeoutMs(500L)
                 .reconnectCapMs(2_000L)
@@ -89,9 +94,12 @@ class StreamableHttpMcpServerConnectionReconnectTest {
         conn.start();
         await().atMost(Duration.ofSeconds(3))
             .until(() -> conn.state() == ConnectionState.RECONNECTING);
-        // Wait through multiple backoff cycles; must still be RECONNECTING.
-        Thread.sleep(6_000L);
-        assertThat(conn.state()).isEqualTo(ConnectionState.RECONNECTING);
+        // Span at least two backoff cycles (first hop is 1s, cap 2s) without ever
+        // leaving RECONNECTING — replaces the old 6-second blind sleep
+        // (Story #054 T020: never sleep to await a state).
+        await().atMost(Duration.ofSeconds(4))
+            .during(Duration.ofMillis(2_000))
+            .until(() -> conn.state() == ConnectionState.RECONNECTING);
         assertThat(conn.name()).isEqualTo("dying");
     }
 
@@ -103,7 +111,7 @@ class StreamableHttpMcpServerConnectionReconnectTest {
             McpServerConfig.builder()
                 .name("remote")
                 .transport(McpTransportType.STREAMABLE_HTTP)
-                .url(server.baseUrl())
+                .url(server.mcpEndpoint())
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(1_000L)
                 .reconnectCapMs(1_000L)

@@ -44,8 +44,12 @@ Phase 0(T001—T006)已经把 pre 状态写死在 `/tmp` 下,Phase 2 起所有�
 **依赖树基线摘要**(唯一可比对的 md5):
 
 ```text
-808576f6e540bafbbd2567dd93ae4196
+f7a440cd1ea93dc3faa42826b14d78c8
 ```
+
+> **⚠️ Phase 2 write-back**:此处原记 `808576f6e540bafbbd2567dd93ae4196`,
+> 实测**同样不可复现**(reactor 计时行未被清洗,见 §4.3.1),已作废。
+> 上面的 `f7a440cd…` 是清洗到第 4 级后的可复现基准。
 
 ---
 
@@ -119,13 +123,15 @@ mvn -pl lingshu-core,lingshu-examples/demo-product dependency:tree -Dverbose \
     > /tmp/054-deptree-pre.txt 2>&1
 
 # 清洗:去掉 Maven 自身的装饰行
+# ⚠️ Phase 2 write-back:第 4 级(去 reactor 计时行)是必需的,见 §4.3.1
 grep -v '^\[INFO\] ---' /tmp/054-deptree-pre.txt \
   | grep -v 'BUILD\|Total time\|Finished at' \
   | grep -v 'Downloading from central:' \
+  | grep -vE '(SUCCESS|FAILURE|SKIPPED) \[' \
   > /tmp/054-deptree-pre.clean.txt
 
 md5sum /tmp/054-deptree-pre.clean.txt
-# → 808576f6e540bafbbd2567dd93ae4196
+# → f7a440cd1ea93dc3faa42826b14d78c8
 ```
 
 ### 4.2 post 镜像(Phase 5 / T052 执行)
@@ -137,6 +143,7 @@ mvn -pl lingshu-core,lingshu-examples/demo-product dependency:tree -Dverbose \
 grep -v '^\[INFO\] ---' /tmp/054-deptree-post.txt \
   | grep -v 'BUILD\|Total time\|Finished at' \
   | grep -v 'Downloading from central:' \
+  | grep -vE '(SUCCESS|FAILURE|SKIPPED) \[' \
   > /tmp/054-deptree-post.clean.txt
 
 diff /tmp/054-deptree-pre.clean.txt /tmp/054-deptree-post.clean.txt && echo "0 binary delta PASS"
@@ -167,6 +174,45 @@ CI 全新环境 → 这行有 → md5 又变。**它跟依赖树内容毫无关�
 > 顺带:`/tmp/054-deptree-pre.clean.txt` 已经是清洗后的版本(29997 B),
 > 比 T003 原命令的输出(30125 B)少的那一行正是上面这条 `Downloading from central:`。
 > 也就是说 Phase 0 当时已经意识到要清洗,只是清洗条件写漏了。本 Story 以 `.clean.txt` 为准。
+
+### 4.3.1 ⚠️ Phase 2 write-back:`808576f6…` 也**不可复现**(reactor 计时行)
+
+> **实证 > 文档**:Phase 2 跑 post-mirror 时发现 §4.3 认定的「唯一比对基准」
+> `808576f6e540bafbbd2567dd93ae4196` **同样每次跑都变**。原因与 §4.3 **同类但不同源**:
+> `dependency:tree` 在 reactor 模式(`-pl a,b`)下除了依赖行,还会打 2 行
+> **每个模块的构建耗时汇总**,它们含 wall-clock 秒数,逐次不同:
+
+```text
+[INFO] LingShu Core ....................................... SUCCESS [  0.497 s]
+[INFO] LingShu Demo Product (Story #025 — HTTP SSE chat product) SUCCESS [  2.806 s]
+```
+
+§4.3 的清洗条件(3 条 `grep -v`)碰不到它们 —— 漏的是 **`(SUCCESS|FAILURE|SKIPPED) [`** 这个模式。
+实测两次跑同一命令,清洗后 md5 分别为 `808576f6…` / `cdb28edf…` / `522450bc…`,**每次都变**。
+
+**Phase 2 实测的可复现基准(清洗到第 4 级)**:
+
+| 清洗到哪一步 | md5 | 可复现? |
+|---|---|---|
+| 3 级(§4.3 认定的基准) | `808576f6e540bafbbd2567dd93ae4196` | ❌ **不可复现** |
+| 4 级(再加 `grep -vE '(SUCCESS\|FAILURE\|SKIPPED) \['`) | **`f7a440cd1ea93dc3faa42826b14d78c8`** | ✅ 可复现 |
+
+**Phase 5 比对命令以此为准**:
+
+```bash
+for f in pre post; do
+  grep -v '^\[INFO\] ---' /tmp/054-deptree-$f.txt \
+    | grep -v 'BUILD\|Total time\|Finished at' \
+    | grep -v 'Downloading from central:' \
+    | grep -vE '(SUCCESS|FAILURE|SKIPPED) \[' \
+    > /tmp/054-deptree-$f.clean3.txt
+done
+diff /tmp/054-deptree-pre.clean3.txt /tmp/054-deptree-post.clean3.txt && echo "0 binary delta PASS"
+```
+
+⚠️ **清洗必须 pre / post 用同一条命令** —— 拿 3 级 pre 去比 4 级 post 会假失败
+(差的正是那 2 行计时行)。Phase 2 实测:3 级 pre vs 4 级 post = 1 行 diff(纯计时);
+4 级 pre vs 4 级 post = **0 行 diff**。
 
 ### 4.4 enforcer Rule 0(T053)
 

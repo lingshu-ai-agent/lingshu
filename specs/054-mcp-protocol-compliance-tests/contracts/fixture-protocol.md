@@ -187,7 +187,10 @@ try {
    `tools/call` id=3,`ping` 依心跳次数继续递增);
 3. **允许乱序到达**。生产按 id 关联而非按到达顺序,因此 fixture
    *可以*把响应打乱顺序发,SC-003 的反向证明用例正是靠这个。
-   fixture 需要一个 `outOfOrder` 开关来支撑该用例(Phase 2 T012 落地)。
+   fixture 需要一个 `outOfOrder` 开关来支撑该用例
+   —— **deferred to US2**:Phase 2(T011—T021)不加该开关,
+   本 Phase 的 fixture 只按「请求到达顺序」回包;乱序场景留待
+   US2(T027—T036)随 `outOfOrder` 一并落地。
 
 **帧形状**:
 
@@ -360,6 +363,40 @@ return raw.length == 0 ? EMPTY_OBJECT : mapper.readTree(raw);
 ⚠️ **`expectedId` 可以是 `null`**(通知场景)。此时 fixture 仍然**不回复**,
 不要为通知也造一个 SSE 帧 —— 那会污染流。
 
+#### ⚠️ Phase 2 write-back:fixture 侧的 **`Accept` 判别规则**
+
+上面的分派逻辑说明了**客户端**怎么读,但没说 **fixture 该回哪一种**。
+Phase 2 实测发现:客户端 `postJsonRpcSpec` **恒发**
+`Accept: application/json, text/event-stream`(两个都要,按 spec 允许)。
+⇒ fixture 若「看到 `text/event-stream` 就回 SSE」,规范 transport 的
+`application/json` 分支会变成**永远走不到的死代码**;反过来若
+「看到 `application/json` 就回 JSON」,SSE 分支同样走不到。
+
+规则因此定为 —— **仅当调用方「排他地」要 SSE 时才回 SSE**:
+
+```java
+/**
+ * 客户端 postJsonRpcSpec 恒发 Accept: application/json, text/event-stream,
+ * 该头本身无法区分 —— 偏向任一 content-type都会让另一条分支变死代码。
+ * 规则因此定为「仅当调用方排他地要 SSE 时才回 SSE」:规范 transport 保持
+ * 默认 application/json 路径;收窄该头的调用方(L1/L3 raw-HTTP 用例)走
+ * text/event-stream 路径。
+ */
+private static boolean wantsSse(HttpExchange ex) {
+    String accept = header(ex, "Accept");
+    if (accept == null) return false;
+    String lower = accept.toLowerCase();
+    return lower.contains("text/event-stream") && !lower.contains("application/json");
+}
+```
+
+即:
+- `Accept` 缺失 / 含 `application/json` ⇒ 回 `application/json`(默认路径);
+- `Accept` 含 `text/event-stream` 且**不含** `application/json` ⇒ 回 `text/event-stream`。
+
+无 id 的通知一律 `sendResponseHeaders(202, -1)`,不发正文 —— 与两种
+content-type 都无关。
+
 ### §2.5 非 2xx → `McpHttpStatusException`(FR-020 / FR-022)
 
 ```java
@@ -405,12 +442,37 @@ try {
 | 3 | 404 **且** `sessionId == null` | **不重握手**,直接上抛 | FR-022 |
 
 ⇒ fixture 的 404 必须是**「持续 404」**而不是「只 404 一次」:
-只 404 一次的话重试就会成功,测不出 FR-021。开关语义见
-`../data-model.md` §1.3 `expireSession`。
+只 404 一次的话重试就会成功,测不出 FR-021。
 
 ⇒ 另外注意 **FR-024**:重握手会走完整的 `initialize`,因此 fixture 会**再看到一次
 不带会话头的 `initialize`**。fixture 应当为**每次** `initialize` 都发一个新的
 `Mcp-Session-Id` 响应头,才能让「换了新会话」可断言。
+
+#### ⚠️ Phase 2 write-back:`expireSession` 的阈值语义
+
+`../data-model.md` §1.3 已把 `expireSession` 从 boolean 改成 **int 阈值**
+(原因见该节),配套的计数口径:
+
+- fixture 用 **每个 handler 私有的 `AtomicInteger sessionCount`**,
+  **只对携带非空 `Mcp-Session-Id` 的请求** `incrementAndGet()`;
+  无会话头的请求(如 `initialize`)不计数也不 404。
+- 第 N 个带会话头的请求起(`sessionCount >= expireSession`)**持续**返 404。
+- 每次 `initialize` 都下发**新的** `session-Id`(`session-<n>`,`n` 自增),
+  满足上面的 FR-024 要求。
+
+以 Streamable HTTP 的一次完整连接为例(`expireSession=3`):
+
+| 请求序 | method | 带 sessionId? | `sessionCount` | fixture 响应 |
+|---|---|---|---|---|
+| #0 | `initialize` | ❌ | — | 200 + 下发 `Mcp-Session-Id: session-1` |
+| #1 | `notifications/initialized` | ✅ | 1 | 202(通知不回正文) |
+| #2 | `tools/list` | ✅ | 2 | 200 + result |
+| #3 | `ping`(心跳) | ✅ | 3 | **404** ⇒ 触发 FR-020 恢复分支 |
+
+⇒ `expireSession=3` 让会话**恰好在第一个心跳**过期,于是
+「已连上 → 心跳失败 → RECONNECTING」这条链路可以单独观察。
+**`expireSession=0` / `1` 会让 `CONNECTED` 永远达不到**(握手阶段就 404),
+**`expireSession=4` 则连心跳都撑不到** —— 这两个都是误用值。
 
 ### §2.7 会话 id 从响应头取,不是从 body 取(FR-018)
 
