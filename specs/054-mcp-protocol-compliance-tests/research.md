@@ -306,8 +306,13 @@ JDK 8 兼容:`AtomicLong` 序号 + `Collections.synchronizedList(new ArrayList<>
   transport: stdio
   command: python3
   args:
-    - /Users/lineng/Documents/AIFullStack/MyDSHAgentDesign/remote_repos/lingshu/lingshu-examples/demo-product/src/main/resources/application.yml
+    - <ABSOLUTE_PATH>/lingshu-examples/demo-product/src/main/resources/application.yml
 ```
+
+> ⚠️ **Phase 3 write-back —— 机器相关前缀已打码**:原始实测值是一条完整的 macOS
+> 绝对路径(以 `/Users/<user>/` 开头的个人机器目录)。为避免个人目录结构随仓泄漏,
+> 前缀已替换为 `<ABSOLUTE_PATH>` 占位符。
+> **「它是绝对路径」这个事实本身没有变**,下面的结论不受影响。
 
 即:**macOS 绝对路径,指向本仓自己的 `application.yml`**,既不是 Windows 路径,
 也不是 `.py` 文件。工作树相对已提交状态发生了漂移。
@@ -341,6 +346,24 @@ return pb.start();
 另:`McpServerConfig` 10 个字段里**没有任何 cwd 字段**,所以 FR-003
 (不得依赖子进程 cwd 的未声明假设)天然满足 —— 只需注释说明「CWD 继承」是
 **已知且被依赖的行为**,不是隐式契约。
+
+### 8.1 Phase 3 write-back:T023 已实施(相对路径落地)
+
+**实证 > 文档** —— 本决策点记录的「目标终态」已在 Phase 3 / US1 落地:
+
+| 项 | 值 |
+|---|---|
+| 任务 | **T023**(US1 缺陷 A 修复) |
+| 分支 | `054-mcp-protocol-compliance-tests` |
+| 改动文件 | `lingshu-examples/demo-product/src/main/resources/application.yml` —— **仅 1 行**,yml 其余 0 改动 |
+| 旧值 | `- <ABSOLUTE_PATH>/.../application.yml`(指向 yml 自己 ⇒ `python3` 立即语法错误退出 ⇒ stdio server **从来没起来过**) |
+| 新值 | `- src/main/resources/mcp-servers/echo-stdio.py` |
+| 守护测试 | `DemoProductStdioArgsPathTest`(T022 新建,3 case,0 新 Maven 依赖) |
+| 实测 | T026 全绿(3/3)+ T025 端到端日志 `[MCP:echo-stdio] (re)connected, 2 tools registered`,无 `LINGS-M03` |
+
+**FR-003 仍天然满足**:`McpServerConfig` 10 个字段**没有 cwd 字段**,
+「CWD 继承」是**已知且被依赖**的行为(论证见本决策点上半段的 `spawn()` 代码),
+不是未声明的隐式契约。
 
 ---
 
