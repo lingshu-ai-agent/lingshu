@@ -293,3 +293,43 @@ With multiple developers:
   - ❌ 用 `Thread.sleep` 等「某件事发生」→ 单用例预算 2 s 会被拖爆,一律 Awaitility
   - ❌ 保留两套 fixture 并各改各的 → 漂移会重新长回来,SC-006 要求单份实现
   - ❌ 把外部真实 MCP server 连通性当通过判据 → 会给 CI 引入网络依赖(spec Assumptions 第 3 条)
+---
+
+## Phase 4 write-back:US2(SSE)已实施 — 2026-10-24
+
+> **追加记录,不改动上文任何 task 文本** —— 上文的 checkbox 保持未勾选(沿用 Phase 3 的
+> 仓内惯例:完成状态记录在 Phase-1 制品的**追加段**里,而不是就地勾选)。
+> 详细的落地表 / 根因分析 / 反证证据见 `research.md` §8.2 与 `quickstart.md` §7。
+
+### Phase 4 任务完成情况
+
+| Task | 状态 | 落地位置 |
+|---|---|---|
+| T027 | ✅ | `SseMcpServerConnectionStartTest.start_fakeServer_5stepsReachesConnected`(握手四段断言) |
+| T028 | ✅ | 同文件 `handshake_relativeAnnouncedUri_resolvesAgainstSseOrigin` |
+| T029 | ✅ | 同文件 `handshake_concurrentCalls_correlateByIdNotArrivalOrder` |
+| T030 | ✅ | 同文件 `handshake_noEndpointAnnounce_neverConnects` |
+| T031 | ✅ | 同文件 `heartbeat_usesJsonRpcPing_neverCallsHealthEndpoint` |
+| T032 | ✅ | `SseMcpServerConnectionHeartbeatTest` 4 例全重写(ping 语义) |
+| T033 | ✅ | 状态序列对齐新握手(`McpStateLog` 两道过滤) |
+| T034 | ✅ | `SseMcpServerConnectionReconnectTest.sseStreamBroken_reconnects` 改 Awaitility 轮询 |
+| T035 | ✅ | `SseMcpServerConnectionCloseAndCallTest` 5 例 + 陈旧 URL 全换真实地址 |
+| T036 | ✅ | 反证抽查:破坏 fixture ⇒ 24 run / 2 fail / 13 error;改回 ⇒ 24 run / 0 / 0 |
+
+### 任务文本与现实的 3 处偏差(evidence-first,reality 优先)
+
+| # | Task 文本 | 现实 | 处置 |
+|---|---|---|---|
+| A | **T030** 「断言 `start()` 抛 `IOException` 且消息含 `no 'endpoint' event` 语义」 | `start()` **不抛** —— 连接以 `RECONNECTING` 静默重试,没有异常出口 | 改为断言「永不进入 `CONNECTED`」+「未公告端点前不发任何 JSON-RPC 请求」。**同时它必须是 T036 反证里唯一保持绿的用例** —— 它本来就需要「没有 `endpoint` 帧」这个 fixture,所以破坏 fixture 对它没有影响 |
+| B | **T029** 「连发 2 个 JSON-RPC 请求(如 `initialize` 与 `tools/list`)」 | 2 个 `initialize`/`tools/list` 会撞上协议自身的握手时序,测不出「id 关联不依赖到达顺序」 | 改为 2 个**并发** `tools/call`(不同 `input` ⇒ 不同应答),用 fixture 的 `outOfOrder` 开关把 2 个应答**反序**推回,断言各应答仍回到正确的调用方 |
+| C | **T032** 「该文件 162 行」 | 实际 **249 行**(Phase 3 之前就已经不是 162 行) | 行数陈旧,不影响用例语义;按 reality 记录 |
+
+### T036 反证结果的诚实陈述
+
+任务文本要求「确认 T027—T030 的用例**变红**」。
+
+**实测:15 / 24 变红;T030 保持绿。**
+
+T030 保持绿是**正确结果**,不是反证失败 —— T030(`handshake_noEndpointAnnounce_neverConnects`)
+本来就是那个**主动要求**「fixture 不写 `event: endpoint` 帧」的用例;把 fixture 的首帧注释掉
+对它没有任何影响。按「reality 优先」原则,此处按实测结果记录,不修改 T030 的断言去凑「全红」。

@@ -350,4 +350,91 @@ git status --short                                             # 只该看到本
 
 ---
 
-**Last updated**: 2026-10-24 · Phase 3 write-back(US1 相对路径落地 + R-13 镜像实测 + T016 fixture 收口)
+## 7. Phase 4 write-back:US2(SSE)新增的测试基建
+
+> 追加于 2026-10-24。Phase 4(T027—T036)新增了 2 个测试侧基建件与 4 个 fixture 开关。
+> 两者都**只影响测试**,生产代码 0 行改动。
+
+### 7.1 `McpStateLog` —— 唯一「真 transition」观察入口(新增)
+
+路径:`lingshu-core/src/test/java/ai/lingshu/core/mcp/McpStateLog.java`(137 行,package-private)。
+
+```java
+static McpStateLog attach(McpServerConnection conn);   // 必须在 start() 之前调
+List<ConnectionState> notifications();                  // 原始流(含重复/陈旧公告)
+List<ConnectionState> transitions();                    // 只含真 transition
+int connectCount();                                     // 真·CONNECTED 次数
+List<Instant> beatsAtConnect();                         // 每次真 CONNECTED 时的 lastHeartbeatAt
+```
+
+**为什么需要它** —— `SseMcpServerConnection.relistTools()` 收到
+`notifications/tools/list_changed` push 后会**直接**调 `notifyListeners(CONNECTED)`,
+**绕过** `transition()` 的 `prev != next` 守卫 ⇒ 原始 listener 流里每次 server push
+都会多出一条 `CONNECTED`。更糟的是 `relistTools()` 入口检查完 `state == CONNECTED`
+之后还要做一次**阻塞**的 `tools/list` POST —— 这中间连接可能已掉,
+于是 pending 的 relist 仍会公告 `CONNECTED`,描述一个**已不存在**的连接。
+
+⇒ **数 `CONNECTED` 通知个数 ≠ 数连接次数**。`McpStateLog` 在测试侧做两道过滤:
+
+1. 通知与上一条相同 ⇒ 重复公告,不是 transition;
+2. `state == CONNECTED` 但 `conn.state() != CONNECTED` ⇒ 陈旧公告,transport 自己的
+   `state()` 才是真相。
+
+**新写法**(取代直接读 listener 列表):
+
+```java
+McpStateLog log = McpStateLog.attach(conn);
+conn.start();
+await().atMost(Duration.ofSeconds(5)).until(() -> conn.state() == ConnectionState.CONNECTED);
+assertThat(log.connectCount()).isEqualTo(1);   // ✅ 真连接次数
+```
+
+### 7.2 `McpHttpTestSupport.pickClosedBaseUrl()` —— 确定性「已关闭端口」选择器(新增)
+
+路径:`lingshu-core/src/test/java/ai/lingshu/core/mcp/McpHttpTestSupport.java`(+18 行)。
+
+```java
+static String pickClosedBaseUrl() throws Exception;   // 返回形如 http://127.0.0.1:<port>
+```
+
+**做法**:起 fixture → 读它**实际**绑定的端口 → 杀掉子进程 ⇒ 该端口确定已关闭。
+
+**替代了什么**:旧的 `http://127.0.0.1:1` 魔法字面量。它只证明了「特权端口被拒绝」,
+**从没验证过一个真正被占用过的端口**。Phase 4 的 T034 / T035 全部改用本选择器。
+
+> SSE 路径不要手写 `/sse` 后缀 —— 用 `SseMcpServerConnection.resolveSseUrl(baseUrl)` 派生。
+
+### 7.3 Phase 4 新增的 fixture 开关
+
+`fixture/TestMcpHttpServer.java`(现 **1146** 行)新增 4 个开关,由
+`McpHttpTestSupport` 原样转发为 `-D<key>=<value>`:
+
+| 开关 | 默认 | 用途 |
+|---|---|---|
+| `pushNotifications` | `true` | `false` 时把周期性 push 换成一条 SSE **注释** keepalive(仍产出字节,客户端不会卡在一个永不到来的 chunk 上,但不再被诱导去重发 `tools/list`)。**心跳类用例必须关** —— 否则每次 push 触发一次 `tools/list` 重拉,会抢走 `exitAfter` 的请求槽位,心跳 ping 反而打不出去,请求日志计数不再确定 |
+| `delayAfter` | `-1` | 从第 N 个请求**开始**才延迟。配 `delayMs` 用,让「握手快、探活慢」可分离 |
+| `announceUri` | fixture 的 POST URI | `event: endpoint` 帧的 data 内容(可写**相对** URI)⇒ T028 |
+| `outOfOrder` | `false` | 缓存 2 个应答并**按相反顺序**推 `event: message` ⇒ T029 |
+
+> `noEndpointAnnounce` **不是** Phase 4 新增的 —— Phase 2 就有,T030 只是在用它。
+
+### 7.4 反证抽查(SC-003)的正确做法(T036)
+
+```bash
+# 1) 临时把 fixture 的 `event: endpoint` 首帧注释掉
+# 2) 跑 SSE 包 → 期望大面积变红
+mvn -pl lingshu-core test -Dtest='ai.lingshu.core.mcp.**'
+# 3) 改回,确认 fixture 与破坏前逐字节相同
+md5 lingshu-core/src/test/java/ai/lingshu/core/mcp/fixture/TestMcpHttpServer.java
+git diff --stat
+```
+
+**实测基线(Phase 4)**:破坏后 `Tests run: 24, Failures: 2, Errors: 13`(15/24 变红);
+改回后 `Tests run: 24, Failures: 0, Errors: 0`。
+**注意**:`handshake_noEndpointAnnounce_neverConnects`(T030)破坏后**仍绿** —— 这是**正确**结果,
+它本来就以 `noEndpointAnnounce=true` 起 fixture、断言连接**永不**进入 `CONNECTED`。
+详见 research.md §8.2.6。
+
+---
+
+**Last updated**: 2026-10-24 · Phase 4 write-back(US2 SSE 4 段握手 + ping 心跳 + T036 反证抽查 + `McpStateLog` 两道过滤 + `pickClosedBaseUrl()` 端口选择器)

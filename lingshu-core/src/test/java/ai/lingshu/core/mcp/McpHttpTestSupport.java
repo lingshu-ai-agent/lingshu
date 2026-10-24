@@ -118,6 +118,24 @@ final class McpHttpTestSupport {
     }
 
     /**
+     * A base URL whose port is guaranteed to be closed.
+     *
+     * <p>Starts the fixture, reads the port it actually bound, then kills the
+     * subprocess — the port is now deterministically closed. This replaces the
+     * old {@code http://127.0.0.1:1} magic literal, which only proved that
+     * <em>privileged</em> ports are refused and never exercised a port that
+     * had really been in use (Story #054 T019 / T034 / T035).
+     *
+     * @return {@code http://127.0.0.1:<closed port>}
+     */
+    static String pickClosedBaseUrl() throws Exception {
+        ProcessHandle handle = startHttpServer();
+        String url = handle.baseUrl();
+        handle.close();
+        return url;
+    }
+
+    /**
      * Bundle of {@link Process} + base URL so tests can {@code close()}
      * the subprocess in {@code @AfterEach}.
      */

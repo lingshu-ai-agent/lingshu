@@ -82,6 +82,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code port=N} — bind a specific port; {@code 0} = OS-assigned.</li>
  *   <li>{@code delayMs=N} — deliberate delay before every <em>JSON-RPC</em>
  *       reply (simulates a slow server; trips read timeouts).</li>
+ *   <li>{@code delayAfter=N} — apply {@code delayMs} only from the N-th
+ *       (1-based) request onward; the first N-1 requests are answered
+ *       immediately. This is what makes "the server got slow <em>after</em>
+ *       the handshake" observable: with a plain {@code delayMs} the handshake
+ *       itself would time out and the heartbeat would never be reached.</li>
  *   <li>{@code exitAfter=N} — {@code System.exit(0)} once N JSON-RPC requests
  *       have been answered (simulates a crash). Probe reads don't count.</li>
  *   <li>{@code pushIntervalMs=N} — server-push cadence on {@code /sse}
@@ -104,7 +109,28 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code omitProtocolVersion=true} — {@code initialize} omits
  *       {@code protocolVersion} from its result, to exercise the client-side
  *       fallback to {@code McpHttpSupport.PROTOCOL_VERSION} (FR-019).</li>
+ *   <li>{@code announceUri=/some/path} — the URI carried by the
+ *       {@code event: endpoint} frame. Default {@value #SSE_POST_URI}. Lets a
+ *       test announce a <em>relative</em> URI with a query string
+ *       (FR-012) and check how the client resolves it.</li>
+ *   <li>{@code outOfOrder=true} — {@code tools/call} answers are buffered in
+ *       pairs and pushed on the stream in <em>reverse</em> arrival order, so a
+ *       test can prove the client correlates answers by JSON-RPC id rather
+ *       than by arrival order (FR-013).</li>
+ *   <li>{@code pushNotifications=false} — the periodic SSE push becomes an
+ *       SSE <em>comment</em> keepalive instead of a
+ *       {@code notifications/tools/list_changed} message. The response keeps
+ *       producing bytes (a client disconnecting mid-stream would otherwise
+ *       block until the next push) but the client is not nudged into
+ *       re-issuing {@code tools/list} on every tick.</li>
  * </ul>
+ *
+ * <p><b>Story #054 — why the catch-all context exists</b>: without a
+ * {@code "/"} context an unmatched request (e.g. a re-introduced vendor
+ * {@code GET /health}) would 404 <em>silently</em> and never reach the
+ * recorder, so "the client never sent a {@code /health} probe" would be a
+ * vacuous assertion. The catch-all records every unmatched request, which
+ * turns that assertion into a real one (FR-007).
  *
  * <p><b>Protocol constants are hardcoded on purpose</b> —
  * {@code McpHttpSupport.PROTOCOL_VERSION} / {@code HEADER_PROTOCOL_VERSION} /
@@ -186,9 +212,18 @@ public final class TestMcpHttpServer {
             new InetSocketAddress("127.0.0.1", cfg.port), 0);
 
         server.createContext(PATH_SSE, new SseHandler(cfg));
-        server.createContext(SSE_POST_URI, new SsePostHandler(cfg, rpcCount));
+        server.createContext(SSE_POST_URI, new SsePostHandler(cfg, rpcCount, true));
         server.createContext(PATH_MCP, new StreamableHandler(cfg, rpcCount));
         server.createContext(PATH_RECORDED, new RecordedHandler());
+        // Catch-all: every path that no other context claims is still recorded
+        // (so "the client never sent GET /health" is a real assertion, not a
+        // vacuous one). Longest-prefix matching means the explicit contexts
+        // above always win.
+        server.createContext("/", new SsePostHandler(cfg, rpcCount, false));
+
+        if (cfg.outOfOrder) {
+            startOutOfOrderFlusher();
+        }
 
         // Cached pool: the /sse handler blocks for the life of the connection, so
         // POST handling must not queue behind it.
@@ -215,7 +250,28 @@ public final class TestMcpHttpServer {
 
     private static void record(String method, Long id, HttpExchange ex, String body) {
         RECORDER.add(new RecordedRequest(SEQ.incrementAndGet(), method, id,
-            header(ex, "Content-Type"), header(ex, HEADER_SESSION_ID), body));
+            header(ex, "Content-Type"), header(ex, HEADER_SESSION_ID), body,
+            ex == null ? null : ex.getRequestMethod(),
+            pathOf(ex),
+            header(ex, "Host")));
+    }
+
+    /**
+     * Request path <em>including</em> the query string — the announced
+     * {@code event: endpoint} URI may carry one (e.g.
+     * {@code /messages?sessionId=abc}) and the client must POST to exactly
+     * that URI.
+     */
+    private static String pathOf(HttpExchange ex) {
+        if (ex == null || ex.getRequestURI() == null) {
+            return null;
+        }
+        String rawPath = ex.getRequestURI().getRawPath();
+        String query = ex.getRequestURI().getRawQuery();
+        if (query == null || query.isEmpty()) {
+            return rawPath;
+        }
+        return rawPath + "?" + query;
     }
 
     // ── SSE handler (GET /sse) ───────────────────────────────────────────
@@ -243,7 +299,7 @@ public final class TestMcpHttpServer {
                 if (!cfg.noEndpointAnnounce) {
                     // FR-012: relative URI, resolved by the client against the
                     // SSE stream's own URL — never an absolute URL.
-                    stream.write("endpoint", SSE_POST_URI);
+                    stream.write("endpoint", cfg.announceUri);
                 }
                 long start = System.currentTimeMillis();
                 int pushes = 0;
@@ -256,6 +312,10 @@ public final class TestMcpHttpServer {
                         && pushes % cfg.malformedRatio == cfg.malformedRatio - 1;
                     if (malformed) {
                         stream.writeData("not-json-{{{");
+                    } else if (!cfg.pushNotifications) {
+                        // Comment-only keepalive: keeps the response producing
+                        // bytes without injecting a JSON-RPC message.
+                        stream.writeComment("keepalive");
                     } else {
                         ObjectNode note = MAPPER.createObjectNode();
                         note.put("jsonrpc", "2.0");
@@ -299,13 +359,30 @@ public final class TestMcpHttpServer {
             writeData(data, null);
         }
 
+        /**
+         * SSE comment frame ({@code ": text"}).
+         *
+         * <p>Spec-compliant clients ignore comment lines, so a comment is the
+         * cheapest way to keep the response producing bytes. It also keeps the
+         * response <em>alive</em> without injecting a JSON-RPC message — a
+         * {@code notifications/tools/list_changed} push would make the client
+         * re-issue {@code tools/list} on every tick.
+         */
+        void writeComment(String text) throws IOException {
+            writeRaw(": " + text + "\n\n");
+        }
+
         private void writeData(String data, String eventLine) throws IOException {
             StringBuilder sb = new StringBuilder();
             if (eventLine != null) {
                 sb.append(eventLine);
             }
             sb.append("data: ").append(data).append("\n\n");
-            byte[] payload = sb.toString().getBytes(StandardCharsets.UTF_8);
+            writeRaw(sb.toString());
+        }
+
+        private void writeRaw(String frame) throws IOException {
+            byte[] payload = frame.getBytes(StandardCharsets.UTF_8);
             synchronized (SSE_WRITE_LOCK) {
                 if (closed) {
                     throw new IOException("SSE stream already closed");
@@ -334,24 +411,58 @@ public final class TestMcpHttpServer {
         private final Config cfg;
         private final AtomicInteger rpcCount;
 
-        SsePostHandler(Config cfg, AtomicInteger rpcCount) {
+        /** Arrival counter — drives the {@code delayAfter} window. */
+        private final AtomicInteger reqCount = new AtomicInteger(0);
+
+        /**
+         * {@code true} for the announced POST URI (JSON-RPC only);
+         * {@code false} for the catch-all context, which additionally records
+         * unmatched non-JSON-RPC requests and answers them with 404.
+         */
+        private final boolean jsonRpcOnly;
+
+        SsePostHandler(Config cfg, AtomicInteger rpcCount, boolean jsonRpcOnly) {
             this.cfg = cfg;
             this.rpcCount = rpcCount;
+            this.jsonRpcOnly = jsonRpcOnly;
         }
 
         @Override
         public void handle(HttpExchange ex) throws IOException {
             String body = readBody(ex);
-            delay(cfg.delayMs);
+            applyDelay(cfg, reqCount);
             JsonNode req = parse(body);
             String method = methodOf(req);
             Long id = idOf(req);
-            record(method, id, ex, body);
-            if (id != null) {
+            boolean nonPost = !jsonRpcOnly
+                && !"POST".equalsIgnoreCase(ex.getRequestMethod());
+            // The out-of-order path records AND buffers under ONE lock — see
+            // recordAndBufferOutOfOrder. Recording separately would let two
+            // concurrent handlers interleave between the two steps.
+            boolean buffered = id != null && !nonPost
+                && cfg.outOfOrder && "tools/call".equals(method);
+            if (buffered) {
                 // The POST is only acknowledged; the answer rides the stream,
                 // correlated by this id (FR-013).
-                pushFrame("message",
-                    MAPPER.writeValueAsString(success(id, cfg.resultFor(method, ex))));
+                String payload = MAPPER.writeValueAsString(
+                    success(id.longValue(), cfg.resultFor(method, req, ex)));
+                recordAndBufferOutOfOrder(method, id, ex, body, payload);
+            } else {
+                record(method, id, ex, body);
+                if (nonPost) {
+                    // Catch-all context: a non-POST that reached it was not an
+                    // MCP request. Record it (done above) and answer 404 — the
+                    // point is that it is now *observable*, not that it
+                    // succeeds.
+                    ex.sendResponseHeaders(404, -1);
+                    ex.close();
+                    return;
+                }
+                if (id != null) {
+                    String payload = MAPPER.writeValueAsString(
+                        success(id.longValue(), cfg.resultFor(method, req, ex)));
+                    pushFrame("message", payload);
+                }
             }
             ex.sendResponseHeaders(202, -1);
             ex.close();
@@ -369,6 +480,9 @@ public final class TestMcpHttpServer {
         /** Counts requests that carry a session id — the {@code expireSession} index. */
         private final AtomicInteger sessionCount = new AtomicInteger(0);
 
+        /** Arrival counter — drives the {@code delayAfter} window. */
+        private final AtomicInteger reqCount = new AtomicInteger(0);
+
         StreamableHandler(Config cfg, AtomicInteger rpcCount) {
             this.cfg = cfg;
             this.rpcCount = rpcCount;
@@ -377,7 +491,7 @@ public final class TestMcpHttpServer {
         @Override
         public void handle(HttpExchange ex) throws IOException {
             String body = readBody(ex);
-            delay(cfg.delayMs);
+            applyDelay(cfg, reqCount);
             JsonNode req = parse(body);
             String method = methodOf(req);
             Long id = idOf(req);
@@ -416,7 +530,7 @@ public final class TestMcpHttpServer {
                     "session-" + SESSION_SEQ.incrementAndGet());
             }
             byte[] payload = MAPPER.writeValueAsBytes(
-                success(id, cfg.resultFor(method, ex)));
+                success(id, cfg.resultFor(method, req, ex)));
             if (wantsSse(ex)) {
                 ex.getResponseHeaders().set("Content-Type", "text/event-stream");
                 ex.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -573,15 +687,22 @@ public final class TestMcpHttpServer {
         private final String contentType;
         private final String sessionIdHeader;
         private final String body;
+        private final String httpMethod;
+        private final String path;
+        private final String host;
 
         RecordedRequest(long seq, String method, Long id, String contentType,
-                        String sessionIdHeader, String body) {
+                        String sessionIdHeader, String body, String httpMethod,
+                        String path, String host) {
             this.seq = seq;
             this.method = method;
             this.id = id;
             this.contentType = contentType;
             this.sessionIdHeader = sessionIdHeader;
             this.body = body;
+            this.httpMethod = httpMethod;
+            this.path = path;
+            this.host = host;
         }
 
         /** Monotonic arrival sequence — 1-based. */
@@ -614,6 +735,24 @@ public final class TestMcpHttpServer {
             return body;
         }
 
+        /**
+         * HTTP verb of the inbound request ({@code GET} / {@code POST}).
+         * Empty string when the request carried no JSON-RPC method.
+         */
+        public String getHttpMethod() {
+            return httpMethod;
+        }
+
+        /** Request path including the query string, e.g. {@code /messages?sessionId=abc}. */
+        public String getPath() {
+            return path;
+        }
+
+        /** Raw {@code Host} request header — proves the client kept the origin. */
+        public String getHost() {
+            return host;
+        }
+
         ObjectNode toJson() {
             ObjectNode n = MAPPER.createObjectNode();
             n.put("seq", seq);
@@ -634,6 +773,21 @@ public final class TestMcpHttpServer {
                 n.put("sessionIdHeader", sessionIdHeader);
             }
             n.put("body", body == null ? "" : body);
+            if (httpMethod == null) {
+                n.putNull("httpMethod");
+            } else {
+                n.put("httpMethod", httpMethod);
+            }
+            if (path == null) {
+                n.putNull("path");
+            } else {
+                n.put("path", path);
+            }
+            if (host == null) {
+                n.putNull("host");
+            } else {
+                n.put("host", host);
+            }
             return n;
         }
 
@@ -648,13 +802,19 @@ public final class TestMcpHttpServer {
                     ? n.get("contentType").asText() : null,
                 n.has("sessionIdHeader") && !n.get("sessionIdHeader").isNull()
                     ? n.get("sessionIdHeader").asText() : null,
-                n.path("body").asText(""));
+                n.path("body").asText(""),
+                n.has("httpMethod") && !n.get("httpMethod").isNull()
+                    ? n.get("httpMethod").asText() : null,
+                n.has("path") && !n.get("path").isNull()
+                    ? n.get("path").asText() : null,
+                n.has("host") && !n.get("host").isNull()
+                    ? n.get("host").asText() : null);
         }
 
         @Override
         public String toString() {
             return "#" + seq + " " + method + " id=" + id
-                + " session=" + sessionIdHeader;
+                + " session=" + sessionIdHeader + " " + httpMethod + " " + path;
         }
     }
 
@@ -664,6 +824,7 @@ public final class TestMcpHttpServer {
 
         final int port = intProp("port", 0);
         final int delayMs = intProp("delayMs", 0);
+        final int delayAfter = intProp("delayAfter", -1);
         final int exitAfter = intProp("exitAfter", -1);
         final int pushIntervalMs = intProp("pushIntervalMs", 200);
         final int closeSseAfterMs = intProp("closeSseAfter", -1);
@@ -672,7 +833,24 @@ public final class TestMcpHttpServer {
         final boolean noEndpointAnnounce = boolProp("noEndpointAnnounce", false);
         final boolean omitProtocolVersion = boolProp("omitProtocolVersion", false);
 
-        ObjectNode resultFor(String method, HttpExchange ex) {
+        /** URI carried by the {@code event: endpoint} frame (FR-012). */
+        final String announceUri = strProp("announceUri", SSE_POST_URI);
+
+        /** Push {@code tools/call} answers in reverse arrival order (FR-013). */
+        final boolean outOfOrder = boolProp("outOfOrder", false);
+
+        /**
+         * Whether the periodic SSE push carries a
+         * {@code notifications/tools/list_changed} JSON-RPC message.
+         *
+         * <p>{@code false} replaces it with an SSE comment keepalive: the
+         * response keeps producing bytes (so the client's disconnect does not
+         * block on a chunk that never comes) but the client is not nudged
+         * into re-issuing {@code tools/list} every tick.
+         */
+        final boolean pushNotifications = boolProp("pushNotifications", true);
+
+        ObjectNode resultFor(String method, JsonNode req, HttpExchange ex) {
             ObjectNode r = MAPPER.createObjectNode();
             if ("initialize".equals(method)) {
                 if (!omitProtocolVersion) {
@@ -705,13 +883,38 @@ public final class TestMcpHttpServer {
                 return r;
             }
             if ("tools/call".equals(method)) {
-                r.put("content", "fake-result");
+                // Echo the caller's input back, so a test can tell two
+                // concurrent calls apart. Falls back to the historical
+                // constant when the caller sent no input (existing
+                // assertions depend on it).
+                String echoed = echoedInput(req);
+                r.put("content", echoed.isEmpty() ? "fake-result" : echoed);
                 r.put("isError", false);
                 return r;
             }
             // ping and anything else: an empty result is a valid JSON-RPC answer.
             return r;
         }
+
+        /** {@code params.arguments.input} of a {@code tools/call} request. */
+        private String echoedInput(JsonNode req) {
+            if (req == null) {
+                return "";
+            }
+            JsonNode input = req.path("params").path("arguments").path("input");
+            if (input.isMissingNode() || input.isNull()) {
+                return "";
+            }
+            return input.isTextual() ? input.asText("") : input.toString();
+        }
+    }
+
+    private static String strProp(String key, String fallback) {
+        String raw = System.getProperty(key);
+        if (raw == null || raw.isEmpty()) {
+            return fallback;
+        }
+        return raw.trim();
     }
 
     private static int intProp(String key, int fallback) {
@@ -758,6 +961,89 @@ public final class TestMcpHttpServer {
                 stream.shutdown();
             }
         }
+    }
+
+    // ── Out-of-order answer buffering (FR-013) ──────────────────────────
+
+    /**
+     * Buffered {@code tools/call} answers, waiting for a second one so the
+     * pair can be pushed in reverse arrival order. Each entry is
+     * {@code {payload, enqueuedAtMillis}}.
+     */
+    private static final List<Object[]> OUT_OF_ORDER_BUFFER =
+        Collections.synchronizedList(new ArrayList<Object[]>());
+
+    /**
+     * Record the request AND buffer its answer under <b>one</b> lock.
+     *
+     * <p>As soon as a second answer arrives, both are pushed — the later
+     * arrival first (reverse order) — so the client cannot rely on arrival
+     * order to correlate them.
+     *
+     * <p>Story #054 T036 hardening: the two concurrent {@code tools/call}
+     * POSTs are handled by two {@code HttpServer} threads. If
+     * {@code record()} and the buffer append were two separate steps, the
+     * handlers could interleave between them — the recorder would show one
+     * arrival order while the answers were pushed in the other, and the
+     * "the pair is pushed in reverse arrival order" guarantee would be a coin
+     * flip. One lock, one order: the recorded order <em>is</em> the buffered
+     * order, so the push order is exactly its reverse.
+     */
+    private static void recordAndBufferOutOfOrder(String method, Long id,
+        HttpExchange ex, String body, String payload) {
+        List<Object[]> ready;
+        synchronized (OUT_OF_ORDER_BUFFER) {
+            record(method, id, ex, body);
+            OUT_OF_ORDER_BUFFER.add(new Object[] {
+                payload, Long.valueOf(System.currentTimeMillis()) });
+            if (OUT_OF_ORDER_BUFFER.size() < 2) {
+                return;
+            }
+            ready = new ArrayList<>(OUT_OF_ORDER_BUFFER);
+            OUT_OF_ORDER_BUFFER.clear();
+        }
+        for (int i = ready.size() - 1; i >= 0; i--) {
+            pushFrame("message", (String) ready.get(i)[0]);
+        }
+    }
+
+    /**
+     * Safety net: if a second answer never arrives, flush the lonely one
+     * after a second instead of leaving the caller hanging until its timeout.
+     */
+    private static void startOutOfOrderFlusher() {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (true) {
+                    try {
+                        Thread.sleep(100L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    List<Object[]> stale = null;
+                    synchronized (OUT_OF_ORDER_BUFFER) {
+                        if (OUT_OF_ORDER_BUFFER.size() == 1) {
+                            Object[] only = OUT_OF_ORDER_BUFFER.get(0);
+                            long age = System.currentTimeMillis()
+                                - ((Long) only[1]).longValue();
+                            if (age > 1_000L) {
+                                stale = new ArrayList<>(OUT_OF_ORDER_BUFFER);
+                                OUT_OF_ORDER_BUFFER.clear();
+                            }
+                        }
+                    }
+                    if (stale != null) {
+                        for (Object[] entry : stale) {
+                            pushFrame("message", (String) entry[0]);
+                        }
+                    }
+                }
+            }
+        }, "test-mcp-out-of-order-flusher");
+        t.setDaemon(true);
+        t.start();
     }
 
     private static String methodOf(JsonNode req) {
@@ -820,6 +1106,26 @@ public final class TestMcpHttpServer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Apply the configured server-side delay, honoring the {@code delayAfter}
+     * window: the first {@code delayAfter - 1} requests are answered
+     * immediately, every later one is delayed.
+     *
+     * <p>Without this window a slow server would time out the <em>handshake</em>
+     * as well, and "the heartbeat probe timed out" could never be observed on
+     * its own.
+     */
+    private static void applyDelay(Config cfg, AtomicInteger counter) {
+        if (cfg.delayMs <= 0) {
+            return;
+        }
+        int n = counter.incrementAndGet();
+        if (cfg.delayAfter >= 0 && n <= cfg.delayAfter) {
+            return;
+        }
+        delay(cfg.delayMs);
     }
 
     /**

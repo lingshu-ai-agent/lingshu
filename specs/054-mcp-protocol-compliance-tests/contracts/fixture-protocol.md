@@ -560,4 +560,58 @@ T012(合并 fixture 实现)完成时,逐条勾:
 
 ---
 
-**Last updated**: 2026-10-23 · Phase 1 / T008
+## §5 Phase 4 write-back:US2(SSE)新增的 fixture 能力
+
+> 追加于 2026-10-24。Phase 4(T027—T036)在 `fixture/TestMcpHttpServer.java`
+> (现 **1146** 行)上新增 4 个开关 + 若干内部件。**全部只影响 fixture,生产代码 0 行改动。**
+> 所有开关经 `McpHttpTestSupport` 原样转发为 `-D<key>=<value>`。
+
+### §5.1 新增开关
+
+| 开关 | 类型 / 默认 | 语义 | 服务的用例 |
+|---|---|---|---|
+| `pushNotifications` | boolean / **true** | `false` 时,把周期性 push 换成一条 SSE **注释** keepalive —— 响应仍持续产出字节(客户端不会卡在一个永不到来的 chunk 上),但客户端**不再**被诱导去重发 `tools/list` | T032 心跳 4 例 |
+| `delayAfter` | int / **-1** | 从第 N 个请求**开始**才施加 `delayMs` 延迟 | T032 `probe_pingTimeout_disconnects` |
+| `announceUri` | String / fixture 的 `SSE_POST_URI` | `event: endpoint` 帧 data 的内容(可写**相对** URI) | T028 相对 URI 解析 |
+| `outOfOrder` | boolean / **false** | 缓存 2 个应答并**按相反顺序**推 `event: message` | T029 id 关联 |
+
+**`pushNotifications=false` 的确切语义(容易误读)**:
+
+- 它**不是**「关掉 push」—— SSE 流仍在推;
+- 推的内容从 `{"method":"notifications/tools/list_changed"}` 换成一条 `: keepalive` 注释行;
+- 因此**流不 stall**,但生产侧**不会**被触发 `relistTools()`;
+- ⇒ 请求日志里不再出现周期性的 `tools/list`,`exitAfter` 的请求槽位留给心跳 ping。
+
+**`delayAfter` 与 `delayMs` 的关系**:全进程延迟会让**握手本身**先超时,
+「心跳超时」就永远无法被单独观测到。`delayAfter` 让「握手快、探活慢」可分离。
+
+### §5.2 新增内部件
+
+| 内部件 | 作用 |
+|---|---|
+| `pathOf(HttpExchange)` | 取请求路径(SSE POST 端点判定) |
+| `writeComment(String)` | 写一条 SSE 注释行(keepalive) |
+| `writeRaw(String)` | 原样写一段 SSE 文本 |
+| `SsePostHandler(Config, AtomicInteger, boolean jsonRpcOnly)` | SSE 公告 POST 端点 handler,`jsonRpcOnly` 决定是否只收 JSON-RPC |
+| `RecordedRequest.getHttpMethod()` / `.getPath()` / `.getHost()` | 记录请求的 method / path / host —— 断言「没有任何 `GET /health` 请求」要用 |
+| `OUT_OF_ORDER_BUFFER` / `recordAndBufferOutOfOrder(...)` / `startOutOfOrderFlusher()` | T029 的「记录 + 缓冲 + 反序推送」三件套 |
+| `applyDelay(Config, AtomicInteger)` | 按 `delayAfter` / `delayMs` 施加延迟 |
+| `echoedInput(JsonNode)` | 从 `tools/call` 请求里回显 `input` —— T029 靠它区分两个并发调用的应答 |
+
+### §5.3 一次被修掉的 fixture race(T029)
+
+`recordAndBufferOutOfOrder` 的「先记录、再入 buffer」两步**不原子** —— 两个并发请求可能交错,
+导致**记录的顺序**与**buffer 的顺序**不一致,于是应答按 buffer 序回、记录却是乱的。
+
+**修法**:把「记录 + 入 buffer」合并进**同一个同步方法**。
+
+### §5.4 §3 负向清单的补充说明
+
+§3 写的「无 `GET /health`」在 Phase 4 有了**可执行的守护**:
+`RecordedRequest.getHttpMethod()` + `getPath()` 让 T031 能断言
+**整个握手 + 心跳期间没有任何一条 `GET /health` 请求** ——
+不是「没有 health 端点」这种被动事实,而是「客户端一次都没去访问」。
+
+---
+
+**Last updated**: 2026-10-24 · Phase 4 write-back(US2 SSE:4 个新 fixture 开关 + T029 fixture race 修复 + §3 负向清单的可执行守护)
