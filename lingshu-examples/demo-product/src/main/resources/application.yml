@@ -212,7 +212,7 @@ agent:
         transport: stdio
         command: python3
         args:
-          - /Users/lineng/Documents/AIFullStack/MyDSHAgentDesign/remote_repos/lingshu/lingshu-examples/demo-product/src/main/resources/application.yml
+          - src/main/resources/mcp-servers/echo-stdio.py
         # env: {}        # uncomment + customize env if your server needs it
         heartbeat-interval-ms: 30000
         heartbeat-timeout-ms: 10000

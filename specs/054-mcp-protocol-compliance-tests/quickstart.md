@@ -56,7 +56,7 @@ f7a440cd1ea93dc3faa42826b14d78c8
 ## 1. 跑单个用例
 
 ```bash
-cd /Users/lineng/Documents/AIFullStack/MyDSHAgentDesign/remote_repos/lingshu
+cd lingshu
 
 mvn -pl lingshu-core test -Dtest=StreamableHttpMcpServerConnectionSessionRecoveryTest
 ```
@@ -80,8 +80,19 @@ mvn -pl lingshu-core test -Dtest='ai.lingshu.core.mcp.**'
 mvn -pl lingshu-core test -Dtest='Sse*,Streamable*,McpHttp*,TestMcp*'
 ```
 
-改 fixture(`fixture/TestMcpHttpServer.java` / `fixture/TestMcpSseServer.java`)后**必须**回到本组重跑 ——
+改 fixture(`fixture/TestMcpHttpServer.java` / `fixture/TestMcpServer.java`)后**必须**回到本组重跑 ——
 fixture 是 fork 重写过的,单个类绿不代表整包绿。
+
+> **⚠️ Phase 3 write-back —— `fixture/TestMcpSseServer.java` 已不存在**:
+> Phase 2 / T016(用户授权删除)把 SSE handler **全部并入 `TestMcpHttpServer`**,
+> SC-006 要求单份实现、0 重复 ⇒ 该文件已删。当前 fixture 只剩 2 个:
+>
+> | fixture | 承担 |
+> |---|---|
+> | `fixture/TestMcpHttpServer.java` | HTTP + **SSE** 两套 handler(并入后) |
+> | `fixture/TestMcpServer.java` | stdio 子进程 fixture(Story #021a 起的原样) |
+>
+> 上面的命令 `-Dtest='Sse*,Streamable*,McpHttp*,TestMcp*'` 不受影响(前缀通配仍覆盖)。
 
 ---
 
@@ -214,6 +225,27 @@ diff /tmp/054-deptree-pre.clean3.txt /tmp/054-deptree-post.clean3.txt && echo "0
 (差的正是那 2 行计时行)。Phase 2 实测:3 级 pre vs 4 级 post = 1 行 diff(纯计时);
 4 级 pre vs 4 级 post = **0 行 diff**。
 
+> **⚠️ Phase 3 write-back —— 上面的「1 行 diff」应作废,实测是 2 行**。
+> Phase 3 实跑 4 级清洗(§4.3.1 的 `for f in pre post` 规范命令)时复现:
+>
+> ```text
+> md5 /tmp/054-deptree-pre.clean3.txt  → f7a440cd1ea93dc3faa42826b14d78c8
+> md5 /tmp/054-deptree-post.clean3.txt → f7a440cd1ea93dc3faa42826b14d78c8
+> diff → 0 行 diff  ⇒ 0 binary delta PASS
+> ```
+>
+> 而「3 级 pre vs 4 级 post」实测 diff 是 **2 行**(两个模块各 1 行 reactor 计时汇总),
+> 与本段第 1 句「差的正是那 2 行计时行」自洽 —— **只有紧跟其后的「1 行 diff」是笔误**。
+>
+> **另一个坑**:`/tmp/054-deptree-pre.clean.txt` 这个文件名带 `.clean`,
+> 但它的内容其实是 **3 级** 清洗产物(md5 `808576f6e540bafbbd2567dd93ae4196`,
+> 即 §4.3 已作废的那一档)。直接拿它跟 4 级 post 比 → 必然假失败。
+> **必须**用上面的规范命令从 raw `.txt` 重新清洗两侧,别复用 `.clean.txt`。
+>
+> 附带确认(§4.3 的原始论据依然成立):`Downloading from central:` 这行只在
+> **pre** raw 里出现(post raw 出现 0 次)—— 本地 `~/.m2` 缓存命中与否的噪声,
+> 与依赖树内容无关,清洗掉才能跨机器复现。
+
 ### 4.4 enforcer Rule 0(T053)
 
 ```bash
@@ -318,4 +350,4 @@ git status --short                                             # 只该看到本
 
 ---
 
-**Last updated**: 2026-10-23 · Phase 1 / T009
+**Last updated**: 2026-10-24 · Phase 3 write-back(US1 相对路径落地 + R-13 镜像实测 + T016 fixture 收口)
