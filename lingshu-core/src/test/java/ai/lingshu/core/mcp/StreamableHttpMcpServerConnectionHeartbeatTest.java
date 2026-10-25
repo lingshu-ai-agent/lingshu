@@ -23,8 +23,10 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -87,8 +89,14 @@ class StreamableHttpMcpServerConnectionHeartbeatTest {
         Instant hb0 = conn.lastHeartbeatAt();
         assertThat(hb0).isNotNull();
 
-        // Wait ~3 heartbeat cycles, verify lastHeartbeatAt advanced.
-        Thread.sleep(1_000L);
+        // Wait for the heartbeat to advance — Awaitility polling, never a
+        // `Thread.sleep` (Story #054 T043: the old `Thread.sleep(1_000L)`
+        // burned a full second of the 2 s per-case budget for a state wait).
+        await().atMost(Duration.ofSeconds(3))
+            .until(() -> {
+                Instant hb = conn.lastHeartbeatAt();
+                return hb != null && hb.toEpochMilli() > hb0.toEpochMilli();
+            });
         assertThat(conn.state()).isEqualTo(ConnectionState.CONNECTED);
         Instant hb1 = conn.lastHeartbeatAt();
         assertThat(hb1).isNotNull();
@@ -97,8 +105,30 @@ class StreamableHttpMcpServerConnectionHeartbeatTest {
         assertThat(hb1.toEpochMilli()).isGreaterThan(hb0.toEpochMilli());
 
         // FR-015: the liveness probe is a JSON-RPC ping, not a vendor /health GET.
-        assertThat(server.recorded())
+        List<RecordedRequest> recorded = server.recorded();
+        assertThat(recorded)
             .anyMatch((RecordedRequest r) -> "ping".equals(r.getMethod()) && r.getId() != null);
+
+        // FR-018 / T043 — the session id the server issued on `initialize` is
+        // recorded and replayed on every subsequent request, the heartbeat
+        // `ping` included.
+        List<RecordedRequest> lists = byMethod(recorded, "tools/list");
+        assertThat(lists)
+            .as("a healthy server must not trigger a second handshake")
+            .hasSize(1);
+        String sessionId = lists.get(0).getSessionIdHeader();
+        assertThat(sessionId)
+            .as("the negotiated session id must be observable")
+            .isNotNull();
+        List<RecordedRequest> pings = byMethod(recorded, "ping");
+        assertThat(pings)
+            .as("at least one heartbeat ping must have been issued")
+            .isNotEmpty();
+        for (RecordedRequest ping : pings) {
+            assertThat(ping.getSessionIdHeader())
+                .as("every heartbeat ping must replay the negotiated session id")
+                .isEqualTo(sessionId);
+        }
     }
 
     @Test
@@ -150,5 +180,17 @@ class StreamableHttpMcpServerConnectionHeartbeatTest {
         await().atMost(Duration.ofSeconds(8))
             .until(() -> conn.state() == ConnectionState.RECONNECTING);
         assertThat(conn.state()).isEqualTo(ConnectionState.RECONNECTING);
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────
+
+    private static List<RecordedRequest> byMethod(List<RecordedRequest> recorded, String method) {
+        List<RecordedRequest> out = new ArrayList<>();
+        for (RecordedRequest r : recorded) {
+            if (method.equals(r.getMethod())) {
+                out.add(r);
+            }
+        }
+        return out;
     }
 }

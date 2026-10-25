@@ -568,3 +568,152 @@ Tests run: 24, Failures: 0, Errors: 0 — BUILD SUCCESS   (40.133 s)
 | 新增 Maven 依赖 | **0** |
 | 新增测试 helper | 1(`McpStateLog.java`,package-private) |
 | JDK 8 兼容 | ✅ 无 `var` / `List.of` / `record` / text block;用 `Arrays.asList` / `Collections.synchronizedList(new ArrayList<>())` |
+
+---
+
+### 8.3 Phase 5 write-back:US3(Streamable HTTP)已实施
+
+> 追加于 2026-10-25。本节登记 Phase 5(T037—T047)实施期间的**实测现实**,
+> 以及 `tasks.md` 原始文字与现实冲突之处。**冲突一律以现实为准**(continuation
+> prompt §0 evidence-first 规则),差异在此逐条登记(与 §8.2 同规格)。
+
+#### 8.3.1 T037—T047 落地清单
+
+| 任务 | 落地位置 | 用例名 |
+|---|---|---|
+| T037 | `StreamableHttpMcpServerConnectionSessionRecoveryTest`(新文件) | `t037_oneShot404_clearsSessionAndRetriesWithSameId` |
+| T038 | 同文件 | `t038_persistent404_retriesOnceThenSurfacesError` |
+| T039 | 同文件 | `t039_404WithoutLocalSession_doesNotRehandshake` |
+| T040 | 同文件 | `t040_transport_readsSseShapedAnswers` / `t040_sameRequestTwoContentTypes_parseToTheSameResult` |
+| T041 | `McpHttpSupportPostJsonRpcSpecTest`(新文件,12 例) | — |
+| T042 | `StreamableHttpMcpServerConnectionStartTest`(4 例) | 单端点握手 + `Mcp-Session-Id` 回放 |
+| T043 | `StreamableHttpMcpServerConnectionHeartbeatTest`(3 例) | JSON-RPC `ping` + session 记录与回放 |
+| T044 | `StreamableHttpMcpServerConnectionReconnectTest`(4 例) | 含**去 flake** 的 `reconnect_afterSessionExpiry_reRunsHandshake` |
+| T045 | `StreamableHttpMcpServerConnectionCloseAndCallTest`(5 例) | 全部重写(见 §8.3.3) |
+| T046 | `McpHttpDomainGuardIT`(4 例) | 见 §8.3.4 |
+| T047 | 反证抽查(见 §8.3.5) | — |
+
+**Phase 5 产出文件(6 改 + 2 新增,0 生产代码改动)**:
+
+| 文件 | 性质 | 行数(实测) |
+|---|---|---|
+| `StreamableHttpMcpServerConnectionSessionRecoveryTest.java` | **新增** | **373** |
+| `McpHttpSupportPostJsonRpcSpecTest.java` | **新增** | **474** |
+| `StreamableHttpMcpServerConnectionStartTest.java` | 改 | → **221** |
+| `StreamableHttpMcpServerConnectionHeartbeatTest.java` | 改 | → **196** |
+| `StreamableHttpMcpServerConnectionReconnectTest.java` | 改 | → **420** |
+| `StreamableHttpMcpServerConnectionCloseAndCallTest.java` | 改 | → **345** |
+| `McpHttpDomainGuardIT.java` | 改 | → **300** |
+| `fixture/TestMcpHttpServer.java` | 改 | 1146 → **1249**(4 个新开关 + 方法作用域过期) |
+| `McpHttpTestSupport.java` | 改 | → **195** |
+| `McpStateLog.java` | 沿用 Phase 4 | **136** |
+
+`lingshu-core/src/main/java/ai/lingshu/core/mcp/**` — **0 行改动**(硬约束守住;
+T047 的临时改坏已逐字节还原,见 §8.3.5)。
+
+#### 8.3.2 任务文字与现实的冲突(7 处,逐条更正)
+
+与 `tasks.md` 的偏差 D—J 一一对应(此表是**根因**版,tasks.md 是**摘要**版):
+
+| # | tasks.md 原文 | 实测现实 | 处置 |
+|---|---|---|---|
+| D/E | T037/T038「以 `expireSession=true` 起 fixture」/「过期后重握手拿到的新 session 也立刻过期」 | `expireSession` 是**带 session 头的请求**的全局单调阈值(`sessionCount.incrementAndGet() >= expireSession`)。而 404 触发的**重握手**里,`initialize` 之后的 `notifications/initialized` **通知**是**带 session 头**的(它骑在刚拿到的新 session 上)⇒ 重握手自身就会先 404 ⇒「同一个 id 出现 2 次:首次 404、第二次成功」**不可达** | fixture 加**方法作用域**开关 `expireMethod=<method>` + `expireMethodCount=<n>`:只让被点名的 JSON-RPC 方法 404,**握手流量完全健康**。`expireSession` 语义**一字未改** |
+| F | T040「同一请求分别以 `Accept: application/json` 与 `Accept: text/event-stream` 发起」 | `McpHttpSupport.postJsonRpcSpec` 把 `Accept` 写死为 `application/json, text/event-stream`,**收窄的 Accept 头无法经 transport 驱动** | 拆 2 例:① transport 侧用 fixture `respondSse=true`(让**服务端**以 SSE 形状应答)② 线缆侧用裸 HTTP 发 2 个收窄 Accept 的 POST,断言两种 content-type 解出**同一** JSON-RPC 结果 |
+| G | T039「本地本来就没有活跃 sessionId」 | 需要服务端**从不签发** `Mcp-Session-Id` | fixture 加 `omitSessionId=true`(`initialize` 应答不带 session 头) |
+| H | T044「降掉 `Thread.sleep`,改 Awaitility」 | **只换 Awaitility 不够**。原闸门 `await(CONNECTED)` 用 Awaitility **默认 100 ms 轮询**,首次求值落在 ~200 ms —— **晚于**第 1 次心跳(~190 ms)把状态翻成 `RECONNECTING`;闸门于是阻塞到重连完成,那时 `initialize` 已是 3 ⇒ 两个测量点同时看到 3 ⇒ 距离塌成 ~20 ms。**实测 8 次跑出 4 红** | 3 件事同时做:① **把抖动做成确定性的**(`expireMethodCount=2`,只抖一次,请求序列固定)② **删掉有竞态的 `await(CONNECTED)` 闸门**,改为同步到 `initialize` 计数 ③ **时间锚点换成 transport 自己的 `onStateChange` 时间线**(`System.nanoTime()` 在 transport 线程内取)⇒ 客户端轮询停顿**结构上不可能**污染测量。**断言未被弱化**:仍是 `>= 900 ms` + `< 5000 ms` |
+| I | T045「陈旧 URL 统一换 `cfg.getUrl()`」 | 这 3 条用例要的是**连不上的端点**;`cfg.getUrl()` 是**活着的** fixture 地址,语义相反 | 统一换 `McpHttpTestSupport.pickClosedBaseUrl() + "/mcp"`(Phase 4 已落地的同一写法)。**"换 `cfg.getUrl()`" 作废** |
+| J | T046「补成正向断言」/「补上『真实 HTTP 请求未曾发出』的断言」 | ① 正向用例**本来就**断言 `CONNECTED`,但只验了**状态机的自述**,没验「握手真的发生了」;② 3 条负向用例的**旧名承诺了代码给不出的东西**:`callToolDenied` 从不调用 `callTool`(且永远看不到 `[LINGS-S01]` —— `callTool` 在状态检查处短路,到不了 guard);`accessDeniedThrown` 从不观察异常(`start()` 吞掉) | ① 补「fixture 侧确实收到握手」+「一次 `tools/call` 真的往返」② 每条负向用例补「server 侧记录到 **0 条**请求」③ **改名** 2 条(登记进 T049 清单;**未删任何断言**) |
+
+#### 8.3.3 T045:为什么「真实断连」必须靠 fixture 的**方法作用域**过期
+
+Streamable HTTP 没有 SSE 那种「服务端可以主动断流」的长连接 —— 它的连接生命周期**只**由
+**心跳 `ping`** 决定。所以要让连接「真的掉线」,唯一可控的手段就是让服务端对 `ping` 返 404。
+
+`expireMethod=ping` + `expireMethodCount=2` 产生的**确定性**序列:
+
+```
+ping#1         -> 404 -> 就地重握手(initialize#2)
+retried ping#1 -> 404 -> 连接掉线 -> DISCONNECTED -> RECONNECTING(1000 ms 退避)
+reconnect      -> initialize#3 + tools/list#2 -> CONNECTED
+```
+
+⇒ `initialize` 恰好 3 次、`tools/list` 恰好 2 次、两条抖动 ping **共用同一个 JSON-RPC id**。
+这让「重试**恰好一次**」成为**可精确计数**的断言,而不是「等到第 N 个 ping」的时间竞速。
+
+**`close_idempotent` 的时间预算处理**:该用例要在 `close()` 之后**等一段窗口**,证明那个
+已排期的重连**没有**发生。默认退避地板是 1000 ms,窗口就要 1.2 s,单用例 wall clock
+**2.165 s —— 超了 2 s 预算**。处置:`reconnectCapMs` 的语义是 `min(delay, cap)`
+(`computeBackoffMs` **只缩短、不延长**),故把 cap 降到 **400 ms**、窗口降到 **700 ms**:
+被测契约(「关掉的连接永不回来」)与退避长度**无关**,缩短后单用例 **1.642 s**。
+`callTool_afterDisconnect` 反过来**保留 1000 ms 地板** —— 那里要求调用发生时连接**仍**处于
+`RECONNECTING`,窗口越宽越稳。
+
+**`close_duringConnecting` 的一个观察(不在本次修复范围)**:transport 的 `start()` 是
+**同步**的(`doConnect()` 在调用线程里跑完),所以「close 发生在 CONNECTING 期间」在
+生产实现里**无法**用一个同步 `start()` 构造出来。代码阅读还发现:`doConnect()` 结尾
+**没有** `closing` 检查 ⇒ 若 `close()` 落在 `doConnect()` 的 HTTP 往返**之间**,那个在途握手
+结束后仍会 `transition(CONNECTED)`,把 `FAILED` 覆盖掉。这是**生产侧的小 wart**,
+但本次**不动生产代码**(0 行改动硬约束),故只在用例里保持「close 之后状态必须精确是 `FAILED`」
+这一层断言,并在此登记,留给后续 Story 裁决。
+
+#### 8.3.4 T046:3 条 vacuous 负向用例的补强方式
+
+负向用例原本只断言「状态是 `RECONNECTING`」—— 而 `RECONNECTING` 恰恰是「URL 校验**短路**了」
+的结果,所以这些断言**什么都没证明**。
+
+补强手段是 fixture 的**记录器**(`GET /__recorded`):负向用例里 server 是**真的且可达**的,
+所以任何漏过 guard 的请求都**一定**会被记录 ⇒ 断言「记录到 **0 条**请求」**不可能空过**。
+正负两侧构成对偶:同一个 fixture、同一个 server,白名单放行 ⇒ 记录到 `initialize` + SSE 开启
+哨兵 + 一次真的 `tools/call` 往返;白名单拦截 ⇒ 记录到 **0** 条。
+
+#### 8.3.5 T047 反证抽查(SC-004 交付证据)
+
+**任务文字的两半,只有一半需要「临时改坏」**。T038 的 fixture 本来就是**持续** 404
+(`expireMethodCount=-1`),真正要改坏的是「允许 transport 再重试」——「恰好重试一次」是
+**transport 侧**契约,改 fixture 不可能让它变红(包的数量由 transport 的重试次数决定)。
+
+**RED 半边** —— 临时把 `StreamableHttpMcpServerConnection.request()` 的「重试一次」改成
+「重试 3 次」:
+
+```
+Tests run: 49, Failures: 2, Errors: 2 — BUILD FAILURE
+```
+
+T038 的原始失败信息(逐字):
+
+```
+=== t038_persistent404_retriesOnceThenSurfacesError
+[one original attempt + exactly one retry — the retry must not loop]
+Expected size: 2 but was: 4 in:
+[#4  tools/call id=3 session=session-1 POST /mcp,
+ #7  tools/call id=3 session=session-2 POST /mcp,
+ #10 tools/call id=3 session=session-3 POST /mcp,
+ #13 tools/call id=3 session=session-4 POST /mcp]
+```
+
+同一个 JSON-RPC id=3 骑了 **4 个**不同的 session —— 「恰好重试一次」被破坏,用例如实变红。
+
+另外 3 条变红的是同一契约的其它守护者:`reconnect_afterSessionExpiry_reRunsHandshake`
+(`[the failed heartbeat must have knocked the connection down]`)、
+`close_idempotent` 与 `callTool_afterDisconnect_returnsError`(等不到 `RECONNECTING`)。
+**T037 / T039 / T040 保持绿是正确的**(T037 的 404 是一次性的、T039 没有本地 session、
+T040 与重试次数无关)。
+
+**GREEN 半边** —— 改回后该生产文件 md5 = `3ff7037cbbdef3d19bc9252700bc7534`,与改坏前
+**逐字节相同**;`git diff --stat -- lingshu-core/src/main/java/ai/lingshu/core/mcp/` 为**空**:
+
+```
+Tests run: 49, Failures: 0, Errors: 0, Skipped: 0 — BUILD SUCCESS
+```
+
+#### 8.3.6 Phase 5 收尾自查
+
+| 项 | 结果 |
+|---|---|
+| `mvn -pl lingshu-core test -Dtest='StreamableHttpMcpServerConnection*,McpHttpSupport*,McpHttpDomainGuardIT'` | **49 run / 0 fail / 0 error / 0 skip** |
+| `lingshu-core/src/main/java/ai/lingshu/core/mcp/**` 改动 | **0 行**(T047 临时改坏已逐字节还原) |
+| 新增 ErrorCode | **0**(复用 `LINGS-M03` / `[LINGS-S01]`) |
+| 新增 Maven 依赖 | **0** |
+| 单用例 wall clock | 全部 ≤ 2 s(最慢 `sseNonWhitelisted_neverConnected` 1.63 s / `close_idempotent` 1.642 s) |
+| JDK 8 兼容 | ✅ 无 `var` / `List.of` / `record` / `sealed` / text block |
+| 稳定性抽查 | T045 连跑 5 次全绿;T046 连跑 3 次全绿;**T044 修复后连跑 10 次全绿**(修复前 8 跑 4 红) |

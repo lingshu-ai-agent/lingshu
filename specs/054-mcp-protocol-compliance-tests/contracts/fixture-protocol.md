@@ -614,4 +614,94 @@ T012(合并 fixture 实现)完成时,逐条勾:
 
 ---
 
-**Last updated**: 2026-10-24 · Phase 4 write-back(US2 SSE:4 个新 fixture 开关 + T029 fixture race 修复 + §3 负向清单的可执行守护)
+## §6 Phase 5 write-back:US3(Streamable HTTP)新增的 fixture 能力
+
+> 追加于 2026-10-25。Phase 5(T037—T047)在 `fixture/TestMcpHttpServer.java`
+> (现 **1249** 行)上新增 4 个开关。**全部只影响 fixture,生产代码 0 行改动。**
+> 所有开关经 `McpHttpTestSupport` 原样转发为 `-D<key>=<value>`。
+
+### §6.1 新增开关
+
+| 开关 | 类型 / 默认 | 语义 | 服务的用例 |
+|---|---|---|---|
+| `expireMethod` | String / `""`(空 = 关闭) | **方法作用域**过期:只让**被点名的那个 JSON-RPC 方法**的请求 404。**握手流量(`initialize` / `notifications/initialized` / `tools/list`)完全健康** | T037 / T038 / T044 / T045 |
+| `expireMethodCount` | int / `0`(关闭) | `expireMethod` 命中多少次才 404 —— **`N > 0` ⇒ 前 N 次命中 404;`N = -1` ⇒ 无限次 404;`N = 0` ⇒ 本开关关闭** | 同上 |
+| `omitSessionId` | boolean / `false` | `true` 时 `initialize` 的应答**不带** `Mcp-Session-Id` 头 ⇒ 客户端永远拿不到本地 session ⇒ 404 **不**触发重握手 | T039 |
+| `respondSse` | boolean / `false` | `true` 时**每个** `POST /mcp` 都以 `text/event-stream` 形状应答(而不是 `application/json`);会话 id 头**照常**下发 | T040a |
+
+**`expireMethodCount` 的确切语义(容易误读)**:
+
+- 计数口径是**该方法被命中的次数**,与 `expireSession` 的「带 session 头的请求数」**完全无关**;
+- `N = 0` ⇒ **关闭**(不 404);
+- `N = 1` ⇒ **只有第 1 次**命中 404,之后同方法的请求**正常应答** ⇒ 「一次性 404」;
+- `N = -1` ⇒ **无限次** 404 ⇒ 「持续 404」;
+- `N = k > 1` ⇒ **前 k 次**命中 404(第 k+1 次起正常)⇒ 「可数地抖 k 次」。
+
+**命中与计数的时机**:fixture 在**记录请求之后、应答之前**判定 ⇒ 被 404 的请求**照样进记录器**。
+这正是 T037/T038 能断言「同一个 JSON-RPC id 出现了 2 次」的原因。
+
+### §6.2 为什么 T037 / T038 只能用 `expireMethod`,不能用 `expireSession`
+
+§2.6 要求「同一个 id 出现 2 次:首次 404、第二次成功」。`expireSession` 的口径是
+「**带 session 头的请求**的全局单调阈值」(§2.6 的 Phase 2 write-back),于是:
+
+| 请求序 | method | 带 sessionId? | 在 `expireSession` 下 |
+|---|---|---|---|
+| #0 | `initialize`(首次) | ❌ | 200,下发 `session-1` |
+| #1 | `notifications/initialized` | ✅ | 202 |
+| #2 | `tools/list` | ✅ | 200 |
+| #3 | `tools/call`(**首次**) | ✅ | **404** ⇒ 触发 FR-020 恢复分支 |
+| #4 | `initialize`(**重握手**) | ❌ | 200,下发 `session-2` |
+| #5 | `notifications/initialized`(**重握手的通知**) | ✅ | **404** ⇦ **问题在这** |
+| #6 | `tools/call`(**重试**) | ✅ | 404(阈值已过) |
+
+**#5 会被 404**:重握手后的 `notifications/initialized` **通知**带着**新** session 头,
+照样落进「带 session 头的请求」计数里 ⇒ 重握手**自身**先被打掉 ⇒
+「重试成功」这一半**永远到不了**。
+
+⇒ `expireMethod=tools/call` 把 404 **只**打在目标方法上,#5 健康 ⇒ 「首次 404 / 重试成功」可达。
+**`expireSession` 的语义一字未改**(它仍然是 §2.6 规定的「持续过期」开关),
+两者**正交、可同时启用**。
+
+### §6.3 「真实断连」的标准配方(T044 / T045)
+
+Streamable HTTP 没有可被服务端主动掐断的长连接 —— 它的连接生命周期**只**由心跳 `ping` 决定。
+要让连接**真的**掉线,唯一可控的手段是让服务端对 `ping` 返 404:
+
+```
+expireMethod=ping  +  expireMethodCount=2
+```
+
+产生的**确定性**序列(⇒ 计数可精确断言):
+
+```
+ping#1         -> 404 -> 就地重握手(initialize#2)
+retried ping#1 -> 404 -> 掉线 -> DISCONNECTED -> RECONNECTING(退避)
+reconnect      -> initialize#3 + tools/list#2 -> CONNECTED
+```
+
+⇒ `initialize` 恰好 3 次、`tools/list` 恰好 2 次、两条抖动 ping **共用同一个 JSON-RPC id**。
+`expireMethodCount=-1` 则是**持续**抖动(每次 ping 都 404),适合验「连接再也起不来」。
+
+### §6.4 `respondSse` 与 §2.4 的 `Accept` 判别规则的关系
+
+§2.4 的 Phase 2 write-back 规定:fixture **只在调用方把 `Accept` 收窄成「只含
+`text/event-stream`」时**才以 SSE 形状应答。而生产侧
+`McpHttpSupport.postJsonRpcSpec` 把 `Accept` **写死**成
+`application/json, text/event-stream` ⇒ **transport 走不到**那个分支。
+
+`respondSse=true` 正是为绕开这一点而设:**无条件**以 SSE 形状应答每个 `POST /mcp`,
+让「transport 能不能解析 SSE 形状的应答」这条**服务端侧**的契约可测(T040a);
+「两种 content-type 解出同一结果」的**线缆侧**契约则由 T040b 用裸 HTTP 直接发
+收窄 `Accept` 的 POST 来验。**两条路径合起来覆盖 §2.4。**
+
+### §6.5 `omitSessionId` 与 §2.8 的关系
+
+§2.8 规定「每次 `initialize` 都发**新的** `Mcp-Session-Id`」。`omitSessionId=true` 是这条规则的
+**反面开关**:它让 fixture **从不**下发 session 头 ⇒ 客户端**永远**处于「没有本地活跃 session」
+的状态 ⇒ 用来构造 §2.6 第 3 行(404 **且** `sessionId == null` ⇒ **不重握手**、直接上抛)。
+它**只**影响 `initialize` 的应答头;请求侧**照常**读 `Mcp-Session-Id`。
+
+---
+
+**Last updated**: 2026-10-25 · Phase 5 write-back(US3 Streamable HTTP:4 个新 fixture 开关 + `expireMethodCount` 语义 + 「为什么 T037/T038 不能用 `expireSession`」+ 确定性抖动配方 + `respondSse` 与 §2.4 的关系)

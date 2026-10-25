@@ -333,3 +333,245 @@ With multiple developers:
 T030 保持绿是**正确结果**,不是反证失败 —— T030(`handshake_noEndpointAnnounce_neverConnects`)
 本来就是那个**主动要求**「fixture 不写 `event: endpoint` 帧」的用例;把 fixture 的首帧注释掉
 对它没有任何影响。按「reality 优先」原则,此处按实测结果记录,不修改 T030 的断言去凑「全红」。
+
+---
+
+## Phase 5 write-back:US3(Streamable HTTP)已实施 — 2026-10-25
+
+> **追加记录,不改动上文任何 task 文本** —— 上文的 checkbox 保持未勾选(沿用 Phase 3 / Phase 4
+> 的仓内惯例:完成状态记录在 Phase-1 制品的**追加段**里,而不是就地勾选)。
+> 详细的落地表 / 根因分析 / 反证证据见 `research.md` §8.3 与 `quickstart.md` §8。
+
+### Phase 5 任务完成情况
+
+| Task | 状态 | 落地位置 |
+|---|---|---|
+| T037 | ✅ | `StreamableHttpMcpServerConnectionSessionRecoveryTest.t037_oneShot404_clearsSessionAndRetriesWithSameId`(**新文件**) |
+| T038 | ✅ | 同文件 `t038_persistent404_retriesOnceThenSurfacesError` |
+| T039 | ✅ | 同文件 `t039_404WithoutLocalSession_doesNotRehandshake` |
+| T040 | ✅ | 同文件 `t040_transport_readsSseShapedAnswers` + `t040_sameRequestTwoContentTypes_parseToTheSameResult`(拆成 2 例,见偏差 F) |
+| T041 | ✅ | `McpHttpSupportPostJsonRpcSpecTest`(**新文件**,12 例) |
+| T042 | ✅ | `StreamableHttpMcpServerConnectionStartTest` 4 例对齐单端点握手 |
+| T043 | ✅ | `StreamableHttpMcpServerConnectionHeartbeatTest` 3 例改 ping 语义 + session 回放 |
+| T044 | ✅ | `StreamableHttpMcpServerConnectionReconnectTest` 4 例(含**去 flake** 的重连用例) |
+| T045 | ✅ | `StreamableHttpMcpServerConnectionCloseAndCallTest` 5 例全部重写 |
+| T046 | ✅ | `McpHttpDomainGuardIT` 4 例(3 条 vacuous 负向用例补强 + 1 条正向补强) |
+| T047 | ✅ | 目标集 **49 run / 0 fail / 0 error / 0 skip**;反证抽查见下 |
+
+### 任务文本与现实的 7 处偏差(evidence-first,reality 优先)
+
+| # | Task 文本 | 现实 | 处置 |
+|---|---|---|---|
+| D | **T037** 「以 `expireSession=true` 起 fixture」 | `expireSession` 是「**带 session 头的请求**的全局单调阈值」。404 触发的**重握手**里,`notifications/initialized` 通知**带着新 session 头** ⇒ 重握手自身就会先 404 ⇒ 「同一个 id 出现 2 次,首次 404、第二次成功」的场景**不可达** | fixture 改用**方法作用域**的过期开关 `expireMethod=tools/call` + `expireMethodCount=N` —— 只让**被点名的那个 JSON-RPC 方法** 404,握手流量保持健康。`expireSession` 保持原义不动(见 `contracts/fixture-protocol.md` §6.1) |
+| E | **T038** 「fixture 持续返 404(过期后重握手拿到的新 session 也立刻过期)」 | 同上:`expireSession` 语义下重握手自身先 404,测不到「重试一次后如实上抛」 | 同 D,改用 `expireMethod=tools/call` + `expireMethodCount=-1`(无限) |
+| F | **T040** 「同一请求分别以 `Accept: application/json` 与 `Accept: text/event-stream` 发起」 | 生产侧 `McpHttpSupport.postJsonRpcSpec` 把 `Accept` **写死**成 `application/json, text/event-stream`,**收窄的 Accept 头无法从 transport 驱动** | 拆成 2 例:① 走 transport,用 fixture 的 `respondSse=true` 让**服务端**以 SSE 形状应答(验 transport 能解析)② 走裸 HTTP,对同一端点发 2 个**收窄 Accept** 的 POST,断言两种 content-type 解出**同一个** JSON-RPC 结果(验 FR-022 的线缆侧) |
+| G | **T039** 「收到 404 但本地本来就没有活跃 sessionId」 | 需要服务端**从不签发** `Mcp-Session-Id` 才能构造「没有活跃 session」 | fixture 加开关 `omitSessionId=true`:`initialize` 的应答**不带** session 头 ⇒ transport 永远拿不到本地 session ⇒ 404 不触发重握手 |
+| H | **T044** 「降掉 `Thread.sleep` 秒级等待,改 Awaitility(重连首跳 ≥ 1 s 是硬地板,单用例仍守 2 s 预算)」 | 只换 Awaitility **不够**:原来的 `await(CONNECTED)` 闸门用的是 Awaitility **默认 100 ms 轮询**,它会在第 1 次心跳(~190 ms)把状态翻成 `RECONNECTING` **之后**才解除 ⇒ 两个测量点同时看到 `initialize == 3` ⇒ 距离塌成 ~20 ms。**实测 8 次跑出 4 次红** | ① 抖动做成**确定性**:改用 fixture 的 `expireMethodCount=2`(只抖**一次**,不再无界增长)② 删掉有竞态的 `await(CONNECTED)` 闸门,改为同步到 `initialize` 计数 ③ 时间锚点改用 transport **自己的** `onStateChange` 时间线(`System.nanoTime()` 在 transport 线程内取)⇒ 客户端轮询停顿**不可能**污染测量。**断言未被弱化**:仍为 `>= 900 ms` 且 `< 5000 ms`;锚点变更理由已登记进 T049 清单 |
+| I | **T045** 「陈旧 URL(L62 / L102 / L151)统一换 `cfg.getUrl()`」 | 这 3 条用例要的是**一个连不上的端点**;`cfg.getUrl()` 是**活着的** fixture 地址,语义相反。Phase 4 已落地的先例是 `McpHttpTestSupport.pickClosedBaseUrl()` —— 「一个**真的在用**过、现在**真的关掉**的端口」;老的 `http://127.0.0.1:1/mcp` 字面量只证明了**特权端口**被拒绝 | 3 条统一换成 `McpHttpTestSupport.pickClosedBaseUrl() + "/mcp"`(与 Phase 4 的 `StreamableHttpMcpServerConnectionReconnectTest` / `StartTest` / `SseMcpServerConnectionCloseAndCallTest` 同一写法)。**"换 `cfg.getUrl()`" 这条任务文字在本次写回里作废** |
+| J | **T046** 「3 条 vacuous 负向用例补上「异常后真实 HTTP 请求未曾发出」的断言」+「`sseWhitelisted_reachesConnected` 补成正向断言」 | ① 正向用例**已经是**正向的(`CONNECTED` + `listTools` 有 1 个),但只验了**状态机的自述**;② 3 条负向用例的**旧名与 DisplayName 承诺了代码永远给不出的东西**:`callToolDenied` 从不调用 `callTool`(且永远看不到 `[LINGS-S01]` —— `callTool` 在状态检查处就短路了,根本到不了 guard);`accessDeniedThrown` 从不观察异常(`start()` 把它吞了) | ① 正向用例补:fixture 侧**确实收到**握手(`initialize` + SSE 流开启哨兵)+ 一次 `tools/call` **真的往返**成功(它是负向用例「零请求」的对偶)② 3 条负向用例各补**「server 侧记录到 0 条请求」**断言(server 是真的且可达,漏过 guard 的请求一定会被记录 ⇒ 不可能空过)③ 2 条用例**改名**以与其断言相符(**没有删任何断言**,登记进 T049 清单) |
+
+### T047 反证结果的诚实陈述
+
+任务文本要求「临时让 fixture 对重试后的包继续返 404 **且允许 transport 再重试**,确认 T038 变红」。
+
+**「让 fixture 继续返 404」这一半,T038 本来就在这么做** —— 该用例的 fixture 开关就是
+`expireMethod=tools/call` + `expireMethodCount=-1`(持续 404)。所以真正需要临时改坏的是
+**后半句「允许 transport 再重试」**:「恰好重试一次」是 **transport 侧**的契约,改 fixture
+**不可能**让它变红(包的数量由 transport 的重试次数决定)。
+
+⇒ **临时把 `StreamableHttpMcpServerConnection.request()` 的「重试一次」改成「重试 3 次」**,
+跑目标集 ⇒ **T038 变红**,取证后**立刻改回**(md5 与改坏前逐字节一致,`git diff` 对
+`lingshu-core/src/main/java/ai/lingshu/core/mcp/**` 为空)⇒ 恢复全绿。
+
+**实测:49 run / 2 failures / 2 errors。**
+
+变红的 4 条(全部是「恰好重试一次」契约的守护者):
+
+| 用例 | 变红原因 |
+|---|---|
+| `t038_persistent404_retriesOnceThenSurfacesError` | `[one original attempt + exactly one retry — the retry must not loop]` —— 期望 2 条 `tools/call`,实测 **4 条**(同一个 JSON-RPC id=3 骑 4 个不同 session) |
+| `reconnect_afterSessionExpiry_reRunsHandshake` | `[the failed heartbeat must have knocked the connection down]` —— 抖动不再导致掉线(重试循环把 404 吃掉了) |
+| `close_idempotent`(T045) | 等不到 `RECONNECTING`(`ConditionTimeout`)—— 同样因为重试循环 |
+| `callTool_afterDisconnect_returnsError`(T045) | 同上 |
+
+**T037 / T039 / T040 保持绿是正确的**:T037 的 404 是**一次性**的(重试即成功),
+T039 压根没有本地 session(不触发重试),T040 与重试次数无关。
+
+---
+
+## Phase 6 write-back:FR-025 断言自查(T049) — 2026-10-25
+
+> **追加记录,不改动上文任何 task 文本** —— 上文的 checkbox 保持未勾选(沿用 Phase 3 / 4 / 5
+> 的仓内惯例:完成状态记录在 Phase-1 制品的**追加段**里,而不是就地勾选)。
+
+### T049 取证口径(可复现)
+
+```bash
+# 全 Story 期间被「删掉」的断言行,一条不漏地捞出来
+git diff HEAD -- lingshu-core/src/test/ | grep "^-" | grep -E "assertThat|assertThatThrownBy|fail\("
+```
+
+**实测输出:恰好 7 行,分布在 3 个文件。** 其余一切改动(Reconnect / Start / SessionRecovery /
+PostJsonRpcSpec / fixture)**全部是新增行**,`git diff` 中不含任何其他被删的断言行。
+
+### 7 条被删断言 × 替代断言逐条对照
+
+| # | 文件 | 删了什么 | 换成了什么 | 强度判定 |
+|---|---|---|---|---|
+| 1 | `McpHttpDomainGuardIT.java`<br>(旧用例名 `sseNonWhitelisted_accessDeniedThrown`) | `assertThat(sseConn.state()).isEqualTo(ConnectionState.RECONNECTING);` | **3 条**替换:① `assertThat(log.connectCount()).as("the guard must stop the handshake before CONNECTED is announced").isZero()` ② `assertThat(sseServer.recorded()).as("FR-030: every reconnect attempt must be blocked before sending").isEmpty()` ③ `await().during(Duration.ofMillis(700)).until(() -> sseConn.state() == ConnectionState.RECONNECTING)` | **更强**。旧断言只证明「重试循环在跑」;新断言同时锁住「重试在跑」+「一个字节都没发出去」+「700 ms 窗口内不偷跑」 |
+| 2 | `StreamableHttpMcpServerConnectionCloseAndCallTest.java`<br>(`close_beforeStart_noException`) | `assertThat(conn.state()).isIn(` … `ConnectionState.FAILED, ConnectionState.IDLE);`(多行) | `assertThat(conn.state()).isEqualTo(ConnectionState.FAILED);` | **更强**。集合放宽(2 选 1)→ 精确等值(1 选 1) |
+| 3 | 同上<br>(`callTool_beforeStart_returnsError`) | `assertThat(res.getErrorMessage()).isNotNull();` | `assertThat(res.getErrorMessage()).contains("not connected").contains("state=IDLE");` | **更强**。非空 → **双子串精确匹配**,且多锁了「当前状态是 IDLE」 |
+| 4 | 同上<br>(`callTool_beforeStart_returnsError`) | `assertThat(res.getErrorMessage()).contains("not connected");` | 与 #3 合并为同一条 `contains("not connected").contains("state=IDLE")` | **等价且更强**。原断言的子串断言**逐字保留**,额外追加 `state=IDLE` 状态锚点 |
+| 5 | 同上<br>(`callTool_afterDisconnect_returnsError`) | `assertThat(res.getErrorMessage()).isNotNull();` | `assertThat(res.getErrorMessage()).contains("not connected").contains("state=RECONNECTING");`<br>**+** `assertThat(countMethod(server, "tools/call")).as("a call on a disconnected connection must not reach the server").isEqualTo(0);` | **更强**。非空 → 双子串 + **出站零请求**(证明没偷偷发包) |
+| 6 | 同上<br>(close-during-reconnect 用例) | `assertThat(conn.state()).isIn(` … `ConnectionState.FAILED, ConnectionState.RECONNECTING);`(多行) | `assertThat(conn.state()).isEqualTo(ConnectionState.FAILED);` | **更强**。集合放宽 → 精确等值 |
+| 7 | `StreamableHttpMcpServerConnectionHeartbeatTest.java` | `assertThat(server.recorded())` | `List<RecordedRequest> recorded = server.recorded();`<br>`assertThat(recorded)` | **等价**。纯局部变量提取 —— **同一个 list、同一组 predicate、同一串断言链**,只是把 `server.recorded()` 提成一个具名局部变量(为了在其后追加 FR-018 session 回放断言) |
+
+**结论:7 条全部「等价或更强」,0 条靠删断言让测试变绿。** 净效果是断言**只增不减**:
+旧版 7 行宽松断言 ⇒ 新版 20+ 行精确断言,外加 5 条 `countMethod(...)` 出站计数断言
+(旧版这些用例**根本没有**「server 侧记录到几条请求」这一维度的守护)。
+
+### T044 时间锚点变更(非删除,但按 §6.3 登记)
+
+| 项 | 内容 |
+|---|---|
+| 变更类型 | **测量锚点变更**,不是断言删除 |
+| 旧锚点 | `initialize` 计数闸门 —— `await(CONNECTED)` 用 Awaitility **默认 100 ms 轮询**,而**第 1 次心跳(~190 ms)**就会把状态翻成 `RECONNECTING` ⇒ 两个测量点**同时**看到 `initialize == 3` ⇒ 距离塌成 ~20 ms。**实测 8 次跑出 4 次红** |
+| 新锚点 | transport **自己的** `onStateChange` 时间线(`System.nanoTime()` 在 **transport 线程内**取)⇒ 客户端轮询停顿**不可能**污染测量 |
+| 断言强度 | `assertThat(reconnectGapMs).as("the reconnect must wait for the exponential backoff (first hop = 1s)").isGreaterThanOrEqualTo(900L)` + `.isLessThan(5_000L)` —— **下界 900 ms 未被弱化**,上界 5000 ms 是**新增**的「不能卡死」护栏 |
+| 重要澄清 | HEAD(pre-#054)版本的 `StreamableHttpMcpServerConnectionReconnectTest` **根本没有墙钟耗时断言**,只有 `computeBackoffMs(0..20)` 这类**纯函数公式**断言(`isEqualTo(1_000L)` 等)。⇒ `isGreaterThanOrEqualTo(900L)` 是**净新增**断言,不是「把旧的削弱后改写」 |
+| 抖动治理 | 首选「把抖动做成确定性」:fixture 加 `expireMethodCount=2` ⇒ 只抖**一次**,不再无界增长;同时删掉有竞态的 `await(CONNECTED)` 闸门,改为同步到 `initialize` 计数 |
+
+### 复核结论
+
+- **0 条**被删断言缺少等价或更强的替代。
+- **0 条**被删断言是为了让某个用例变绿(每条删除都伴随**同文件**内更强的替代断言,且新断言是**在 fixture 被改坏后会真的变红**的 —— 见上文 T047 反证)。
+- 其余 diff 全为新增:Reconnect(+ 墙钟背压断言 + FR-029 `tools/list` 重拉断言)、Start(+ 单端点握手断言)、
+  SessionRecovery(**新文件** 4 例)、PostJsonRpcSpec(**新文件** 12 例)、fixture(+4 个开关)。
+
+---
+
+## Phase 6 write-back:T048 / T050–T054 收口自查 — 2026-10-25
+
+> **追加记录,不改动上文任何 task 文本**(同 Phase 3 / 4 / 5 惯例:完成状态记在追加段)。
+
+### T048 全量回归 vs T004 pre-镜像
+
+**镜像口径**:`/tmp/054-test-pre.txt`(T004 打的 pre-#054 镜像)vs `/tmp/054-test-post.txt`(T048 实测)。
+
+| 模块 | T004 pre-镜像 | T048 实测 | 结论 |
+|---|---|---|---|
+| `lingshu-core` | `Tests run: 802, Failures: 0, Errors: 18, Skipped: 0` / BUILD FAILURE | `Tests run: 824, Failures: 0, Errors: 0, Skipped: 0` / BUILD SUCCESS | ✅ **Errors 18 → 0**,Failures 保持 0,run 802 → 824(**+22 net new case**) |
+| `lingshu-examples/demo-product` | 9 / 0 / 0 / 0 | 9 / 0 / 0 / 0 | ✅ 0 回归 |
+| `lingshu-a2a-server` | 23 / 0 / 0 / 0 | 23 / 0 / 0 / 0 | ✅ 0 回归 |
+| `lingshu-a2a-client` | (T004 未纳入镜像) | 87 run / **1 failure** | ⚠️ **pre-existing**,详见下表 |
+
+**pre-镜像 18 个 Error 的精确分布(全部落在 `ai.lingshu.core.mcp` 包 = 本 Story 的合规面)**:
+
+| 失败类 | Error 数 |
+|---|---|
+| `SseMcpServerConnectionListenerTest` | 3 |
+| `SseMcpServerConnectionHeartbeatTest` | 3 |
+| `StreamableHttpMcpServerConnectionHeartbeatTest` | 2 |
+| `SseMcpServerConnectionCloseAndCallTest` | 2 |
+| `SseMcpServerConnectionStartTest` | 2 |
+| `StreamableHttpMcpServerConnectionStartTest` | 2 |
+| `StreamableHttpMcpServerConnectionCloseAndCallTest` | 2 |
+| `StreamableHttpMcpServerConnectionReconnectTest` | 1 |
+| `SseMcpServerConnectionReconnectTest` | 1 |
+| **合计** | **18** |
+
+⇒ 这 18 个 Error 就是 Story #054 spec 里「MCP 协议不合规」的现象本体,收口后**全部转绿**。
+
+### ⚠️ `lingshu-a2a-client` 的 1 个失败 —— **pre-existing,与本 Story 无关**
+
+| 项 | 实测证据 |
+|---|---|
+| 失败用例 | `HttpJsonRpcA2aTransportAutoConfigurationTest.autoconfig_class_isAnnotated_andExposesProviderBean_only` |
+| 断言内容 | `expected: 2 but was: 3`(`@Bean` 方法计数断言) |
+| 根因 | `HttpJsonRpcA2aTransportAutoConfiguration` 现在有 **3** 个 `@Bean`:`httpJsonRpcA2aTransportProvider` / `httpJsonRpcA2aTransportFactory` / **`agentCardCache`**。第 3 个 `agentCardCache` 是 commit `5200a84`「修复product 缺少 AgentCardCache 对象启动失败问题 (#75)」加的,**该 commit 没同步更新这条计数断言** ⇒ 陈旧断言,不是本 Story 引入的回归 |
+| 本 Story 是否相关 | ❌ **0 关系**:`git diff main HEAD --stat -- lingshu-a2a-client/` = **空**(本分支对 a2a-client 模块 0 改动)⇒ main 上同样失败 |
+| 处置 | **本 Story 不修**(修它 = 跨 Story 改另一个模块的测试 = scope creep)。如实写进 PR body,并上报用户裁决 |
+
+### T050 JDK 8 自查(8 个改动/新增 Java 文件)
+
+**范围**:`McpHttpDomainGuardIT`(300 行)/ `…CloseAndCallTest`(345)/ `…HeartbeatTest`(196)/ `…ReconnectTest`(420)/ `…StartTest`(221)/ `fixture/TestMcpHttpServer`(1249)/ **新** `McpHttpSupportPostJsonRpcSpecTest`(474)/ **新** `…SessionRecoveryTest`(373)—— 共 **8 个文件,0 个生产文件**。
+
+| 检查项 | 结果 |
+|---|---|
+| `var` / `record` / `sealed` / `List.of` / `Set.of` / `Map.of` / text block `"""` | ✅ **0 命中**(唯一 1 处命中是 `TestMcpHttpServer.java:173` 的 **Javadoc 文本**「no `{@code var}` / `{@code List.of}` / …」—— 描述禁用的说明,不是代码) |
+| `"localhost"` 字面量 | ✅ **0 命中**(全部 fixture 绑定 `new InetSocketAddress("127.0.0.1", port)`) |
+| `Thread.sleep` | ⚠️ 3 处命中,**全部在 fixture 的「服务端模拟」侧**,不是测试的状态等待:`TestMcpHttpServer.java:333`(SSE push 循环的推送间隔)、`:1123`(out-of-order flusher 线程的 100 ms 轮询)、`:1208`(`delay(delayMs)` = 模拟远端 MCP server 的响应延迟)。**测试侧的状态等待全部走 Awaitility 轮询**:5 个测试类分别引用 Awaitility 1 / 1 / 2 / 4 / 1 处,`await()` 断言共 10+ 处 |
+| 允许的 JDK 8 API | ✅ `HttpServer`(JDK 内置,8 文件合计 34 处)/ `AtomicLong`(3)/ `Collections.synchronizedList`(3)全部在锁内清单内 |
+
+### T051 FR-026 / FR-027 + 0 生产改动
+
+```bash
+git diff HEAD --stat -- 'lingshu-core/src/main/java/ai/lingshu/core/mcp/'
+# → (空) = 0 行生产代码改动
+
+git diff HEAD --stat -- pom.xml '*/pom.xml' 'lingshu-*/pom.xml' 'lingshu-examples/*/pom.xml'
+# → (空) = 0 新 Maven 依赖(FR-026)
+```
+
+- **FR-026(0 新 Maven 依赖)**:✅ 全部 pom 0 改动 ⇒ `banned-dependencies` enforcer 不会被新依赖触发 fail。
+- **FR-027(0 新 ErrorCode)**:✅ 本 Story 全部新增/复用错误路径 **复用现有 `LINGS-M03`(MCP 域)+ `[LINGS-S01]`(沙箱域)**,未引入任何新 ErrorCode 常量。
+- **改动面全集**:**8 个 test/fixture 文件,0 个生产文件**。生产面 `lingshu-core/src/main/java/ai/lingshu/core/mcp/**` 一行未动 ⇒ 协议行为由**既有**实现承载,本 Story 只补「黑盒证明它合规」的测试。
+
+### T052 R-13 mitigation (d) —— 0 binary delta(第 37 次 PASS)
+
+4 级清洗(4 个 grep)后的 pre / post 两侧:
+
+| 侧 | 行数 | 字节 | md5 |
+|---|---|---|---|
+| pre(`/tmp/054-deptree-pre.clean3.txt`) | 297 | 29830 | `f7a440cd1ea93dc3faa42826b14d78c8` |
+| post(`/tmp/054-deptree-post.clean3.txt`) | 297 | 29830 | `f7a440cd1ea93dc3faa42826b14d78c8` |
+
+`diff` 输出 **0 行** ⇒ **0 binary delta PASS**(R-13 mitigation (d) 路径**第 37 次**)。
+**附带实证**:3 级清洗**不可复现**(`808576f6e540bafbbd2567dd93ae4196` vs `f274ca2254b60ee99dc2fac6c275c1ea`)⇒ `quickstart.md §4.3.1`「别复用 `.clean.txt`,必须从 raw 重新清洗」这条规则救了场。
+
+### T053 banned-dependencies enforcer
+
+```bash
+mvn -pl lingshu-core validate
+# [INFO] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+# [INFO] Rule 1: org.apache.maven.enforcer.rules.version.RequireJavaVersion passed
+# [INFO] BUILD SUCCESS
+```
+
+✅ Rule 0 通过(R-13 卡点绿)/ Rule 1 JDK 版本要求通过。
+
+### T054 quickstart 走查(按本文走一遍验证流程)
+
+§1–§8 全部命令**逐条复跑并可复现**,结果见 `quickstart.md §9.1` 的 7 行总表(全绿)。走查中**实测发现并就地修掉 2 个真 bug + 3 处文档漂移**(全部按 `quickstart.md §4.3.1` 的「保留原记录 + 追加 write-back」方式处理,**不改上文原文**):
+
+| # | 类型 | 实测发现 | 修法 |
+|---|---|---|---|
+| 1 | 🔴 **真 bug** | §3 / §6 的全量回归命令在「干净 `~/.m2`」上 **BUILD FAILURE** —— `Could not find artifact ai.lingshu:lingshu-a2a-client:jar:0.2.0 in central`(本仓未发布到 central,`~/.m2/.../0.2.0/` 只有 `.jar.lastUpdated` / `.pom.lastUpdated` 失败标记) | 3 处补前置条件 blockquote;正确命令 = `mvn -DskipTests=true install -am -pl lingshu-a2a-client`(§1 原先给的补救**自己就漏了 `-am`** —— a2a-client 依赖 core + a2a-server,两者在 0.2.0 也不存在,`-am` 不可省) |
+| 2 | 🟡 **真 bug** | §4.4 的期望串是「概括」而非 Maven 实际输出 | 换成逐字实际输出 + 可直接粘贴的 `grep -E 'Rule [0-9]\|BUILD'` 命令 |
+| 3 | 🟡 漂移 | §0 的 `.clean.txt` 尺寸/md5 陈旧(29997 B / 3 级)⇒ 实际 30454 B / 306 行 / `64c9b344…`(T052 原地覆写所致) | §0 那一行重写;**基准改指 `.clean3.txt`** |
+| 4 | 🟡 漂移 | §2 的 MCP 包 case 数 78 → 实测 116 | 加 write-back 注记 |
+| 5 | 🟡 漂移 | §4.2 缺 post 侧 md5;§4.3.1 对 `.clean.txt` 的描述已陈旧 | 补 post 侧 md5 + 判定;§4.3.1 描述更新 |
+
+### 🔴 走查中另发现一处**跨 Story 记账 drift**(constitution R-13 列表)
+
+**实测**:`.specify/memory/constitution.md` §10 R-13 行(L201,单行 84 957 字符)的「已缓解」列表**停在 `**#049**`**,尾文写「累计** 33 个 Story 全 0 binary delta 通过(Story #049 加入 0 binary delta 列表)」「R-13 mitigation (d) 路径**第 32 次验证 PASS**」。
+`git log --oneline -5 -- .specify/memory/constitution.md` ⇒ **最后一次改动是 `dbd0615`(Story #049)**,之后 #050 / #051 / #052 / #053 **从未落进 constitution**;`grep -c 'Story #05[0-3]'` 四个 Story 全为 **0**。
+
+**冲突点**:仓根 `CLAUDE.md` 明确写着「constitution §10 R-13 缓解 Story 列表补 `#050` / `#051` / `#052` / `#053` 行 + 累计计数 32 → 33 → 34 → **35** → **36** 个 Story」—— **但那些改动从未进入 constitution 文件**。⇒ **CLAUDE.md 的记账与 constitution 的实际内容不一致**(constitution 落后 4 个 Story / 3 次计数)。
+
+**本 Story 的处置**:T055 ② 的字面要求是「constitution §10 R-13 缓解 Story 列表**追加 `#054` 一行**(**仅记账,不新增/修改任何宪章原则**,CLAUDE.md §11.3)」。
+**本 Story 只做 `#054` 一行,不回填 #050–#053** —— 回填 = 跨 4 个已完成 Story 的记账补写,超出 T055 字面范围,且会让「本次改动」变得不可审计。**该 drift 如实上报用户裁决**(见 PR body)。
+
+### Phase 6 收口结论
+
+| 维度 | 结论 |
+|---|---|
+| 生产代码改动 | **0 行**(`lingshu-core/src/main/java/ai/lingshu/core/mcp/**` diff 为空) |
+| 新 Maven 依赖 | **0**(全部 pom 0 改动) |
+| 新 ErrorCode | **0**(复用 `LINGS-M03` / `[LINGS-S01]`) |
+| 回归 | core 802/0/**18** → 824/0/**0**;demo 9/0/0/0; a2a-server 23/0/0/0;a2a-client 87/**1 pre-existing** |
+| FR-025 | 7 条被删断言 **0 条**缺等价/更强替代(见上文 T049 表) |
+| JDK 8 | ✅ 0 处 JDK9+ 语法 / 0 处 `localhost` 字面量 / 状态等待全走 Awaitility |
+| R-13 (d) | **0 binary delta 第 37 次 PASS** |
+| enforcer | Rule 0 + Rule 1 passed |
+| 遗留待裁决 | ① `README.md` / `specs/ROADMAP.md` 的 **PR #90 遗留改动**混入问题(§8 fork)② constitution R-13 列表 **落后 4 个 Story**(只补 #054 还是回填 #050–#053)③ `lingshu-a2a-client` 的 **pre-existing 陈旧 `@Bean` 计数断言**(本 Story 0 改动模块,不在范围内) |

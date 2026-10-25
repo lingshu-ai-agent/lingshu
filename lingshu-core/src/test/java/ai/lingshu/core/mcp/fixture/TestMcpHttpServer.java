@@ -104,6 +104,32 @@ import java.util.concurrent.atomic.AtomicLong;
  *       → {@code tools/list} are requests #1—#3, so "expire forever" could
  *       never let a client reach {@code CONNECTED}. {@code expireSession=4}
  *       expires exactly at the first heartbeat {@code ping}.</li>
+ *   <li>{@code expireMethod=tools/call} + {@code expireMethodCount=N} —
+ *       <b>method-scoped</b> session expiry (Story #054 T037/T038). The first N
+ *       occurrences of that JSON-RPC method get a 404; the handshake traffic
+ *       ({@code initialize} / {@code notifications/initialized} /
+ *       {@code tools/list}) is <em>unaffected</em>. This is the switch that
+ *       makes "the client re-handshakes and then retries with the same id"
+ *       observable — the global {@code expireSession} threshold is
+ *       <em>monotonic</em> ("from the N-th session-bearing request on, every
+ *       request 404s"), so the re-handshake's own
+ *       {@code notifications/initialized} POST would 404 too and the
+ *       retry-once path could never be reached. {@code expireMethodCount=0}
+ *       (default) disables it; {@code -1} = every occurrence (unlimited);
+ *       {@code N > 0} = the first N occurrences. Orthogonal to
+ *       {@code expireSession} — both can be active at the same time.</li>
+ *   <li>{@code omitSessionId=true} — {@code initialize} omits the
+ *       {@code Mcp-Session-Id} response header, so the client never holds a
+ *       local session id (stateless server shape, Story #054 T039). A 404 must
+ *       then NOT trigger a re-handshake.</li>
+ *   <li>{@code respondSse=true} — answer every {@code POST /mcp} as
+ *       {@code text/event-stream}, whatever the request's {@code Accept} header
+ *       says (Story #054 T040). Needed because
+ *       {@code McpHttpSupport.postJsonRpcSpec} hardcodes
+ *       {@code Accept: application/json, text/event-stream} and
+ *       {@link #wantsSse} only answers SSE when the caller asks for SSE
+ *       <em>exclusively</em> — the spec transport can therefore never obtain
+ *       the SSE shape from this fixture without this switch.</li>
  *   <li>{@code noEndpointAnnounce=true} — {@code GET /sse} never writes the
  *       {@code event: endpoint} frame, but the stream stays alive (FR-016).</li>
  *   <li>{@code omitProtocolVersion=true} — {@code initialize} omits
@@ -480,6 +506,12 @@ public final class TestMcpHttpServer {
         /** Counts requests that carry a session id — the {@code expireSession} index. */
         private final AtomicInteger sessionCount = new AtomicInteger(0);
 
+        /**
+         * Counts occurrences of the {@code expireMethod} — the method-scoped
+         * expiry index (Story #054 T037/T038).
+         */
+        private final AtomicInteger methodExpireCount = new AtomicInteger(0);
+
         /** Arrival counter — drives the {@code delayAfter} window. */
         private final AtomicInteger reqCount = new AtomicInteger(0);
 
@@ -515,6 +547,26 @@ public final class TestMcpHttpServer {
                 return;
             }
 
+            // FR-020/021 method-scoped expiry (Story #054 T037/T038): the
+            // first N occurrences of `expireMethod` get a 404. Unlike the
+            // global `expireSession` threshold, the handshake traffic is NOT
+            // affected — which is exactly what makes "the client re-handshakes
+            // and retries with the same JSON-RPC id" observable.
+            if (cfg.expireMethodCount != 0 && method != null
+                && cfg.expireMethod.equals(method)) {
+                int seen = methodExpireCount.incrementAndGet();
+                if (cfg.expireMethodCount < 0 || seen <= cfg.expireMethodCount) {
+                    byte[] payload = "session expired".getBytes(StandardCharsets.UTF_8);
+                    ex.sendResponseHeaders(404, payload.length);
+                    try (OutputStream os = ex.getResponseBody()) {
+                        os.write(payload);
+                    }
+                    ex.close();
+                    maybeExit(cfg, rpcCount);
+                    return;
+                }
+            }
+
             if (id == null) {
                 // Notification (FR-014): acknowledged, never answered.
                 ex.sendResponseHeaders(202, -1);
@@ -523,7 +575,7 @@ public final class TestMcpHttpServer {
                 return;
             }
 
-            if ("initialize".equals(method)) {
+            if ("initialize".equals(method) && !cfg.omitSessionId) {
                 // FR-018/024: the session id rides the *response header*, and
                 // every initialize mints a brand-new one.
                 ex.getResponseHeaders().set(HEADER_SESSION_ID,
@@ -531,7 +583,7 @@ public final class TestMcpHttpServer {
             }
             byte[] payload = MAPPER.writeValueAsBytes(
                 success(id, cfg.resultFor(method, req, ex)));
-            if (wantsSse(ex)) {
+            if (cfg.respondSse || wantsSse(ex)) {
                 ex.getResponseHeaders().set("Content-Type", "text/event-stream");
                 ex.getResponseHeaders().set("Cache-Control", "no-cache");
                 ex.sendResponseHeaders(200, 0);
@@ -565,6 +617,10 @@ public final class TestMcpHttpServer {
      * default {@code application/json} path, and a caller that narrows the
      * header (L1/L3 raw-HTTP tests) exercises the {@code text/event-stream}
      * path.
+     *
+     * <p>The {@code respondSse} switch bypasses this rule entirely — the
+     * spec transport (whose {@code Accept} is hardcoded) can then still be
+     * served an SSE-shaped answer (Story #054 T040).
      */
     private static boolean wantsSse(HttpExchange ex) {
         String accept = header(ex, "Accept");
@@ -830,6 +886,53 @@ public final class TestMcpHttpServer {
         final int closeSseAfterMs = intProp("closeSseAfter", -1);
         final int malformedRatio = intProp("malformedRatio", -1);
         final int expireSession = intProp("expireSession", -1);
+
+        /**
+         * JSON-RPC method whose occurrences get a 404 (method-scoped expiry).
+         *
+         * <p>Story #054 T037/T038. Orthogonal to {@link #expireSession}: the
+         * global threshold expires <em>every</em> session-bearing request from
+         * the N-th on, which cannot produce a "one-shot 404 that the client's
+         * re-handshake survives" — the re-handshake's own
+         * {@code notifications/initialized} POST carries a session header and
+         * would 404 too, so the retry-once path could never be reached. A
+         * method-scoped expiry lets a test expire exactly one method (e.g.
+         * {@code tools/call}) while the handshake traffic stays healthy.
+         *
+         * <p>Empty = disabled.
+         */
+        final String expireMethod = strProp("expireMethod", "");
+
+        /**
+         * How many occurrences of {@link #expireMethod} get a 404.
+         *
+         * <p>{@code 0} (default) = disabled; {@code -1} = every occurrence
+         * (unlimited — used by T038 so the retry 404s too, whatever the
+         * transport does); {@code N > 0} = the first N occurrences.
+         */
+        final int expireMethodCount = intProp("expireMethodCount", 0);
+
+        /**
+         * Whether {@code initialize} omits the {@code Mcp-Session-Id} response
+         * header (Story #054 T039).
+         *
+         * <p>Stateless server shape: the client then never holds a local
+         * session id, so a 404 must NOT trigger a re-handshake.
+         */
+        final boolean omitSessionId = boolProp("omitSessionId", false);
+
+        /**
+         * Force the {@code text/event-stream} response shape regardless of the
+         * request's {@code Accept} header (Story #054 T040).
+         *
+         * <p>{@code McpHttpSupport.postJsonRpcSpec} hardcodes
+         * {@code Accept: application/json, text/event-stream}, and
+         * {@code wantsSse} only answers SSE when the caller asks for SSE
+         * <em>exclusively</em> — so the spec transport can never obtain the SSE
+         * shape from this fixture without this switch.
+         */
+        final boolean respondSse = boolProp("respondSse", false);
+
         final boolean noEndpointAnnounce = boolProp("noEndpointAnnounce", false);
         final boolean omitProtocolVersion = boolProp("omitProtocolVersion", false);
 

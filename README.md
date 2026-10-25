@@ -1774,6 +1774,8 @@ dsh §6.5 (2.1) L4821-4835 + L4912-4927 SSE / streamable HTTP 两实现差异段
 1. **demo-product `application.yml` 的 stdio `args` 被硬编码成贡献者本机 Windows 绝对路径** —— `d:\lingshu\lingshu-examples\demo-product\src\main\resources\mcp-servers\echo-stdio.py`。其他机器(含 CI)按此配置启动 demo-product 的 stdio MCP server 会直接失败。
 2. **PR #90 未附任何 AC 黑盒验证测试** —— 约 821 行协议重写 0 新 test case,`TestMcpHttpServer` 的 5-endpoint fixture 与 `SseMcpServerConnectionHeartbeatTest` 的 `GET /health` 语义已被本次重写作废却未更新。按 constitution §「不省略 AC 黑盒验证」,建议补一个 follow-up Story 覆盖:`event: endpoint` 握手 / 404 重协商重试 / `Mcp-Session-Id` 回显 / `ping` 心跳 4 条路径。
 
+> ✅ **已由 Story #054 `mcp-protocol-compliance-tests` 收口(2026-10-25)** —— (a) demo-product `application.yml` 的 stdio `args` 改回 Story #025 相对路径(1 行 yml);(b) fixture 按 MCP 规范重写 + 2 new test 文件 + 5 既有 test 文件就地更新(**0 生产代码改动**),MCP 协议合规性从「文档声称」变成「黑盒可证」;详见 `specs/054-mcp-protocol-compliance-tests/`。
+
 **业务价值** —— **SSE / streamable HTTP 2 个 transport 从「跑得起来但接不上真实 server」变成「真能对接 `npx -y @modelcontextprotocol/server-everything sse|streamableHttp`」**(demo-product `application.yml` 已按此切到 `everything-sse` / `everything-streamable`)+ **Story #033 埋的出站域名白名单 OQ-Future yml binding 收口**(从「只能编程设置」变成「yml 一行 `domain-whitelist: [localhost, 127.0.0.1]`」)+ **R-04 / R-13 防护链路在 MCP 出站路径上第一次真正可用**。
 
 ---
