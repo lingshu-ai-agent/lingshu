@@ -36,9 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>This test is <b>stateless</b>: it does not bootstrap the full Spring Boot
  * context, only exercises {@link AgentEventMapper#toJson(AgentEvent, ObjectNode)}
- * directly. The mapper carries a {@link #lastHistorySize} side-channel for the
- * Compacted approximation workaround (R-1) — it's not exercised in this test,
- * but is reset defensively in {@code @BeforeEach} to keep test isolation.
+ * directly. The mapper is stateless (the old Compacted R-1 size side-channel was
+ * removed in the 2026-10-25 payload fix — {@code AgentEvent.Compacted} now carries
+ * real before/after numbers), so no baseline reset is needed for isolation.
  *
  * <p><b>Story #050 contract verified by AC-050-14 / AC-050-15 / AC-050-16:</b>
  * <ul>
