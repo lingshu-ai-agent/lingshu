@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,7 +33,7 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * Story #021c — L3 tests for {@link SseMcpServerConnection#heartbeatTick()}
- * (AC-021c-4), updated by Story #054 T032.
+ * (AC-021c-4), rewritten by Story #054 T032.
  *
  * <p>These four cases used to drive the retired vendor {@code GET /health}
  * endpoint — an endpoint PR #90 deleted from production, so every one of them
@@ -43,12 +44,19 @@ import static org.awaitility.Awaitility.await;
  * <ol>
  *   <li>A healthy server answers {@code ping} → {@code CONNECTED} holds and
  *       {@code lastHeartbeatAt} <b>strictly</b> advances.</li>
- *   <li>The server dies after the handshake → {@code DISCONNECTED} →
+ *   <li>The server dies right after the handshake → {@code DISCONNECTED} →
  *       {@code RECONNECTING}.</li>
- *   <li>A slow server trips the request timeout → {@code RECONNECTING}.</li>
- *   <li>Sustained healthy probing keeps {@code CONNECTED} and a live
- *       {@code lastHeartbeatAt}.</li>
+ *   <li>A server that answers the handshake but stalls on the probe →
+ *       {@code DISCONNECTED} → {@code RECONNECTING}.</li>
+ *   <li>The SSE stream breaks → the transport reconnects and the heartbeat is
+ *       counted again.</li>
  * </ol>
+ *
+ * <p><b>What makes them non-vacuous</b> — every case asserts on the
+ * <em>observed state sequence</em> (captured by a listener), not on a single
+ * polling snapshot. "Eventually RECONNECTING" alone would also be satisfied by
+ * a connection that never managed to connect in the first place; the sequence
+ * proves the handshake really completed and the disconnect really followed.
  *
  * <p><b>Convention (research.md 决策 2)</b> — cases that need shrunken time
  * parameters construct the connection directly with the 4-arg injectable-time
@@ -60,6 +68,7 @@ class SseMcpServerConnectionHeartbeatTest {
 
     private McpHttpTestSupport.ProcessHandle server;
     private SseMcpServerConnection conn;
+    private McpStateLog log;
 
     @AfterEach
     void tearDown() {
@@ -74,7 +83,11 @@ class SseMcpServerConnectionHeartbeatTest {
     @Test
     @DisplayName("heartbeat: ping answered → CONNECTED with lastHeartbeatAt advancing")
     void probe_pingOk() throws Exception {
-        server = McpHttpTestSupport.startHttpServer();
+        Map<String, String> sysProps = new HashMap<>();
+        // No notifications — otherwise the transport re-issues tools/list on
+        // every tick and the request log stops being readable.
+        sysProps.put("pushNotifications", "false");
+        server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -85,14 +98,17 @@ class SseMcpServerConnectionHeartbeatTest {
                 .reconnectCapMs(1_000L)
                 .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
+        log = McpStateLog.attach(conn);
         conn.start();
         await().atMost(Duration.ofSeconds(5))
             .until(() -> conn.state() == ConnectionState.CONNECTED);
         Instant hb0 = conn.lastHeartbeatAt();
         assertThat(hb0).isNotNull();
 
-        // Wait ~3 heartbeat cycles, verify lastHeartbeatAt advanced.
-        Thread.sleep(1_000L);
+        // Wait for the heartbeat to advance — never a blind sleep.
+        await().atMost(Duration.ofSeconds(2))
+            .until(() -> conn.lastHeartbeatAt() != null
+                && conn.lastHeartbeatAt().toEpochMilli() > hb0.toEpochMilli());
         assertThat(conn.state()).isEqualTo(ConnectionState.CONNECTED);
         Instant hb1 = conn.lastHeartbeatAt();
         assertThat(hb1).isNotNull();
@@ -105,17 +121,22 @@ class SseMcpServerConnectionHeartbeatTest {
         assertThat(server.recorded())
             .anyMatch((RecordedRequest r) -> "ping".equals(r.getMethod())
                 && r.getId() != null);
+        assertThat(log.transitions()).contains(ConnectionState.CONNECTED);
     }
 
     @Test
-    @DisplayName("heartbeat: server gone after handshake → DISCONNECTED → RECONNECTING")
+    @DisplayName("heartbeat: server gone right after the handshake → DISCONNECTED → RECONNECTING")
     void probe_pingServerGone_disconnects() throws Exception {
         // The SSE handshake is exactly 3 JSON-RPC POSTs (initialize,
-        // notifications/initialized, tools/list), so exitAfter=3 lets the
-        // connection reach CONNECTED and then kills the server — the next
-        // heartbeat ping has nowhere to go.
+        // notifications/initialized, tools/list), so exitAfter=4 lets the
+        // connection reach CONNECTED and answers the first heartbeat ping —
+        // the server dies right after, and the next probe has nowhere to go.
+        // pushNotifications=false keeps the count deterministic: without it the
+        // tools/list re-fetch triggered by the first notification would
+        // consume the 4th slot instead of the ping.
         Map<String, String> sysProps = new HashMap<>();
-        sysProps.put("exitAfter", "3");
+        sysProps.put("exitAfter", "4");
+        sysProps.put("pushNotifications", "false");
         server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
@@ -127,22 +148,32 @@ class SseMcpServerConnectionHeartbeatTest {
                 .reconnectCapMs(10_000L) // long cap keeps it in RECONNECTING
                 .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
+        log = McpStateLog.attach(conn);
         conn.start();
         await().atMost(Duration.ofSeconds(5))
             .until(() -> conn.state() == ConnectionState.RECONNECTING);
         assertThat(conn.state()).isEqualTo(ConnectionState.RECONNECTING);
+        // The handshake really completed before the server vanished — the
+        // sequence is the proof, a single snapshot would not be.
+        assertThat(log.transitions())
+            .containsSubsequence(
+                ConnectionState.CONNECTED,
+                ConnectionState.DISCONNECTED,
+                ConnectionState.RECONNECTING);
     }
 
     @Test
-    @DisplayName("heartbeat: slow server → timeout → DISCONNECTED → RECONNECTING")
+    @DisplayName("heartbeat: server answers the handshake but stalls on the probe → RECONNECTING")
     void probe_pingTimeout_disconnects() throws Exception {
         Map<String, String> sysProps = new HashMap<>();
-        // 800ms server-side delay against a 300ms probe timeout. The fixture's
-        // delayMs is global (every JSON-RPC endpoint), so this proves "a server
-        // slower than the probe budget surfaces as RECONNECTING" rather than
-        // "the heartbeat specifically timed out" — the two are not separable
-        // with a process-wide switch.
+        // 800ms server-side delay, but only from the 4th request on: the
+        // handshake (initialize + notification + tools/list) stays fast, so
+        // the only thing that can time out is the heartbeat probe. With a
+        // plain process-wide delay the handshake itself would time out and
+        // "the heartbeat timed out" could never be observed on its own.
         sysProps.put("delayMs", "800");
+        sysProps.put("delayAfter", "3");
+        sysProps.put("pushNotifications", "false");
         server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
@@ -153,17 +184,32 @@ class SseMcpServerConnectionHeartbeatTest {
                 .heartbeatTimeoutMs(300L)
                 .reconnectCapMs(10_000L)
                 .domainWhitelist(Arrays.asList("127.0.0.1"))
-                .build());
+                .build(),
+            300L, 300L, 10_000L);
+        log = McpStateLog.attach(conn);
         conn.start();
-        await().atMost(Duration.ofSeconds(8))
+        await().atMost(Duration.ofSeconds(5))
             .until(() -> conn.state() == ConnectionState.RECONNECTING);
         assertThat(conn.state()).isEqualTo(ConnectionState.RECONNECTING);
+        // The connection DID connect — only the probe stalled.
+        assertThat(log.transitions())
+            .containsSubsequence(
+                ConnectionState.CONNECTED,
+                ConnectionState.DISCONNECTED,
+                ConnectionState.RECONNECTING);
     }
 
     @Test
-    @DisplayName("heartbeat: probe succeeds against a healthy server")
+    @DisplayName("heartbeat: SSE stream broken → reconnect → the heartbeat is counted again")
     void probe_doubleCheck_recoveredHeartbeat() throws Exception {
-        server = McpHttpTestSupport.startHttpServer();
+        // The server closes every SSE stream after 200ms (reverse-proxy
+        // timeout). The transport must notice, reconnect, and count the
+        // heartbeat again — not keep serving a stale timestamp.
+        Map<String, String> sysProps = new HashMap<>();
+        sysProps.put("pushIntervalMs", "50");
+        sysProps.put("closeSseAfter", "200");
+        sysProps.put("pushNotifications", "false");
+        server = McpHttpTestSupport.startHttpServer(sysProps);
         conn = new SseMcpServerConnection(
             McpServerConfig.builder()
                 .name("remote")
@@ -171,15 +217,33 @@ class SseMcpServerConnectionHeartbeatTest {
                 .url(server.baseUrl())
                 .heartbeatIntervalMs(300L)
                 .heartbeatTimeoutMs(1_000L)
-                .reconnectCapMs(1_000L)
+                .reconnectCapMs(2_000L)
                 .domainWhitelist(Arrays.asList("127.0.0.1"))
                 .build());
+        log = McpStateLog.attach(conn);
         conn.start();
         await().atMost(Duration.ofSeconds(5))
             .until(() -> conn.state() == ConnectionState.CONNECTED);
-        // After multiple ticks, state is still CONNECTED.
-        Thread.sleep(1_500L);
-        assertThat(conn.state()).isEqualTo(ConnectionState.CONNECTED);
-        assertThat(conn.lastHeartbeatAt()).isNotNull();
+
+        // The stream breaks → RECONNECTING → (1s backoff) → CONNECTED again.
+        await().atMost(Duration.ofSeconds(3))
+            .until(() -> log.connectCount() >= 2);
+        assertThat(log.transitions())
+            .containsSubsequence(
+                ConnectionState.CONNECTED,
+                ConnectionState.DISCONNECTED,
+                ConnectionState.RECONNECTING,
+                ConnectionState.CONNECTED);
+        assertThat(log.connectCount())
+            .as("the transport must have reconnected after the stream broke")
+            .isGreaterThanOrEqualTo(2);
+        // The heartbeat is counted again after the reconnect — the timestamp
+        // must be refreshed, not left stale from the first connection.
+        List<Instant> beats = log.beatsAtConnect();
+        assertThat(beats).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(beats.get(1).toEpochMilli())
+            .as("lastHeartbeatAt must be refreshed by the reconnect")
+            .isGreaterThan(beats.get(0).toEpochMilli());
     }
+
 }

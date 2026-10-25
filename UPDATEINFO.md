@@ -19,6 +19,7 @@
 
 | Story    | Date       | Title                                | Tests | R-13  | +Code           | Fixer  |
 |----------|------------|--------------------------------------|-------|-------|-----------------|--------|
+| **PR #90** | 2026-10-22 | mcp-sse-and-streamable-http-protocol-compliance | **+0** ⚠️ | N/A | —               | xiaobaibaiaaa |
 | #048     | 2026-10-14 | ask-user-sentinel-tool-result        | +4    | 31/0  | —               | Claude |
 | #047     | 2026-10-14 | ask-policy-end-to-end-wiring         | +8    | 31/0  | —               | Claude |
 | #046     | 2026-10-13 | session-store-save-after-turn        | +16   | 30/0  | —               | Claude |
@@ -39,11 +40,17 @@
 | #025-fu  | 2026-09-26 | follow-up sandbox-wiring             | +0    | 10/0  | —               | Claude |
 
 > **列说明**:
-> - **Story**:Story #NNN 编号 或 `refactor` / `doc-sync` 等非 Story 变更
-> - **Tests**:本次新增 AC 黑盒测试数(0 表示纯文档/纯前端)
-> - **R-13**:R-13 mitigation (d) baseline 镜像 `dependency:tree` 第 N 次 0 binary delta PASS
+> - **Story**:Story #NNN 编号 或 `refactor` / `doc-sync` 等非 Story 变更;**`PR #NNN`** = 外部社区贡献者直接提的 PR(未走 SpecKit,无 `specs/0NN-*/` 三件套)
+> - **Tests**:本次新增 AC 黑盒测试数(0 表示纯文档/纯前端;`+0` ⚠️ 表示**应当有但缺失**,见对应段落)
+> - **R-13**:R-13 mitigation (d) baseline 镜像 `dependency:tree` 第 N 次 0 binary delta PASS;`N/A` 表示本次未执行该自查
 > - **+Code**:本次新增 ErrorCode(如 `X01` = `LINGS-X01`);`—` 表示无新增
-> - **Fixer**:实施者标记(当前均为 `Claude`)
+> - **Fixer**:实施者标记(历史条目均为 `Claude`;`xiaobaibaiaaa` = 外部社区贡献者)
+
+---
+
+## PR #90 — mcp-sse-and-streamable-http-protocol-compliance (2026-10-22)
+
+> **更新日期**:2026-10-22 — **📡 PR #90 MCP SSE + Streamable HTTP 协议合规重写已合**(社区贡献者 `xiaobaibaiaaa` / commit `a417464` / **7 文件 +821 行** / **0 新 Maven 依赖** / **0 新 ErrorCode**(复用 `LINGS-M01`/`M02`/`M03`)/ **+0 AC 黑盒验证 ⚠️** / **未走 SpecKit 流程,无 specs 三件套** / 本条目由仓内维护者补写文档):**SSE + Streamable HTTP 2 个 transport 从「跑得起来但接不上真实 MCP server」改为「真能对接 `@modelcontextprotocol/server-everything`」** —— **问题** Story #021c 落地的 `SseMcpServerConnection` + `StreamableHttpMcpServerConnection` 发明了一套**非规范**的「JSON-RPC over 目录前缀路径」协议(每个 method 各自 POST 到 `{cfg.getUrl()}/initialize` / `/notifications/initialized` / `/tools/list` / `/tools/call`,心跳走非标 `GET /health`),**结果这两个 transport 无法与任何真实 MCP server 通信**(真实 server 只有 1 个 MCP endpoint,不存在 `/tools/call` 路径);**根因** #021c 写实现时未对标 MCP 规范的 transport 章节(单端点 + `event: endpoint` 握手 + `Mcp-Session-Id` / `MCP-Protocol-Version` 2 个头),而是按「每 method 一 URL」直觉设计;**补丁** (1) **`SseMcpServerConnection` +541 行全量重写** —— `postEndpoint` + `CountDownLatch endpointLatch` 等 server 的 `event: endpoint` 事件拿 POST URI(`hbTimeoutMs` 内拿不到 → `IOException("no 'endpoint' event from SSE server within ...")`)→ `McpHttpSupport.checkOrThrow(endpoint, domainWhitelist)` 沙箱守卫 → 握手;`ConcurrentHashMap<Long, Pending>`(`Pending` = latch + `volatile JsonNode`)按 **JSON-RPC `id`** 配对 `event: message` 响应;握手失败 `interruptSseReader()` + `failAllPending(...)`;心跳 `GET /health` → JSON-RPC `ping`;endpoint 未宣布时 `callTool` 返 `McpCallResult.error(...)` 而**不**抛异常(守 §4.10.1 硬规则 2);(2) **`StreamableHttpMcpServerConnection` +188 行** —— 全部 POST 到 `cfg.getUrl()` **本身**;新增 `sessionId` / `protocolVersion` 两个 `volatile` 字段,`initialize()` 走 `McpHttpSupport.postJsonRpcSpec(...)` 抓 `Mcp-Session-Id` + 协商版本(日志区分 `(stateless)` / `(session <id>)`);**HTTP 404 = session 过期** → 清 session + 重新 `initialize` + 重试 1 次;`doConnect()` 开头 `sessionId = null` 复位;(3) **`McpHttpSupport` +273/-70** —— 新增 `PROTOCOL_VERSION = "2025-06-18"` / `HEADER_PROTOCOL_VERSION` / `HEADER_SESSION_ID` 常量 + `postJsonRpcSpec(...)`(同时吃 `application/json` 与 `text/event-stream`)+ `readSseResponse(conn, expectedId)` + `wrapNotification(method, params)` + 2 个新类型 `HttpRpcResponse`(status / sessionId / parsed body)/ `McpHttpStatusException extends McpTransportException`(带 `getStatus()`);`checkOrThrow` 保留(null/empty whitelist → deny-all 不变);(4) **`domainWhitelist` yml 打通** —— `AgentConfig.ServerConfig` 加第 10 个字段(仅 SSE / STREAMABLE_HTTP 生效,null/empty = deny all),demo-product `McpServerProperties` 加字段 + `from(env)` 读 kebab-case key,`McpTransportAutoConfiguration` 透传,yml 写 `agent.mcp.servers[*].domain-whitelist: [localhost, 127.0.0.1]` 即生效(**Story #033 埋的 OQ-Future yml binding 收口** —— 此前只能编程设置 `McpServerConfig.builder().domainWhitelist(...)`);(5) **demo-product `application.yml` 切换示例** —— `reference-sse` → `everything-sse`(`http://localhost:3001`)/ `reference-streamable` → `everything-streamable`(`http://localhost:3002/mcp`),注释给 `npx -y @modelcontextprotocol/server-everything sse|streamableHttp`;**Lombok `@Value` 坑已规避** —— `AgentConfig.ServerConfig` 类里已有显式构造器时 `@Value` 不生成 all-args ctor,故手写 10-arg ctor + 留 9-arg back-compat 重载委托传 `null`(`AgentConfigMcpBackwardCompatTest` 依赖此契约);**关键不变项** —— `McpServerConnection` interface 8 方法 0 改动 / 6 态 `ConnectionState` 0 改动 / `McpErrorCodes`(`M01`/`M02`/`M03`)0 改动 / `McpServerConnectionFactory.create(cfg.transport())` 分派 0 改动 / `McpToolAdapter` 0 改动 / 指数退避 `1s → 2s → 4s → 8s → 16s → 32s → 60s(cap)` 无限重试 0 改动 / JDK 8 兼容守住(纯 JDK 1.1 `HttpURLConnection` + `BufferedReader.readLine()` 手写 SSE parser,**不用** JDK 11+ `java.net.http.HttpClient` / `var` / `List.of` / sealed / records)/ R-13 依赖表 13 项 0 新增 / `ToolExecutor.dispatch()` 5 步流水线不变(§4.10.1 硬规则 2 —— MCP 协议修复只发生在 Tool 取数通路,不绕过沙箱 / 权限 / checkpoint 任何一步);**⚠️ 2 处待处理(评审发现)** —— (a) demo-product `application.yml` 的 stdio `args` 被硬编码成贡献者本机 Windows 绝对路径 `d:\lingshu\lingshu-examples\demo-product\src\main\resources\mcp-servers\echo-stdio.py`,其他机器 / CI 按此配置启动 demo-product 的 stdio MCP server 会直接失败;(b) 约 821 行协议重写 **0 新 AC 黑盒测试**,`TestMcpHttpServer` 的 5-endpoint fixture 与 `SseMcpServerConnectionHeartbeatTest` 的 `GET /health` 语义已被本次重写作废却未更新,建议补 follow-up Story 覆盖 `event: endpoint` 握手 / 404 重协商重试 / `Mcp-Session-Id` 回显 / `ping` 心跳 4 条路径;**业务价值** —— **MCP 2 个 HTTP transport 首次真正可对接真实 server** + **出站域名白名单从「只能编程设置」变成「yml 一行」** + **R-04 / R-13 防护链路在 MCP 出站路径上第一次可用**;**修复者** `xiaobaibaiaaa`(外部社区贡献者,直接提 PR #90 未走 SpecKit,仓内维护者补写文档)。
 
 ---
 

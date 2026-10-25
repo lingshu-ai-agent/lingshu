@@ -408,3 +408,312 @@ return pb.start();
 | stdio framing 要不要一并规范化 | 决策点 10 —— **不**,记为有意偏离 |
 
 **全部 unknowns 已消解,Phase 0 完成,可进入 Phase 1(设计 + 契约)。**
+
+---
+
+### 8.2 Phase 4 write-back:US2(SSE)已实施
+
+> 追加于 2026-10-24。本节登记 Phase 4(T027—T036)实施期间的**实测现实**,
+> 以及 `tasks.md` 原始文字与现实冲突之处。**冲突一律以现实为准**(continuation
+> prompt §0 evidence-first 规则),差异在此逐条登记。
+
+#### 8.2.1 T027—T036 落地清单
+
+| 任务 | 落地位置 | 用例名 |
+|---|---|---|
+| T027 | `SseMcpServerConnectionStartTest:114` | `start_fakeServer_5stepsReachesConnected` |
+| T028 | `SseMcpServerConnectionStartTest:213` | `handshake_relativeAnnouncedUri_resolvesAgainstSseOrigin` |
+| T029 | `SseMcpServerConnectionStartTest:268` | `handshake_concurrentCalls_correlateByIdNotArrivalOrder` |
+| T030 | `SseMcpServerConnectionStartTest:333` | `handshake_noEndpointAnnounce_neverConnects` |
+| T031 | `SseMcpServerConnectionStartTest:377` | `heartbeat_usesJsonRpcPing_neverCallsHealthEndpoint` |
+| T032 | `SseMcpServerConnectionHeartbeatTest:85/129/167/204` | `probe_pingOk` / `probe_pingServerGone_disconnects` / `probe_pingTimeout_disconnects` / `probe_doubleCheck_recoveredHeartbeat` |
+| T033 | `SseMcpServerConnectionHeartbeatTest`(类级 Javadoc)+ `McpStateLog` | 见 §8.2.4 |
+| T034 | `SseMcpServerConnectionReconnectTest:142` | `sseStreamBroken_reconnects`(另 2 例 :84 / :111 同步更新) |
+| T035 | `SseMcpServerConnectionCloseAndCallTest:94/120/178/202/242` | 5 例全部重写 |
+| T036 | 反证抽查(见 §8.2.6) | — |
+
+**Phase 4 产出文件(9 改 + 1 新增,0 生产代码改动)**:
+
+| 文件 | 性质 | 行数变化 |
+|---|---|---|
+| `SseMcpServerConnectionStartTest.java` | 改 | 148 → **684** |
+| `SseMcpServerConnectionHeartbeatTest.java` | 改 | 162 → **249** |
+| `SseMcpServerConnectionReconnectTest.java` | 改 | → **211** |
+| `SseMcpServerConnectionCloseAndCallTest.java` | 改 | → **269** |
+| `McpStateLog.java` | **新增**(package-private 测试 helper) | **137** |
+| `McpHttpTestSupport.java` | 改 | +18 行(`pickClosedBaseUrl()`) |
+| `fixture/TestMcpHttpServer.java` | 改 | → **1146**(4 个新开关 + 10 处新内部) |
+| `SseMcpServerConnectionListenerTest.java` | 改(T033) | — |
+| `RawSseObserver.java` | 改(T027/T028/T029 观测端) | — |
+
+`lingshu-core/src/main/java/ai/lingshu/core/mcp/**` — **0 行改动**(硬约束守住)。
+
+#### 8.2.2 任务文字与现实的冲突(3 处,逐条更正)
+
+| # | tasks.md 原文 | 实测现实 | 处置 |
+|---|---|---|---|
+| A | T030:「断言 `start()` 抛 `IOException` 且消息含 `no 'endpoint' event` 语义」 | **`start()` 不抛异常**。`SseMcpServerConnection.start()` 是异步的,握手失败走 `handleDisconnect` → `RECONNECTING` 状态机,异常只在**后台线程**被吞掉。`IOException` 从来到不了调用方。 | 用例改为断言**可观测的**语义:① 状态进入 `RECONNECTING` ② 在 600 ms 窗口内**永不**进入 `CONNECTED` ③ fixture 侧**零** JSON-RPC 请求被发出(`recorded()` 里每条 `id == null` 且无 `notifications/` 前缀)。这是「`no 'endpoint' event` 语义」在生产实现下**唯一**可黑盒验证的形式。 |
+| B | T029:「连发 2 个 JSON-RPC 请求(如 `initialize` 与 `tools/list`),fixture 按相反顺序推 2 个 `event: message`」 | **握手是串行的**。`initialize` 必须先完成才能发 `tools/list`,两个请求不可能并发 ⇒ 「相反顺序推送」在握手阶段无法构造。 | 改为:握手完成后**并发**发 2 个 `tools/call`(线程池 2 线程),fixture 用 `outOfOrder=true` 缓存 2 个应答并**按相反顺序**推。断言 ① 两个 `callTool` 结果各自拿到**自己的** input(`alpha` / `beta`,fixture 回显 input)② wire 上 2 个 answer id 的顺序**确实是请求到达顺序的反序**。 |
+| C | T032:「重写 `SseMcpServerConnectionHeartbeatTest.java` 全部 4 个死代码用例(该文件 162 行)」 | Phase 4 结束后该文件为 **249 行**(重写 + Javadoc 扩写)。 | 行数在 quickstart.md 中同步更正(见 §4.3.2 write-back)。 |
+
+#### 8.2.3 生产代码的「notification ≠ transition」 wart(本 Phase 最重要的发现)
+
+`SseMcpServerConnection` 有两处**绕过**状态机守卫的公告路径:
+
+```java
+// L768 —— relistTools() 内,直接调 notifyListeners,绕过 transition()
+notifyListeners(ConnectionState.CONNECTED);
+
+// L779 —— transition() 内,有 prev != next 守卫
+private void transition(ConnectionState next) {
+    ConnectionState prev = state.getAndSet(next);
+    if (prev != next) { notifyListeners(next); }
+}
+```
+
+**第一层(重复公告)**:`relistTools()` 在收到 `notifications/tools/list_changed` push 后重拉一次
+`tools/list`,然后**无条件**再公告一次 `CONNECTED` —— 状态根本没变。⇒ 任何「数 CONNECTED
+通知个数」的测试都会把**每一次 server push** 误计成一次连接。
+
+**第二层(陈旧公告)**:`relistTools()` 入口检查 `state.get() == CONNECTED`,然后做一次**阻塞**的
+`tools/list` POST,再重新公告。这中间连接可能已经掉了(reader 线程走
+`DISCONNECTED → RECONNECTING`),此时 pending 的 relist 仍然公告 `CONNECTED` —— 描述的是一个
+**已经不存在**的连接。
+
+**实测触发点**:`SseMcpServerConnectionCloseAndCallTest.close_idempotent` 曾报
+`expected: 1 but was: 2`。根因是第二层(陈旧公告),不是「提前重连」——
+**判别证据**:同一断言块里的 `initializesAtClose == 1` 成立 ⇒ fixture 侧只收到过 1 次
+`initialize`,握手没有跑过第二次 ⇒ 连接数虚高只可能来自通知流里的陈旧 `CONNECTED`。
+
+**处置(0 生产代码改动)**:新增测试 helper `McpStateLog`,在**测试侧**做两道过滤:
+
+1. 「重复公告」过滤 —— 通知与上一条相同 ⇒ 不是 transition;
+2. 「陈旧 CONNECTED」过滤 —— `state == CONNECTED` 但 `conn.state() != CONNECTED`
+   ⇒ transport 自己的 `state()` 才是真相,没有活连接可数。
+
+同时 `sseStreamBroken_reconnects` 由「await 完立刻断言」改为「await → 再 await 第二个
+CONNECTED → 才断言」,避免 fixture 记录 `initialize` 与 transport 状态迁移之间的竞态。
+
+#### 8.2.4 T033(Listener 测试)—— 落在 `McpStateLog` 上
+
+T033 原文要求「更新 `SseMcpServerConnectionListenerTest.java` 的 3 个用例」。实测该文件原本
+记录的是**原始 listener 流**(含 `relistTools()` 的重复/陈旧公告),与 §8.2.3 的 wart 直接冲突。
+处置:**新增 `McpStateLog` 作为唯一的 transition 观察入口**(原始流仍保留在
+`notifications()` 里,便于诊断),3 个 listener 用例改为经 `McpStateLog` 断言 —— 这样
+「断言的是真 transition」这一条**在结构上**成立,而不是靠每个用例自己记得过滤。
+
+#### 8.2.5 Phase 4 新增的 fixture 开关
+
+`fixture/TestMcpHttpServer.java` 本 Phase 新增 4 个开关(全部经 `strProp` / `intProp` /
+`boolProp` 读取,`McpHttpTestSupport` 原样转发为 `-D<key>=<value>`):
+
+| 开关 | 类型/默认 | 用途 |
+|---|---|---|
+| `pushNotifications` | boolean / **true** | `false` 时,把周期性 push 换成一条 SSE **注释** keepalive(仍产出字节,客户端不会卡在一个永不到来的 chunk 上,但不再被诱导去重发 `tools/list`)。心跳类用例**必须**关:否则每次 push 触发一次 `tools/list` 重拉,`exitAfter=4` 的槽位会被 `tools/list` 抢走,心跳 ping 反而打不出去 ⇒ 请求日志计数不再确定。 |
+| `delayAfter` | int / -1 | 从第 N 个请求**开始**才延迟。配 `delayMs` 用,让「握手快、探活慢」可分离 —— 全进程延迟会让握手本身先超时,「心跳超时」就永远无法被单独观测到。 |
+| `announceUri` | String / `SSE_POST_URI` | 公告帧 `event: endpoint` 的 data 内容(可写相对 URI)⇒ T028 相对 URI 解析用例。 |
+| `outOfOrder` | boolean / false | 缓存 2 个应答并**按相反顺序**推 `event: message` ⇒ T029 id 关联用例。 |
+
+配套内部改动:`pathOf(HttpExchange)` / `writeComment(String)` / `writeRaw(String)` /
+`SsePostHandler(Config, AtomicInteger, boolean jsonRpcOnly)` /
+`RecordedRequest.getHttpMethod()/getPath()/getHost()` / `OUT_OF_ORDER_BUFFER` /
+`recordAndBufferOutOfOrder(...)` / `startOutOfOrderFlusher()` / `applyDelay(...)` /
+`echoedInput(JsonNode)`。
+
+> **注意**:`noEndpointAnnounce` 开关**不是** Phase 4 新增的 —— 它是 Phase 2 就有的,
+> Phase 4 的 T030 只是在**使用**它。
+
+**T029 的一次 fixture race(已修)**:`recordAndBufferOutOfOrder` 的「先记录、再入 buffer」
+两步**不原子** —— 两个并发请求可能交错,导致 fixture 记录的顺序与 buffer 的顺序不一致,
+应答按 buffer 序回、记录却是乱的。修法:把「记录 + 入 buffer」合并进**同一个同步方法**。
+
+#### 8.2.6 T036 反证抽查(SC-003 交付证据)
+
+**RED 半边** —— 临时把 fixture 的 `event: endpoint` 首帧注释掉:
+
+```
+Tests run: 24, Failures: 2, Errors: 13 — BUILD FAILURE   (1:44 min)
+```
+
+**15 / 24 变红**,含 T027(`StartTest:128`)/ T028(`:221`)/ T029(`:279`)/ T031(`:395`)。
+
+**9 个保持绿**,分两类:
+
+- **T030 保持绿 —— 这是**正确**结果**。T030 本身就是「服务端不公告 endpoint」的用例:它以
+  `noEndpointAnnounce=true` 起 fixture,断言连接**永不**进入 `CONNECTED`。把 fixture 首帧
+  注释掉,**不改变 T030 的前提** ⇒ 它当然还绿。
+  ⇒ **`tasks.md` 的字面要求「确认 T027—T030 的用例变红」不可能成立** ——
+  T030 与「首帧被注释」这两个条件是**互斥**的:破坏首帧不可能让「断言首帧缺失导致失败」的
+  用例变红。SC-003 要的「缺陷被重新引入时必失败」在 T030 上**天然成立**(它本来就要求
+  缺陷存在),不需要、也不应该通过破坏 fixture 来验证。
+- 其余 8 个与握手无关,因此保持绿:`close_beforeStart_noException` /
+  `callTool_beforeStart_returnsError` / `ctor_wrongTransport_throws` / `backoff_sequence`
+  (纯函数)/ `reconnect_unbounded` / `start_invalidUrl_immediateFailureSchedulesReconnect` /
+  `start_missingUrl_illegalArgumentOrReconnect` / `start_duringReconnecting_noop`。
+
+**GREEN 半边** —— 改回后 fixture md5 = `2837b222686baff7556af9a2a294fbb5`,与破坏前
+**逐字节相同**;`git diff --stat` 与破坏前一致 ⇒ **无残留**:
+
+```
+Tests run: 24, Failures: 0, Errors: 0 — BUILD SUCCESS   (40.133 s)
+```
+
+#### 8.2.7 Phase 4 收尾自查
+
+| 项 | 结果 |
+|---|---|
+| `mvn -pl lingshu-core test -Dtest='ai.lingshu.core.mcp.**'` | **24 run / 0 fail / 0 error** |
+| `lingshu-core/src/main/java/ai/lingshu/core/mcp/**` 改动 | **0 行** |
+| 新增 ErrorCode | **0** |
+| 新增 Maven 依赖 | **0** |
+| 新增测试 helper | 1(`McpStateLog.java`,package-private) |
+| JDK 8 兼容 | ✅ 无 `var` / `List.of` / `record` / text block;用 `Arrays.asList` / `Collections.synchronizedList(new ArrayList<>())` |
+
+---
+
+### 8.3 Phase 5 write-back:US3(Streamable HTTP)已实施
+
+> 追加于 2026-10-25。本节登记 Phase 5(T037—T047)实施期间的**实测现实**,
+> 以及 `tasks.md` 原始文字与现实冲突之处。**冲突一律以现实为准**(continuation
+> prompt §0 evidence-first 规则),差异在此逐条登记(与 §8.2 同规格)。
+
+#### 8.3.1 T037—T047 落地清单
+
+| 任务 | 落地位置 | 用例名 |
+|---|---|---|
+| T037 | `StreamableHttpMcpServerConnectionSessionRecoveryTest`(新文件) | `t037_oneShot404_clearsSessionAndRetriesWithSameId` |
+| T038 | 同文件 | `t038_persistent404_retriesOnceThenSurfacesError` |
+| T039 | 同文件 | `t039_404WithoutLocalSession_doesNotRehandshake` |
+| T040 | 同文件 | `t040_transport_readsSseShapedAnswers` / `t040_sameRequestTwoContentTypes_parseToTheSameResult` |
+| T041 | `McpHttpSupportPostJsonRpcSpecTest`(新文件,12 例) | — |
+| T042 | `StreamableHttpMcpServerConnectionStartTest`(4 例) | 单端点握手 + `Mcp-Session-Id` 回放 |
+| T043 | `StreamableHttpMcpServerConnectionHeartbeatTest`(3 例) | JSON-RPC `ping` + session 记录与回放 |
+| T044 | `StreamableHttpMcpServerConnectionReconnectTest`(4 例) | 含**去 flake** 的 `reconnect_afterSessionExpiry_reRunsHandshake` |
+| T045 | `StreamableHttpMcpServerConnectionCloseAndCallTest`(5 例) | 全部重写(见 §8.3.3) |
+| T046 | `McpHttpDomainGuardIT`(4 例) | 见 §8.3.4 |
+| T047 | 反证抽查(见 §8.3.5) | — |
+
+**Phase 5 产出文件(6 改 + 2 新增,0 生产代码改动)**:
+
+| 文件 | 性质 | 行数(实测) |
+|---|---|---|
+| `StreamableHttpMcpServerConnectionSessionRecoveryTest.java` | **新增** | **373** |
+| `McpHttpSupportPostJsonRpcSpecTest.java` | **新增** | **474** |
+| `StreamableHttpMcpServerConnectionStartTest.java` | 改 | → **221** |
+| `StreamableHttpMcpServerConnectionHeartbeatTest.java` | 改 | → **196** |
+| `StreamableHttpMcpServerConnectionReconnectTest.java` | 改 | → **420** |
+| `StreamableHttpMcpServerConnectionCloseAndCallTest.java` | 改 | → **345** |
+| `McpHttpDomainGuardIT.java` | 改 | → **300** |
+| `fixture/TestMcpHttpServer.java` | 改 | 1146 → **1249**(4 个新开关 + 方法作用域过期) |
+| `McpHttpTestSupport.java` | 改 | → **195** |
+| `McpStateLog.java` | 沿用 Phase 4 | **136** |
+
+`lingshu-core/src/main/java/ai/lingshu/core/mcp/**` — **0 行改动**(硬约束守住;
+T047 的临时改坏已逐字节还原,见 §8.3.5)。
+
+#### 8.3.2 任务文字与现实的冲突(7 处,逐条更正)
+
+与 `tasks.md` 的偏差 D—J 一一对应(此表是**根因**版,tasks.md 是**摘要**版):
+
+| # | tasks.md 原文 | 实测现实 | 处置 |
+|---|---|---|---|
+| D/E | T037/T038「以 `expireSession=true` 起 fixture」/「过期后重握手拿到的新 session 也立刻过期」 | `expireSession` 是**带 session 头的请求**的全局单调阈值(`sessionCount.incrementAndGet() >= expireSession`)。而 404 触发的**重握手**里,`initialize` 之后的 `notifications/initialized` **通知**是**带 session 头**的(它骑在刚拿到的新 session 上)⇒ 重握手自身就会先 404 ⇒「同一个 id 出现 2 次:首次 404、第二次成功」**不可达** | fixture 加**方法作用域**开关 `expireMethod=<method>` + `expireMethodCount=<n>`:只让被点名的 JSON-RPC 方法 404,**握手流量完全健康**。`expireSession` 语义**一字未改** |
+| F | T040「同一请求分别以 `Accept: application/json` 与 `Accept: text/event-stream` 发起」 | `McpHttpSupport.postJsonRpcSpec` 把 `Accept` 写死为 `application/json, text/event-stream`,**收窄的 Accept 头无法经 transport 驱动** | 拆 2 例:① transport 侧用 fixture `respondSse=true`(让**服务端**以 SSE 形状应答)② 线缆侧用裸 HTTP 发 2 个收窄 Accept 的 POST,断言两种 content-type 解出**同一** JSON-RPC 结果 |
+| G | T039「本地本来就没有活跃 sessionId」 | 需要服务端**从不签发** `Mcp-Session-Id` | fixture 加 `omitSessionId=true`(`initialize` 应答不带 session 头) |
+| H | T044「降掉 `Thread.sleep`,改 Awaitility」 | **只换 Awaitility 不够**。原闸门 `await(CONNECTED)` 用 Awaitility **默认 100 ms 轮询**,首次求值落在 ~200 ms —— **晚于**第 1 次心跳(~190 ms)把状态翻成 `RECONNECTING`;闸门于是阻塞到重连完成,那时 `initialize` 已是 3 ⇒ 两个测量点同时看到 3 ⇒ 距离塌成 ~20 ms。**实测 8 次跑出 4 红** | 3 件事同时做:① **把抖动做成确定性的**(`expireMethodCount=2`,只抖一次,请求序列固定)② **删掉有竞态的 `await(CONNECTED)` 闸门**,改为同步到 `initialize` 计数 ③ **时间锚点换成 transport 自己的 `onStateChange` 时间线**(`System.nanoTime()` 在 transport 线程内取)⇒ 客户端轮询停顿**结构上不可能**污染测量。**断言未被弱化**:仍是 `>= 900 ms` + `< 5000 ms` |
+| I | T045「陈旧 URL 统一换 `cfg.getUrl()`」 | 这 3 条用例要的是**连不上的端点**;`cfg.getUrl()` 是**活着的** fixture 地址,语义相反 | 统一换 `McpHttpTestSupport.pickClosedBaseUrl() + "/mcp"`(Phase 4 已落地的同一写法)。**"换 `cfg.getUrl()`" 作废** |
+| J | T046「补成正向断言」/「补上『真实 HTTP 请求未曾发出』的断言」 | ① 正向用例**本来就**断言 `CONNECTED`,但只验了**状态机的自述**,没验「握手真的发生了」;② 3 条负向用例的**旧名承诺了代码给不出的东西**:`callToolDenied` 从不调用 `callTool`(且永远看不到 `[LINGS-S01]` —— `callTool` 在状态检查处短路,到不了 guard);`accessDeniedThrown` 从不观察异常(`start()` 吞掉) | ① 补「fixture 侧确实收到握手」+「一次 `tools/call` 真的往返」② 每条负向用例补「server 侧记录到 **0 条**请求」③ **改名** 2 条(登记进 T049 清单;**未删任何断言**) |
+
+#### 8.3.3 T045:为什么「真实断连」必须靠 fixture 的**方法作用域**过期
+
+Streamable HTTP 没有 SSE 那种「服务端可以主动断流」的长连接 —— 它的连接生命周期**只**由
+**心跳 `ping`** 决定。所以要让连接「真的掉线」,唯一可控的手段就是让服务端对 `ping` 返 404。
+
+`expireMethod=ping` + `expireMethodCount=2` 产生的**确定性**序列:
+
+```
+ping#1         -> 404 -> 就地重握手(initialize#2)
+retried ping#1 -> 404 -> 连接掉线 -> DISCONNECTED -> RECONNECTING(1000 ms 退避)
+reconnect      -> initialize#3 + tools/list#2 -> CONNECTED
+```
+
+⇒ `initialize` 恰好 3 次、`tools/list` 恰好 2 次、两条抖动 ping **共用同一个 JSON-RPC id**。
+这让「重试**恰好一次**」成为**可精确计数**的断言,而不是「等到第 N 个 ping」的时间竞速。
+
+**`close_idempotent` 的时间预算处理**:该用例要在 `close()` 之后**等一段窗口**,证明那个
+已排期的重连**没有**发生。默认退避地板是 1000 ms,窗口就要 1.2 s,单用例 wall clock
+**2.165 s —— 超了 2 s 预算**。处置:`reconnectCapMs` 的语义是 `min(delay, cap)`
+(`computeBackoffMs` **只缩短、不延长**),故把 cap 降到 **400 ms**、窗口降到 **700 ms**:
+被测契约(「关掉的连接永不回来」)与退避长度**无关**,缩短后单用例 **1.642 s**。
+`callTool_afterDisconnect` 反过来**保留 1000 ms 地板** —— 那里要求调用发生时连接**仍**处于
+`RECONNECTING`,窗口越宽越稳。
+
+**`close_duringConnecting` 的一个观察(不在本次修复范围)**:transport 的 `start()` 是
+**同步**的(`doConnect()` 在调用线程里跑完),所以「close 发生在 CONNECTING 期间」在
+生产实现里**无法**用一个同步 `start()` 构造出来。代码阅读还发现:`doConnect()` 结尾
+**没有** `closing` 检查 ⇒ 若 `close()` 落在 `doConnect()` 的 HTTP 往返**之间**,那个在途握手
+结束后仍会 `transition(CONNECTED)`,把 `FAILED` 覆盖掉。这是**生产侧的小 wart**,
+但本次**不动生产代码**(0 行改动硬约束),故只在用例里保持「close 之后状态必须精确是 `FAILED`」
+这一层断言,并在此登记,留给后续 Story 裁决。
+
+#### 8.3.4 T046:3 条 vacuous 负向用例的补强方式
+
+负向用例原本只断言「状态是 `RECONNECTING`」—— 而 `RECONNECTING` 恰恰是「URL 校验**短路**了」
+的结果,所以这些断言**什么都没证明**。
+
+补强手段是 fixture 的**记录器**(`GET /__recorded`):负向用例里 server 是**真的且可达**的,
+所以任何漏过 guard 的请求都**一定**会被记录 ⇒ 断言「记录到 **0 条**请求」**不可能空过**。
+正负两侧构成对偶:同一个 fixture、同一个 server,白名单放行 ⇒ 记录到 `initialize` + SSE 开启
+哨兵 + 一次真的 `tools/call` 往返;白名单拦截 ⇒ 记录到 **0** 条。
+
+#### 8.3.5 T047 反证抽查(SC-004 交付证据)
+
+**任务文字的两半,只有一半需要「临时改坏」**。T038 的 fixture 本来就是**持续** 404
+(`expireMethodCount=-1`),真正要改坏的是「允许 transport 再重试」——「恰好重试一次」是
+**transport 侧**契约,改 fixture 不可能让它变红(包的数量由 transport 的重试次数决定)。
+
+**RED 半边** —— 临时把 `StreamableHttpMcpServerConnection.request()` 的「重试一次」改成
+「重试 3 次」:
+
+```
+Tests run: 49, Failures: 2, Errors: 2 — BUILD FAILURE
+```
+
+T038 的原始失败信息(逐字):
+
+```
+=== t038_persistent404_retriesOnceThenSurfacesError
+[one original attempt + exactly one retry — the retry must not loop]
+Expected size: 2 but was: 4 in:
+[#4  tools/call id=3 session=session-1 POST /mcp,
+ #7  tools/call id=3 session=session-2 POST /mcp,
+ #10 tools/call id=3 session=session-3 POST /mcp,
+ #13 tools/call id=3 session=session-4 POST /mcp]
+```
+
+同一个 JSON-RPC id=3 骑了 **4 个**不同的 session —— 「恰好重试一次」被破坏,用例如实变红。
+
+另外 3 条变红的是同一契约的其它守护者:`reconnect_afterSessionExpiry_reRunsHandshake`
+(`[the failed heartbeat must have knocked the connection down]`)、
+`close_idempotent` 与 `callTool_afterDisconnect_returnsError`(等不到 `RECONNECTING`)。
+**T037 / T039 / T040 保持绿是正确的**(T037 的 404 是一次性的、T039 没有本地 session、
+T040 与重试次数无关)。
+
+**GREEN 半边** —— 改回后该生产文件 md5 = `3ff7037cbbdef3d19bc9252700bc7534`,与改坏前
+**逐字节相同**;`git diff --stat -- lingshu-core/src/main/java/ai/lingshu/core/mcp/` 为**空**:
+
+```
+Tests run: 49, Failures: 0, Errors: 0, Skipped: 0 — BUILD SUCCESS
+```
+
+#### 8.3.6 Phase 5 收尾自查
+
+| 项 | 结果 |
+|---|---|
+| `mvn -pl lingshu-core test -Dtest='StreamableHttpMcpServerConnection*,McpHttpSupport*,McpHttpDomainGuardIT'` | **49 run / 0 fail / 0 error / 0 skip** |
+| `lingshu-core/src/main/java/ai/lingshu/core/mcp/**` 改动 | **0 行**(T047 临时改坏已逐字节还原) |
+| 新增 ErrorCode | **0**(复用 `LINGS-M03` / `[LINGS-S01]`) |
+| 新增 Maven 依赖 | **0** |
+| 单用例 wall clock | 全部 ≤ 2 s(最慢 `sseNonWhitelisted_neverConnected` 1.63 s / `close_idempotent` 1.642 s) |
+| JDK 8 兼容 | ✅ 无 `var` / `List.of` / `record` / `sealed` / text block |
+| 稳定性抽查 | T045 连跑 5 次全绿;T046 连跑 3 次全绿;**T044 修复后连跑 10 次全绿**(修复前 8 跑 4 红) |
