@@ -176,6 +176,96 @@ class TruncatingCompactorTest {
         assertThat(assistants).isEqualTo(1L);
     }
 
+    @Test
+    @DisplayName("Bug 2026-10-25: compact_slidingWindow_dropsToolResultsWithTheirAssistant")
+    void compact_slidingWindow_dropsToolResultsWithTheirAssistant() {
+        // Regression: the cut previously dropped the (N+1)-th Assistant while KEEPING
+        // its trailing ToolResult → orphan tool_result → Anthropic HTTP 400
+        //   "Each `tool_result` block must have a corresponding `tool_use` block …".
+        TruncatingCompactor c = new TruncatingCompactor(new CompactorProps(10, 100_000, 2));
+        DefaultSession session = new DefaultSession("s1");
+        session.append(new Message.System("ROLE", "role"));
+        session.append(new Message.User("u0"));
+        // One human turn, 4 ReAct steps: Assistant(toolCalls) + ToolResult each.
+        for (int i = 0; i < 4; i++) {
+            session.append(new Message.Assistant("a" + i,
+                Arrays.asList(new ToolCall("tc-" + i, "t", null)),
+                StopReason.TOOL_USE, Usage.zero()));
+            session.append(new Message.ToolResult("tc-" + i, "r" + i, false));
+        }
+
+        c.compact(newTurnCtx(session, AgentConfigDefaults.defaults()));
+
+        // Pairing invariant: every surviving ToolResult must have its originating
+        // Assistant.toolCalls entry still present in the window.
+        List<Message> hist = session.history();
+        List<String> keptToolUseIds = new ArrayList<>();
+        for (Message m : hist) {
+            if (m instanceof Message.Assistant
+                && ((Message.Assistant) m).getToolCalls() != null) {
+                for (ToolCall tc : ((Message.Assistant) m).getToolCalls()) {
+                    keptToolUseIds.add(tc.getId());
+                }
+            }
+        }
+        for (Message m : hist) {
+            if (m instanceof Message.ToolResult) {
+                assertThat(keptToolUseIds)
+                    .as("orphan ToolResult survived the sliding window: %s", m)
+                    .contains(((Message.ToolResult) m).getToolUseId());
+            }
+        }
+        long assistants = hist.stream().filter(m -> m instanceof Message.Assistant).count();
+        assertThat(assistants).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("Bug 2026-10-25: compact_slidingWindow_keepsAnchorUserBeforeOldestKeptAssistant")
+    void compact_slidingWindow_keepsAnchorUserBeforeOldestKeptAssistant() {
+        // Regression: the window opened with a role:"assistant" message once the cut
+        // landed mid-turn; Anthropic requires the first message to be role:"user".
+        TruncatingCompactor c = new TruncatingCompactor(new CompactorProps(10, 100_000, 1));
+        DefaultSession session = new DefaultSession("s1");
+        session.append(new Message.System("ROLE", "role"));
+        session.append(new Message.User("u0"));
+        for (int i = 0; i < 3; i++) {
+            session.append(new Message.Assistant("a" + i,
+                Arrays.asList(new ToolCall("tc-" + i, "t", null)),
+                StopReason.TOOL_USE, Usage.zero()));
+            session.append(new Message.ToolResult("tc-" + i, "r" + i, false));
+        }
+
+        c.compact(newTurnCtx(session, AgentConfigDefaults.defaults()));
+
+        List<Message> hist = session.history();
+        assertThat(hist.get(0)).isInstanceOf(Message.System.class);
+        assertThat(hist.get(1)).isInstanceOf(Message.User.class);
+        assertThat(((Message.User) hist.get(1)).getContent()).isEqualTo("u0");
+    }
+
+    @Test
+    @DisplayName("Bug 2026-10-25: compact_slidingWindow_windowOpeningWithUser_notDuplicated")
+    void compact_slidingWindow_windowOpeningWithUser_notDuplicated() {
+        // When the kept region already opens with a User, no extra anchor User is added.
+        TruncatingCompactor c = new TruncatingCompactor(new CompactorProps(10, 100_000, 1));
+        DefaultSession session = new DefaultSession("s1");
+        session.append(new Message.User("u0"));
+        session.append(new Message.Assistant("a0",
+            Arrays.asList(new ToolCall("tc-0", "t", null)), StopReason.TOOL_USE, Usage.zero()));
+        session.append(new Message.ToolResult("tc-0", "r0", false));
+        session.append(new Message.User("u1"));
+        session.append(new Message.Assistant("a1",
+            Collections.<ToolCall>emptyList(), StopReason.END_TURN, Usage.zero()));
+
+        c.compact(newTurnCtx(session, AgentConfigDefaults.defaults()));
+
+        List<Message> hist = session.history();
+        long users = hist.stream().filter(m -> m instanceof Message.User).count();
+        assertThat(users).isEqualTo(1L);
+        assertThat(hist.get(0)).isInstanceOf(Message.User.class);
+        assertThat(((Message.User) hist.get(0)).getContent()).isEqualTo("u1");
+    }
+
     // ── compact: idempotency / null safety / end-to-end ────────────────
 
     @Test

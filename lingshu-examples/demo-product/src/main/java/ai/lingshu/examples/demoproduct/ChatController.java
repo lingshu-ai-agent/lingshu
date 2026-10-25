@@ -228,9 +228,6 @@ public class ChatController {
             throw new NotFoundException("session not found: " + sessionId);
         }
 
-        // Reset history baseline so the next Compacted event gets a clean delta.
-        mapper.resetBaseline(agent.session().history().size());
-
         SseEmitter emitter = new SseEmitter(-1L); // no timeout
         ObjectNode payload = json.createObjectNode();
 

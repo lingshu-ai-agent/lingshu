@@ -33,6 +33,7 @@ import ai.lingshu.core.slot.RuntimeSandbox;
 import ai.lingshu.core.slot.PromptBuilder;
 import ai.lingshu.core.slot.ToolExecutionContext;
 import ai.lingshu.core.impl.compaction.NullCompactor;
+import ai.lingshu.core.impl.compaction.TruncatingCompactor;
 import ai.lingshu.core.impl.llm.LlmErrorCodes;
 import ai.lingshu.core.impl.runtime.ApprovalRegistry;
 import ai.lingshu.core.impl.runtime.DefaultTurnContext;
@@ -330,17 +331,29 @@ public class LinearTurnEngine implements FlowEngine {
                 // The previous prompt reference is discarded — its messages list is
                 // stale once the compactor mutates the session.
                 if (compactor.shouldCompact(prompt)) {
-                    int historyBefore = ctx.session().history().size();
+                    // 🆕 Bug fix 2026-10-25 — measure the real before/after delta so
+                    // AgentEvent.Compacted carries an honest payload. The pre-payload
+                    // event ("presence is the signal") forced host UIs to fabricate the
+                    // numbers — demo-product's R-1 workaround hardcoded
+                    // afterSize=beforeSize / approxTokensFreed=0, so every compaction
+                    // looked like a no-op on the wire.
+                    List<Message> historyBefore = ctx.session().history();
+                    int tokensBefore = TruncatingCompactor.estimateTokens(historyBefore);
                     LOG.info("step {}: compactor triggered — compacting history (current messages={})",
-                        step, historyBefore);
+                        step, historyBefore.size());
                     compactor.compact(ctx);
                     prompt = promptBuilder.build(ctx);
+                    List<Message> historyAfter = ctx.session().history();
+                    int tokensAfter = TruncatingCompactor.estimateTokens(historyAfter);
                     LOG.info("step {}: compactor done — history {} → {} messages",
-                        step, historyBefore, ctx.session().history().size());
+                        step, historyBefore.size(), historyAfter.size());
                     // Reuse the existing AgentEvent.Compacted signal (story #001 originally
                     // left it as the "presence is the signal" marker); subscribers (e.g.
                     // demo-product SSE) can flush UI state when this fires.
-                    sink.onNext(new AgentEvent.Compacted());
+                    sink.onNext(new AgentEvent.Compacted(
+                        historyBefore.size(),
+                        historyAfter.size(),
+                        Math.max(0, tokensBefore - tokensAfter)));
                 }
 
                 // Stream the LLM call; future completes with the final structured response.

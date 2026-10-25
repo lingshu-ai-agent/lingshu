@@ -22,8 +22,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
  * Maps {@link AgentEvent} subclasses to Spring SSE {@code SseEventBuilder} payloads.
  *
@@ -33,10 +31,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * and forward events to an SSE emitter one-by-one.
  *
  * <p>Phase 1 ships with 2 cases (TextDelta, TurnCompleted). Phase 4 fills out all 12
- * cases plus the {@link AgentEvent.Compacted} token-count workaround:
- * {@code AgentEvent.Compacted} itself carries no payload, so we track
- * {@link #lastHistorySize} on every {@link AgentEvent.MessageAppended} and compute
- * {@code approxTokensFreed = lastHistorySize − historySizeAfter} when compaction fires.
+ * cases.
+ *
+ * <p>🆕 Bug fix 2026-10-25 — {@link AgentEvent.Compacted} now carries a real
+ * {@code (beforeSize, afterSize, approxTokensFreed)} payload measured by
+ * {@code LinearTurnEngine} around the compactor swap. The old R-1 workaround
+ * ({@code lastHistorySize} side-channel + hardcoded {@code afterSize=beforeSize} /
+ * {@code approxTokensFreed=0}) is deleted — it made every compaction look like a
+ * no-op on the wire and misled the 2026-10-25 production debugging session.
  *
  * <p>JDK 8 compatible — uses {@code instanceof} chain (no pattern matching switch).
  */
@@ -44,14 +46,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AgentEventMapper {
 
     private final ObjectMapper mapper = new ObjectMapper();
-
-    /** Last known history size; updated on every {@code MessageAppended} event. */
-    private final AtomicInteger lastHistorySize = new AtomicInteger(0);
-
-    /** Reset history baseline (called by ChatController before each turn). */
-    public void resetBaseline(int size) {
-        lastHistorySize.set(size);
-    }
 
     /**
      * Convert one {@link AgentEvent} into a JSON payload suitable for SSE {@code data:}.
@@ -94,12 +88,12 @@ public class AgentEventMapper {
             out.put("approvalId", e.getApprovalId());
             out.set("ask", mapper.valueToTree(e.getAsk()));
         } else if (event instanceof AgentEvent.Compacted) {
-            // R-1 workaround: AgentEvent.Compacted has no payload. Estimate tokens freed.
-            int before = lastHistorySize.get();
+            // 🆕 Bug fix 2026-10-25 — forward the engine-measured payload verbatim.
+            AgentEvent.Compacted e = (AgentEvent.Compacted) event;
             out.put("type", "compacted");
-            out.put("beforeSize", before);
-            out.put("afterSize", before);   // updated by the next MessageAppended
-            out.put("approxTokensFreed", 0); // populated by ChatController after event lands
+            out.put("beforeSize", e.getBeforeSize());
+            out.put("afterSize", e.getAfterSize());
+            out.put("approxTokensFreed", e.getApproxTokensFreed());
         } else if (event instanceof AgentEvent.ErrorEvent) {
             AgentEvent.ErrorEvent e = (AgentEvent.ErrorEvent) event;
             out.put("type", "error");
@@ -133,14 +127,9 @@ public class AgentEventMapper {
         } else if (event instanceof AgentEvent.MessageAppended) {
             AgentEvent.MessageAppended e = (AgentEvent.MessageAppended) event;
             Message m = e.getMessage();
-            // R-1: update baseline AFTER MessageAppended lands so the next Compacted
-            // sees the post-compaction size in `afterSize`.
             out.put("type", "message");
             JsonNode mNode = mapper.valueToTree(m);
             out.set("message", mNode);
-            // History grew by one (or shrank by N if this is a compaction-replace);
-            // we conservatively track the absolute history size.
-            lastHistorySize.incrementAndGet();
         }
     }
 }

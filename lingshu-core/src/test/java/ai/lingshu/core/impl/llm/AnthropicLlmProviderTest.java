@@ -435,6 +435,44 @@ class AnthropicLlmProviderTest {
         assertThat(thrown.getCause().getMessage()).contains("LINGS-L02");
     }
 
+    // ── Bug 2026-10-25: orphan tool_result pairing guard ───────────────
+
+    @Test
+    @DisplayName("Bug 2026-10-25: buildRequestBody_orphanToolResultDropped")
+    void buildRequestBody_orphanToolResultDropped() throws Exception {
+        // Regression: a compactor cut can leave a Message.ToolResult whose originating
+        // Assistant.toolCalls was dropped. Forwarding it produces Anthropic HTTP 400
+        //   "Each `tool_result` block must have a corresponding `tool_use` block …"
+        // The protocol boundary now drops the orphan instead of poisoning the request.
+        ToolCall call = new ToolCall("c1", "read_file", MAPPER.createObjectNode());
+        Prompt p = Prompt.builder()
+            .messages(Arrays.asList(
+                new Message.User("read /tmp/x"),
+                new Message.Assistant("go", Arrays.asList(call),
+                    StopReason.TOOL_USE, ai.lingshu.core.message.Usage.zero()),
+                new Message.ToolResult("c1", "file contents", false),
+                new Message.ToolResult("call_ORPHAN", "must not reach the wire", false)))
+            .build();
+
+        String body = (String) buildRequestBodyMethod().invoke(newProvider(), p);
+
+        // Orphan dropped; the paired result still forwarded.
+        assertThat(body).doesNotContain("call_ORPHAN");
+        assertThat(body).contains("file contents");
+        JsonNode messages = MAPPER.readTree(body).path("messages");
+        // Paired tool_result must still be wrapped in a role:"user" message.
+        boolean foundPaired = false;
+        for (JsonNode msg : messages) {
+            for (JsonNode block : msg.path("content")) {
+                if ("tool_result".equals(block.path("type").asText())) {
+                    assertThat(block.path("tool_use_id").asText()).isEqualTo("c1");
+                    foundPaired = true;
+                }
+            }
+        }
+        assertThat(foundPaired).isTrue();
+    }
+
     // ── AC-NN-7: end-to-end mock HTTP server round trip ─────────────────
 
     @Test

@@ -162,7 +162,29 @@ public class TruncatingCompactor implements Compactor {
      * assistant that pushes the count past {@code keepRecentTurns} is the
      * (N+1)-th-from-end — we cut at the position right after it. Everything
      * from the resulting {@code cutIndex} onwards is kept; everything before
-     * (except for any leading System blocks) is dropped.
+     * (except for any leading System blocks, plus the anchor User — see below)
+     * is dropped.
+     *
+     * <p>🆕 Bug fix 2026-10-25 — <b>pair-safe cut</b>. Cutting at {@code i + 1}
+     * dropped the (N+1)-th Assistant while KEEPING its trailing
+     * {@link Message.ToolResult} blocks, leaving orphan tool_results at the head
+     * of the window. {@code AnthropicLlmProvider.buildRequestBody} faithfully
+     * forwarded them and Anthropic rejected the next request with HTTP 400:
+     * <pre>
+     * messages.0.content.0: tool_use_id found in tool_result blocks: …
+     * Each `tool_result` block must have a corresponding `tool_use` block
+     * in the previous message.
+     * </pre>
+     * The cut now advances past every trailing ToolResult of the dropped
+     * assistant, so Assistant↔ToolResult pairs are always dropped together.
+     *
+     * <p>🆕 Bug fix 2026-10-25 — <b>anchor User</b>. The oldest kept assistant is
+     * usually mid-turn (its own user prompt fell in the dropped prefix), which
+     * left the window opening with a role:"assistant" message. Anthropic requires
+     * the first message to use the user role, and the class contract above always
+     * promised "the user prompt immediately preceding the oldest kept assistant is
+     * also kept" — so the nearest {@link Message.User} before the cut is re-anchored
+     * at the front of the window (after leading System).
      */
     static List<Message> applySlidingWindow(List<Message> history, int keepRecentTurns) {
         if (keepRecentTurns <= 0) {
@@ -184,8 +206,16 @@ public class TruncatingCompactor implements Compactor {
             if (m instanceof Message.Assistant) {
                 assistantSeen++;
                 if (assistantSeen > keepRecentTurns) {
-                    // The (N+1)-th-from-end assistant lives at index i; cut right after it.
-                    dropBefore = i + 1;
+                    // The (N+1)-th-from-end assistant lives at index i; cut right
+                    // after it AND its trailing ToolResults — an Assistant must
+                    // never be dropped while its ToolResults survive (Anthropic
+                    // tool_use/tool_result pairing invariant).
+                    int cut = i + 1;
+                    while (cut < history.size()
+                        && history.get(cut) instanceof Message.ToolResult) {
+                        cut++;
+                    }
+                    dropBefore = cut;
                     break;
                 }
             }
@@ -207,16 +237,36 @@ public class TruncatingCompactor implements Compactor {
             }
         }
 
-        List<Message> out = new ArrayList<>(leadingSystem.size() + (history.size() - dropBefore));
+        // Anchor User: the nearest User before the cut. Re-anchored at the head so
+        // the window opens with a user turn (unless it already does).
+        Message anchorUser = null;
+        for (int i = dropBefore - 1; i >= 0; i--) {
+            if (history.get(i) instanceof Message.User) {
+                anchorUser = history.get(i);
+                break;
+            }
+        }
+
+        List<Message> out = new ArrayList<>(leadingSystem.size() + (history.size() - dropBefore) + 1);
         out.addAll(leadingSystem);
+        if (anchorUser != null && !(history.get(dropBefore) instanceof Message.User)) {
+            out.add(anchorUser);
+        }
         for (int i = dropBefore; i < history.size(); i++) {
             out.add(history.get(i));
         }
         return out;
     }
 
-    /** Conservative token estimate: total chars / 4 (industry heuristic). */
-    static int estimateTokens(List<Message> messages) {
+    /**
+     * Conservative token estimate: total chars / 4 (industry heuristic).
+     *
+     * <p>Public so {@code LinearTurnEngine} can report {@code approxTokensFreed} on
+     * {@code AgentEvent.Compacted} with the same heuristic the compactor itself uses
+     * for {@code shouldCompact()} — one number source, no drift between "should I
+     * compact?" and "how much did I free?".
+     */
+    public static int estimateTokens(List<Message> messages) {
         long totalChars = 0L;
         for (Message m : messages) {
             totalChars += messageCharLen(m);

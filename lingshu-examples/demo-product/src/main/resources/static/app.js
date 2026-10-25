@@ -110,7 +110,8 @@
     } else if (eventName === 'turn.completed') {
       bubble.textContent += '\n— turn completed (' + data.reason + ')';
     } else if (eventName === 'compacted') {
-      bubble.textContent += '\n— compacted (≈' + (data.approxTokensFreed || 0) + ' tokens freed)';
+      bubble.textContent += '\n— compacted (' + (data.beforeSize || 0) + ' → '
+        + (data.afterSize || 0) + ' msgs, ≈' + (data.approxTokensFreed || 0) + ' tokens freed)';
     } else if (eventName === 'approval') {
       // Story #042 — render Allow / Deny buttons inline so we don't have to
       // open DevTools to manually POST. Backend contract (Story #030 + #041):

@@ -208,6 +208,48 @@ class LinearTurnEngineCompactionTest {
     }
 
     @Test
+    @DisplayName("Bug 2026-10-25: compactedEvent_carriesRealBeforeAfterSizes")
+    void compactedEvent_carriesRealBeforeAfterSizes() {
+        // Regression: AgentEvent.Compacted used to be payload-less ("presence is the
+        // signal"), which forced demo-product's R-1 workaround to hardcode
+        // afterSize=beforeSize / approxTokensFreed=0 — every compaction looked like
+        // a no-op on the SSE wire. The engine now measures the real delta.
+        TriggeringCompactor trigger = new TriggeringCompactor();
+        // Pre-seed history so compact() has something to drop (TriggeringCompactor
+        // drops the oldest 1 message per invocation).
+        DefaultSession session = new DefaultSession("s-payload");
+        StringBuilder fat = new StringBuilder();
+        for (int i = 0; i < 400; i++) {
+            fat.append('x');   // 400 chars ≈ 100 tokens by the chars/4 heuristic
+        }
+        session.append(new Message.User(fat.toString()));
+        session.append(new Message.User("u1"));
+        session.append(new Message.User("u2"));
+
+        AgentConfig cfg = defaultConfig();
+        DefaultTurnContext turn = new DefaultTurnContext(
+            session, cfg, new CapturingSubscriber(), "hi");
+        LinearTurnEngine engine = new LinearTurnEngine(
+            new RecordingPromptBuilder(), endTurnLlm(), toolExecutor,
+            new AllowAllPermissionPolicy(), pool, null, trigger);
+
+        CapturingSubscriber sink = new CapturingSubscriber();
+        engine.runTurn(turn, sink);
+
+        AgentEvent.Compacted ev = (AgentEvent.Compacted) sink.events().stream()
+            .filter(e -> e instanceof AgentEvent.Compacted)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("expected a Compacted event"));
+
+        // TriggeringCompactor drops exactly 1 message (the fat one — 3 → 2).
+        assertThat(ev.getBeforeSize()).isEqualTo(3);
+        assertThat(ev.getAfterSize()).isEqualTo(2);
+        // The dropped message was ~400 chars ⇒ ~100 tokens freed (allow some slack
+        // for the assistant turn appended after the LLM call being counted).
+        assertThat(ev.getApproxTokensFreed()).isGreaterThanOrEqualTo(90);
+    }
+
+    @Test
     @DisplayName("L1-003: shouldCompactTrue_rebuildsPrompt")
     void shouldCompactTrue_rebuildsPrompt() {
         TriggeringCompactor trigger = new TriggeringCompactor();

@@ -40,7 +40,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -424,6 +426,17 @@ public class AnthropicLlmProvider implements LlmProvider {
             // role:"user" message so the protocol-level pairing is honored.
             ObjectNode openToolResultUserMsg = null;
             ArrayNode openToolResultContent = null;
+            // 🆕 Bug fix 2026-10-25 — tool_use/tool_result pairing guard. Anthropic
+            // requires every tool_result block to reference a tool_use emitted earlier
+            // in the same request. A compactor (Slot 6 is a public SPI — e.g. a buggy
+            // custom Compactor, or history persisted before the TruncatingCompactor
+            // pair-safe-cut fix) can leave orphan Message.ToolResult entries whose
+            // originating Assistant.toolCalls was dropped. Forwarding those as-is kills
+            // the whole session with HTTP 400
+            //   "Each `tool_result` block must have a corresponding `tool_use` block …"
+            // so drop them at the protocol boundary (WARN + skip), mirroring the
+            // MAX_TOKENS empty-text sanitization precedent in LinearTurnEngine.
+            Set<String> seenToolUseIds = new HashSet<String>();
             for (Message m : ourPrompt.getMessages()) {
                 if (m instanceof Message.System) {
                     // Anthropic's system lives at the top level (dsh §6.5 (1.5) table).
@@ -442,14 +455,34 @@ public class AnthropicLlmProvider implements LlmProvider {
                     // assistant text/tool_use comes after, never nested.
                     openToolResultUserMsg = null;
                     openToolResultContent = null;
-                    appendAssistantMessage(messages, (Message.Assistant) m);
+                    Message.Assistant assistant = (Message.Assistant) m;
+                    if (assistant.getToolCalls() != null) {
+                        for (ToolCall call : assistant.getToolCalls()) {
+                            if (call.getId() != null && !call.getId().isEmpty()) {
+                                seenToolUseIds.add(call.getId());
+                            }
+                        }
+                    }
+                    appendAssistantMessage(messages, assistant);
                 } else if (m instanceof Message.ToolResult) {
+                    Message.ToolResult tr = (Message.ToolResult) m;
+                    // Missing/empty toolUseId is still a hard LINGS-L02 (appendToolResultBlock
+                    // throws); a non-empty id with NO matching earlier tool_use is an orphan —
+                    // drop it instead of poisoning the request.
+                    if (tr.getToolUseId() != null && !tr.getToolUseId().isEmpty()
+                        && !seenToolUseIds.contains(tr.getToolUseId())) {
+                        LOG.warn("Dropping orphan Message.ToolResult toolUseId={} — no matching "
+                            + "Assistant.toolCalls entry earlier in this request (Anthropic "
+                            + "requires every tool_result to pair with a preceding tool_use)",
+                            tr.getToolUseId());
+                        continue;
+                    }
                     if (openToolResultUserMsg == null) {
                         openToolResultUserMsg = messages.addObject();
                         openToolResultUserMsg.put("role", "user");
                         openToolResultContent = openToolResultUserMsg.putArray("content");
                     }
-                    appendToolResultBlock(openToolResultContent, (Message.ToolResult) m);
+                    appendToolResultBlock(openToolResultContent, tr);
                 }
                 // Note: tool_use blocks live on Message.Assistant.toolCalls (handled
                 // in the Assistant branch above), not as separate Message.ToolUse

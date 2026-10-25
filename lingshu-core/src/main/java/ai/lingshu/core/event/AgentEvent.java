@@ -116,9 +116,43 @@ public abstract class AgentEvent {
         }
     }
 
-    /** Engine ran the compactor; subscribers may want to flush UI state. */
+    /**
+     * Engine ran the compactor; subscribers may want to flush UI state.
+     *
+     * <p>🆕 Bug fix 2026-10-25 — <b>payload added</b>. The pre-payload class was
+     * "presence is the signal", which forced host UIs to invent the before/after
+     * numbers: demo-product's {@code R-1} workaround hardcoded {@code afterSize =
+     * beforeSize} and {@code approxTokensFreed = 0} on the SSE wire, so every
+     * compaction looked like a no-op (observed in production as
+     * {@code compacted {beforeSize:107, afterSize:107, approxTokensFreed:0}} right
+     * before a related protocol error). The engine now measures the session history
+     * around {@code compactor.compact(ctx)} and reports real numbers.
+     *
+     * <p>Field semantics:
+     * <ul>
+     *   <li>{@link #beforeSize} / {@link #afterSize} — session-history <b>message
+     *       counts</b> before / after compaction;</li>
+     *   <li>{@link #approxTokensFreed} — conservative (chars/4) token-estimate
+     *       delta, clamped {@code >= 0}. Non-zero even when the message count is
+     *       unchanged (content-only ToolResult truncation shrinks tokens in place).</li>
+     * </ul>
+     */
+    @Getter
+    @RequiredArgsConstructor
     public static class Compacted extends AgentEvent {
-        // intentionally empty — presence is the signal
+        private final int beforeSize;
+        private final int afterSize;
+        private final int approxTokensFreed;
+
+        /**
+         * Back-compat no-arg constructor for tests / fixtures (mirrors the
+         * {@link ApprovalRequired} 2-arg back-compat pattern) — zeroed payload.
+         * Production paths always go through the 3-arg ctor via
+         * {@code LinearTurnEngine.runTurn()}.
+         */
+        public Compacted() {
+            this(0, 0, 0);
+        }
     }
 
     @Getter
