@@ -89,10 +89,15 @@ class HttpJsonRpcA2aTransportAutoConfigurationTest {
         // have moved to RemoteAgentToolAutoConfiguration).
         // 🆕 Story #034: 2nd @Bean is HttpJsonRpcA2aTransportFactory for sandbox
         // domain-whitelist aggregation.
+        // 🆕 agentCardCache is the 3rd @Bean (AgentCard TTL cache, wired here so
+        // RemoteAgentSchemaBuilder's autowire chain resolves — commit 5200a84 / #75).
+        // Stale count 2→3 fixed 2026-10-26 (v0.3.0 release gate): the assertion was
+        // never updated when agentCardCache landed. Counting @Bean methods is kept —
+        // only the expected total moves to match the intentionally shipped surface.
         assertThat(totalBeanMethods)
-            .as("HttpJsonRpcA2aTransportAutoConfiguration exposes 2 @Beans "
-                + "(provider + HttpJsonRpcA2aTransportFactory) post-#034")
-            .isEqualTo(2);
+            .as("HttpJsonRpcA2aTransportAutoConfiguration exposes 3 @Beans "
+                + "(provider + agentCardCache + HttpJsonRpcA2aTransportFactory)")
+            .isEqualTo(3);
     }
 
     @Test
