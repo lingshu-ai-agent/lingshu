@@ -11,6 +11,234 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-26
+
+### Summary
+
+**LingShu 0.3.0** is the third stable release of the LingShu Agent Engine —
+a **protocol-correctness hardening** cycle over v0.2.0 on two fronts:
+(1) **MCP protocol compliance becomes black-box provable** — Story #054
+rewrites the MCP test fixtures against the spec and closes the two review
+defects left by external PR #90, and (2) **a production chat-compaction bug
+that broke the Anthropic Messages API is root-caused and fixed** — the
+`TruncatingCompactor` sliding window could drop an `Assistant` while keeping
+its trailing `ToolResult`, and the next turn failed with HTTP 400
+("Each `tool_result` block must have a corresponding `tool_use` block").
+Compaction telemetry is now honest: `AgentEvent.Compacted` carries the real
+before/after payload instead of a hardcoded workaround that made every
+compaction look like a no-op. **Zero SPI breakings** vs. v0.2.0.
+
+This release ships **1 Story + 2 production fixes** via 5 PRs since v0.2.0
+(including 1 external contribution), introduces **0 new Maven dependencies**,
+and holds the **R-13 mitigation (d) 0 binary delta** streak at **37
+consecutive PASSes**.
+
+### Headline Numbers
+
+| Metric | v0.2.0 | **v0.3.0** | Delta |
+|---|---|---|---|
+| **Stories shipped (cumulative)** | 55 | **56** | +1 (Story #054) |
+| **PRs since v0.2.0** | — | **5** (1 external) | +5 |
+| **Tests passing (lingshu-core)** | 802 | **831** | +29 |
+| **Tests passing (demo-product)** | 6 | **11** | +5 |
+| **Maven dependencies introduced** | 0 | **0** | 0 (R-13 (d) maintained) |
+| **R-13 mitigation (d) PASS streak** | 36 | **37** | +1 consecutive |
+| **`@PublicApi(STABLE)` SPI count** | 14 | **14** | unchanged |
+| **Breaking changes** | — | **0** | D4 promise honored |
+| **External contributors (this cycle)** | — | **1** (`xiaobaibaiaaa`) | +1 |
+| **License** | Apache-2.0 | **Apache-2.0** | unchanged |
+| **Java source level** | 1.8 | **1.8** | unchanged |
+| **Java runtime** | JDK 17+ | **JDK 17+** | unchanged |
+| **Distribution channel** | GitHub Packages | **GitHub Packages** | unchanged |
+
+### Fixed — Anthropic HTTP 400 after chat-triggered compaction (2026-10-25 production bug)
+
+- **Root cause** — `TruncatingCompactor.applySlidingWindow`'s cut point
+  dropped an `Assistant` message while keeping its trailing `ToolResult`s.
+  Anthropic requires every `tool_result` block to pair with a preceding
+  `tool_use` in the same request, so the first chat turn after a
+  compact-triggered window cut failed with HTTP 400.
+- **Pair-safe cut** — The cut index now advances past all `ToolResult`
+  messages that follow the first dropped `Assistant`, so `tool_use` /
+  `tool_result` pairs never straddle the window boundary.
+- **Anchor User** — After a mid-turn cut the window could open with role
+  `assistant`; the nearest preceding `User` message is re-inserted at the
+  window head (unless the window already opens with one) to keep the
+  first-message-must-be-`user` invariant.
+- **Defense in depth** — `AnthropicLlmProvider.buildRequestBody` now tracks
+  seen `tool_use` ids and drops (WARN) any `ToolResult` whose `toolUseId`
+  has no surviving `Assistant` call, so a future pairing bug cannot surface
+  as a raw HTTP 400 again. Empty/missing `tool_use_id` still fails hard
+  with `LINGS-L02`.
+- **Regression tests** — sliding-window pair safety, anchor-User insertion,
+  no duplicated anchor User, and protocol-boundary orphan drop (PR #94).
+
+### Fixed — MCP stdio `args` hardcoded contributor machine path (PR #90 defect, Story #054)
+
+- External PR #90 hardcoded a Windows absolute path (`d:\lingshu\...`) into
+  demo-product's stdio MCP server `args:`, breaking any other machine / CI.
+  Reverted to the Story #025 relative path (1-line yml) plus a guard test.
+  `StdioMcpServerConnection.spawn()` never sets `.directory(...)`, so the
+  child process inherits the JVM working directory and relative paths were
+  always the portable choice.
+
+### Added — Honest compaction telemetry (`AgentEvent.Compacted` real payload)
+
+- `AgentEvent.Compacted` gains `beforeSize` / `afterSize` /
+  `approxTokensFreed`, with a no-arg back-compat constructor defaulting to
+  zeros (same pattern as `ApprovalRequired`). `LinearTurnEngine` measures
+  the real history-size and token-estimate delta around
+  `compactor.compact()` (clamped `>= 0`).
+- **demo-product R-1 workaround deleted** — `AgentEventMapper.lastHistorySize`
+  + `resetBaseline` hardcoded `afterSize=beforeSize` and
+  `approxTokensFreed=0`, which made every compaction look like a no-op on
+  the wire and misled the 2026-10-25 debugging session. The mapper is
+  stateless again and forwards the payload verbatim.
+- The demo-product chat UI's `compacted` bubble now shows
+  `beforeSize → afterSize` alongside `approxTokensFreed`.
+- `TruncatingCompactor.estimateTokens` widened package-private → `public`
+  so the engine and `shouldCompact()` share one token-estimate source.
+
+### Added — MCP protocol compliance black-box suite (Story #054)
+
+- **MCP compliance goes from "documented claim" to "black-box provable".**
+  PR #90's ~821-line MCP protocol rewrite shipped with zero acceptance
+  tests and a fixture suite (`TestMcpHttpServer` 5-endpoint scheme, fixed
+  JSON-RPC id `1L`, a `/sse` handler that never announced the `endpoint`
+  event) that had been superseded by the single-endpoint semantics — unit
+  tests stayed green while real MCP servers could not connect.
+- **Fixture rewrite per the MCP spec** — `TestMcpHttpServer` (1,249 lines)
+  rewritten + 2 new test files (`McpHttpSupportPostJsonRpcSpecTest` 12 cases
+  + `StreamableHttpMcpServerConnectionSessionRecoveryTest` 4 cases) + 5
+  existing test files updated in place: **8 test/fixture files, 0
+  production files** (protocol behavior is carried by the existing
+  implementation; this Story only proves it).
+- **Coverage** — SSE 4-step handshake (endpoint announcement / announcement
+  address resolution / id-correlated replies / `ping` keepalive), Streamable
+  HTTP single-endpoint + session replay + `tools/list` re-fetch (FR-029),
+  404 recovery **once** / **not twice**, no-session no-recovery, dual
+  content-type equivalence (`application/json` vs `text/event-stream`),
+  and `McpHttpSupport.postJsonRpcSpec` bidirectional codec.
+- **Full regression Errors 18 → 0** (`lingshu-core` tests 802 → 824,
+  +22 net new cases). SC-003 / SC-004 counter-proof shipped (flipping
+  "retry once" to "retry 3x" turns exactly the 4 contract-guard cases red,
+  then reverted).
+- **R-13 mitigation (d) 0 binary delta 37th PASS** (pre/post dependency-tree
+  mirror identical). 0 new Maven dependencies, 0 new ErrorCodes.
+
+### Hygiene / Refactor (v0.3.0)
+
+- **`lingshu-a2a-client` stale `@Bean` count assertion fixed** —
+  `HttpJsonRpcA2aTransportAutoConfigurationTest` still expected 2 `@Bean`
+  methods after the `agentCardCache` bean landed (commit `5200a84` / #75),
+  failing `mvn test` on main with "expected: 2 but was: 3". The expected
+  count is updated to 3 and the comment documents the intentionally shipped
+  surface (provider + `agentCardCache` + factory). Test-only; the counting
+  assertion itself is kept.
+- **Docs sync** — MCP SSE + Streamable HTTP protocol-compliance
+  documentation rewritten alongside PR #90's implementation (PR #90
+  follow-up).
+- **Constitution R-13 accounting drift fixed** — the "mitigated" Story list
+  had stalled at `#049`; `#050`–`#054` backfilled per user ruling
+  (accounting only, no charter principle changes).
+
+### Compatibility
+
+#### API Compatibility Promise (D4)
+
+- **Zero breaking changes vs. v0.2.0.** All 14 `@PublicApi(STABLE)`
+  interfaces preserve their public method signatures:
+  - `AgentEvent.Compacted` — new 3-arg constructor + 3 fields; the no-arg
+    constructor is preserved and defaults to zeros (existing `instanceof`
+    filters and callers compile unchanged).
+  - `TruncatingCompactor.estimateTokens` — visibility widened to `public`
+    (purely additive).
+  - MCP fixes are internal to transport/test layers; no SPI signature moves.
+- **`@PublicApi(STABLE)` count** — 14 (unchanged).
+
+#### Dependency Compatibility (R-13 mitigation (d))
+
+**13 locked dependencies** — **unchanged** from v0.1.0 / v0.2.0. **0 new
+Maven dependencies** in the v0.3.0 cycle. **R-13 mitigation (d) 0 binary
+delta streak: 37 consecutive PASSes** (Story #043 through Story #054).
+The `banned-dependencies` enforcer rule keeps rejecting the same 5 banned
+artifacts.
+
+### Security
+
+v0.3.0 inherits all v0.2.0 security properties unchanged (sandbox
+isolation, permission policy + ask-mode approval round-trip, MCP/A2A HTTP
+domain guards, `ToolExecutor.dispatch()` single-entry rule, anti-verify-loop
+default), and adds:
+
+- **Anthropic protocol boundary guard** — orphan `tool_result` blocks are
+  dropped with a WARN before they reach the API, hardening the Messages API
+  request path against future pairing regressions.
+
+### Known Issues / Limitations
+
+Carried from v0.1.0 / v0.2.0:
+
+- **`ServeHandlerTest`** hang in `lingshu-cli` under JDK 21+ (pre-existing).
+  Workaround: `mvn -pl lingshu-cli test -Dtest='!ServeHandlerTest'`.
+- **`AnthropicToolReActIT`** 2 cases fail in standalone mode (pre-existing,
+  passes in full-suite mode).
+- **`McpServerConnectionIT`** heartbeat flake — occasional 60-second-cap
+  timeouts under heavily loaded runners (<0.5% of runs).
+
+Newly observed (2026-10-26 full-reactor run):
+
+- **MCP transport reconnect tests** — intermittent timing flakes under
+  heavy suite load: `StreamableHttpMcpServerConnectionReconnectTest.reconnect_afterSessionExpiry_reRunsHandshake`
+  and `SseMcpServerConnectionReconnectTest.sseStreamBroken_reconnects` can
+  observe the state timeline out of order (a `DISCONNECTED` mark landing
+  after the reconnect `CONNECTED`). Pass in isolation and passed 831/831
+  in low-load runs; same class of timing sensitivity as the
+  `McpServerConnectionIT` flake.
+- **demo-engineer / demo-spi / demo-parallel `BlackBoxVerificationTest`**
+  Spring context circular-reference startup failures
+  (`YamlTenantConfigProvider` ↔ application bean) — pre-existing; those
+  modules are untouched since v0.1.0.
+
+Deferred to v0.4.0 (carried forward from the v0.2.0 roadmap):
+
+- **Story #016 `AuditLogger` production implementation** (PostgreSQL +
+  OpenTelemetry exporters)
+- **§14 N6 graceful shutdown** (`LINGS-L03` slot stays dormant)
+- **§14 N4 `CostBudget`** + structured `AgentEvent.CostExceeded`
+- **`SummaryCompactor`** alongside `TruncatingCompactor`
+- **Spring Boot starter** artifact
+- **Story #055 `mcp-http-legacy-postjsonrpc-cleanup`** (dead legacy helper
+  found during Story #054)
+
+### Upgrade / Migration Notes
+
+For v0.2.0 consumers upgrading to v0.3.0:
+
+1. **Drop-in compatible at the API surface.** All 14 `@PublicApi(STABLE)`
+   interfaces unchanged; `lingshu-core` v0.3.0 is API-compatible with
+   v0.2.0 binaries.
+2. **`AgentEvent.Compacted` payload** — New fields `beforeSize` /
+   `afterSize` / `approxTokensFreed`. SSE consumers may read the new
+   `compacted` JSON fields; the no-arg constructor still exists for
+   in-process callers.
+3. **demo-product `AgentEventMapper`** — Now stateless;
+   `lastHistorySize` / `resetBaseline` removed. Only affects demo-product
+   internals (and forks that copied the R-1 workaround).
+4. **Compaction window cuts are stricter** — histories that previously
+   produced orphan `tool_result`s are now cut pair-safely (fewer messages
+   retained at the boundary). This is the bug fix; no configuration change.
+
+No `pom.xml` version bumps required for transitive consumers.
+
+### Acknowledgments
+
+- **`xiaobaibaiaaa`** — External contribution (PR #90) of the MCP protocol
+  compliance rewrite + whitelist configuration fix that this cycle's
+  Story #054 hardened into black-box-provable compliance.
+
+---
+
 ## [0.2.0] - 2026-10-19
 
 ### Summary
